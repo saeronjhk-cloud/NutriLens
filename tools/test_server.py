@@ -39,12 +39,19 @@ LEFTOVER_PROMPT = """당신은 NutriLens의 AI 음식 잔량 분석 전문가입
 사용자가 먹기 전(첫 번째 사진)과 먹은 후(두 번째 사진)를 보내줍니다.
 두 사진을 비교하여 **실제로 섭취한 양**을 계산하세요.
 
-## 규칙
+## 핵심 규칙
 1. 첫 번째 사진(전)의 모든 음식을 식별하세요
 2. 두 번째 사진(후)에서 남은 양을 추정하세요
-3. eaten_pct = 실제 먹은 비율 (0~100). 다 먹었으면 100, 절반 남겼으면 50
-4. 영양소는 원래 양 × (eaten_pct / 100) 으로 계산
+3. eaten_pct = 실제 먹은 비율 (0~100)
+   - 다 먹었으면 100
+   - 절반 남겼으면 50
+   - 거의 안 먹었으면 5~10
+   - **전혀 안 먹었거나 두 사진이 동일/거의 동일하면 반드시 0**
+4. 영양소는 반드시 원래 양 × (eaten_pct / 100) 으로 계산
+   - eaten_pct가 0이면 모든 영양소도 반드시 0
+   - eaten_pct가 50이면 모든 영양소는 원래의 절반
 5. 두 사진이 비슷해 보여도, 그릇의 내용물 높이나 양의 차이를 세심하게 비교하세요
+6. **eaten_pct와 영양소 값은 반드시 일관성이 있어야 합니다**
 
 ## 중요: 반드시 JSON만 출력하세요. 설명 텍스트 없이 순수 JSON만 응답하세요.
 
@@ -99,27 +106,51 @@ load_env()
 # ── AI JSON 파싱 (강화) ──
 def _parse_ai_json(content):
     """AI 응답에서 JSON을 추출 — 여러 형식 대응"""
-    # 1) ```json ... ``` 블록
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0]
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0]
+    if not content or not content.strip():
+        return None
 
-    # 2) 직접 파싱 시도
+    # BOM 제거 + 양쪽 공백 제거
+    content = content.strip().lstrip('\ufeff')
+
+    # 1) 직접 파싱 시도 (response_format: json_object 사용 시 보통 여기서 성공)
     try:
-        return json.loads(content.strip())
-    except json.JSONDecodeError:
+        return json.loads(content)
+    except (json.JSONDecodeError, ValueError):
         pass
 
-    # 3) { 로 시작하는 부분 찾기
+    # 2) ```json ... ``` 블록
+    if "```json" in content:
+        try:
+            extracted = content.split("```json")[1].split("```")[0]
+            return json.loads(extracted.strip())
+        except (json.JSONDecodeError, ValueError, IndexError):
+            pass
+    elif "```" in content:
+        try:
+            extracted = content.split("```")[1].split("```")[0]
+            return json.loads(extracted.strip())
+        except (json.JSONDecodeError, ValueError, IndexError):
+            pass
+
+    # 3) { 로 시작하는 부분 찾기 (중첩 브레이스 대응)
     start = content.find('{')
     if start >= 0:
-        # 마지막 } 찾기
         end = content.rfind('}')
         if end > start:
             try:
                 return json.loads(content[start:end+1])
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    # 4) [ 로 시작하는 배열 형태
+    start = content.find('[')
+    if start >= 0:
+        end = content.rfind(']')
+        if end > start:
+            try:
+                arr = json.loads(content[start:end+1])
+                return {"foods": arr}
+            except (json.JSONDecodeError, ValueError):
                 pass
 
     return None
@@ -234,40 +265,6 @@ HTML_PAGE = """<!DOCTYPE html>
     font-size: 0.8em;
     margin-top: 8px;
   }
-
-  /* API 키 입력 */
-  .api-section {
-    background: #1a1a2e;
-    border: 1px solid #2a2a4a;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
-  }
-  .api-section label {
-    display: block;
-    font-size: 0.9em;
-    color: #aaa;
-    margin-bottom: 8px;
-  }
-  .api-section input {
-    width: 100%;
-    padding: 10px 14px;
-    background: #0f0f1a;
-    border: 1px solid #3a3a5a;
-    border-radius: 8px;
-    color: #e0e0e0;
-    font-size: 0.95em;
-  }
-  .api-section input:focus {
-    outline: none;
-    border-color: #3b82f6;
-  }
-  .api-hint {
-    font-size: 0.8em;
-    color: #666;
-    margin-top: 6px;
-  }
-  .api-hint a { color: #60a5fa; text-decoration: none; }
 
   /* 업로드 영역 */
   .upload-area {
@@ -632,16 +629,6 @@ HTML_PAGE = """<!DOCTYPE html>
     <span class="badge">Phase 2 테스트</span>
   </div>
 
-  <!-- API 키 입력 -->
-  <div class="api-section">
-    <label>OpenAI API Key</label>
-    <input type="password" id="apiKey" placeholder="sk-..." />
-    <p class="api-hint">
-      API 키가 없으시면 <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI 사이트</a>에서 발급받으세요.
-      키는 서버로만 전송되며 어디에도 저장되지 않습니다.
-    </p>
-  </div>
-
   <!-- 모드 선택 -->
   <div class="mode-selector" id="modeSelector">
     <div class="mode-card active" id="modeNormal" onclick="setMode('normal')">
@@ -825,7 +812,7 @@ function resetUpload() {
 
 // ── 일반 분석 API ──
 async function analyzeFood() {
-  const apiKey = document.getElementById('apiKey').value.trim();
+  const apiKey = '';
   if (!selectedFile) return alert('사진을 먼저 선택해주세요.');
 
   document.getElementById('previewSection').style.display = 'none';
@@ -860,7 +847,7 @@ async function analyzeFood() {
 
 // ── 남은 음식 비교 API ──
 async function analyzeLeftover() {
-  const apiKey = document.getElementById('apiKey').value.trim();
+  const apiKey = '';
   if (!beforeFile || !afterFile) return alert('전/후 사진 2장을 모두 선택해주세요.');
 
   document.getElementById('leftoverUpload').style.display = 'none';
@@ -878,7 +865,9 @@ async function analyzeLeftover() {
     document.getElementById('loading').style.display = 'none';
 
     if (data.error) {
-      document.getElementById('errorBox').innerHTML = '<strong>오류:</strong> ' + data.error;
+      let errMsg = '<strong>오류:</strong> ' + data.error;
+      if (data.raw) errMsg += '<br><br><small style="color:#888">AI 원본 응답: ' + data.raw.substring(0, 300) + '</small>';
+      document.getElementById('errorBox').innerHTML = errMsg;
       document.getElementById('errorBox').style.display = 'block';
       document.getElementById('leftoverUpload').style.display = 'block';
       return;
@@ -1068,6 +1057,11 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(HTML_PAGE.encode('utf-8'))
+        elif self.path == '/version':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps({"version": "2.1", "json_mode": True, "db_count": len(FOODS_DB)}, ensure_ascii=False).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
@@ -1229,6 +1223,32 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 print(f"  [ERROR] 파싱 실패! 전체 응답:\n{content}")
                 self._json_response(200, {"error": "AI 응답 파싱 실패", "raw": content[:500]})
                 return
+
+            # eaten_pct 기반 영양소 강제 재계산 (AI 실수 방지)
+            if "foods" in analysis:
+                for food in analysis["foods"]:
+                    pct = food.get("eaten_pct")
+                    if pct is not None and isinstance(pct, (int, float)):
+                        ratio = pct / 100.0
+                        orig_g = food.get("original_serving_g", 0) or 0
+                        food["estimated_serving_g"] = round(orig_g * ratio)
+                        # original 값이 있으면 그걸로 재계산, 없으면 현재값을 original로 간주
+                        for key in ["calories_kcal", "protein_g", "carbs_g", "fat_g", "fiber_g", "sodium_mg", "sugar_g"]:
+                            val = food.get(key, 0) or 0
+                            if pct == 0:
+                                food[key] = 0
+                            # pct가 100이 아닌데 값이 원본 그대로인 경우 재계산
+                            elif pct < 100 and val > 0:
+                                food[key] = round(val * ratio, 1)
+
+                # meal_summary도 재계산
+                foods = analysis["foods"]
+                summary = analysis.get("meal_summary", {})
+                summary["total_calories"] = round(sum(f.get("calories_kcal", 0) or 0 for f in foods))
+                summary["total_protein"] = round(sum(f.get("protein_g", 0) or 0 for f in foods))
+                summary["total_carbs"] = round(sum(f.get("carbs_g", 0) or 0 for f in foods))
+                summary["total_fat"] = round(sum(f.get("fat_g", 0) or 0 for f in foods))
+                analysis["meal_summary"] = summary
 
             # DB 매칭
             if FOODS_DB and "foods" in analysis:
