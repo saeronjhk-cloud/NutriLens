@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>NutriLens 테스트 이미지 다운로드</title>
+<style>
+body { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; background: #f5f5f5; }
+h1 { color: #333; }
+.info { background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.card { background: white; border-radius: 8px; padding: 8px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.card img { width: 100%; height: 120px; object-fit: cover; border-radius: 4px; }
+.card .name { font-size: 14px; margin-top: 5px; font-weight: bold; }
+.card .status { font-size: 12px; color: #888; }
+.card.done .status { color: #4caf50; }
+.card.fail .status { color: #f44336; }
+button { background: #1976d2; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; cursor: pointer; margin: 10px 5px; }
+button:hover { background: #1565c0; }
+button:disabled { background: #ccc; }
+#progress { margin: 15px 0; font-size: 18px; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>NutriLens 테스트 이미지 다운로드</h1>
+<div class="info">
+<p><strong>사용법:</strong> "모두 다운로드" 버튼을 클릭하면 45개 음식 이미지가 자동으로 다운로드됩니다.</p>
+<p>다운로드된 파일들을 <code>NutriLens\.tmp\test_images\</code> 폴더에 넣어주세요.</p>
+</div>
+
+<button onclick="downloadAll()" id="btnAll">모두 다운로드 (45장)</button>
+<button onclick="downloadSelected()" id="btnSel">실패한 것만 재시도</button>
+<div id="progress"></div>
+<div class="grid" id="grid"></div>
+
+<script>
+const foods = [
+    {name:"김치", file:"01_김치.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/4/44/Korean_cuisine-Gimchi-01.jpg"},
+    {name:"비빔밥", file:"02_비빔밥.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/4/44/Dolsot-bibimbap.jpg"},
+    {name:"불고기", file:"03_불고기.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/0/0a/Korean_cuisine-Bulgogi-01.jpg"},
+    {name:"김밥", file:"04_김밥.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/7/7e/Gimbap_%28pixabay%29.jpg"},
+    {name:"떡볶이", file:"05_떡볶이.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/4/4d/Tteok-bokki.jpg"},
+    {name:"된장찌개", file:"06_된장찌개.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/4/44/Korean_cuisine-Doenjang_jjigae-01.jpg"},
+    {name:"삼겹살", file:"07_삼겹살.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/5/59/Korean_barbeque-Samgyeopsal-01.jpg"},
+    {name:"잡채", file:"08_잡채.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/5/54/Korean_cuisine-Japchae-01.jpg"},
+    {name:"순두부찌개", file:"09_순두부찌개.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/3/31/Korean_cuisine-Sundubu_jjigae-01.jpg"},
+    {name:"갈비탕", file:"10_갈비탕.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/9/9e/Korean_cuisine-Galbitang-01.jpg"},
+    {name:"냉면", file:"11_냉면.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/a/ac/Korean_cuisine-Mul_naengmyeon-01.jpg"},
+    {name:"김치찌개", file:"12_김치찌개.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/3/34/Korean_cuisine-Kimchi_jjigae-01.jpg"},
+    {name:"제육볶음", file:"13_제육볶음.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/1/12/Korean_cuisine-Jeyuk_bokkeum-01.jpg"},
+    {name:"파전", file:"14_파전.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/e/e3/Korean_cuisine-Pajeon-01.jpg"},
+    {name:"감자탕", file:"15_감자탕.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/5/56/Gamjatang.jpg"},
+    {name:"칼국수", file:"16_칼국수.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/0/0c/Kalguksu.jpg"},
+    {name:"삼계탕", file:"17_삼계탕.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/f/f8/Korean_cuisine-Samgyetang-01.jpg"},
+    {name:"족발", file:"18_족발.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/9/96/Korean_cuisine-Jokbal-01.jpg"},
+    {name:"라면", file:"19_라면.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/b/bc/Ramyeon.jpg"},
+    {name:"닭갈비", file:"20_닭갈비.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/1/1a/Dakgalbi.jpg"},
+    {name:"볶음밥", file:"21_볶음밥.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/2/2d/Bokkeumbap.jpg"},
+    {name:"만두", file:"22_만두.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/4/4b/Korean_cuisine-Mandu-01.jpg"},
+    {name:"육회", file:"23_육회.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/8/89/Korean_cuisine-Yukhoe-01.jpg"},
+    {name:"떡국", file:"24_떡국.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/a/a2/Tteokguk.jpg"},
+    {name:"순대", file:"25_순대.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/6/69/Korean_blood_sausage-Sundae-01.jpg"},
+    {name:"치킨", file:"26_치킨.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/5/5a/Korean_fried_chicken_%28cropped%29.jpg"},
+    {name:"해물탕", file:"27_해물탕.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/d/d2/Korean_cuisine-Haemultang-01.jpg"},
+    {name:"오징어볶음", file:"28_오징어볶음.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/0/0e/Korean_cuisine-Ojingeo_bokkeum-01.jpg"},
+    {name:"떡", file:"29_떡.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/3/3d/Korean_rice_cake-Tteok-13.jpg"},
+    {name:"김치볶음밥", file:"30_김치볶음밥.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/8/81/Kimchi_bokkeumbap.jpg"},
+    {name:"닭가슴살", file:"31_닭가슴살.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/a/ae/Grilled_chicken_breast_%281%29.jpg"},
+    {name:"샐러드", file:"32_샐러드.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/9/94/Salad_platter.jpg"},
+    {name:"고구마", file:"33_고구마.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/5/5e/GunGoguma.jpg"},
+    {name:"계란", file:"34_계란.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/4/44/Boiled_eggs.jpg"},
+    {name:"현미밥", file:"35_현미밥.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/f/fa/Brown_rice.jpg"},
+    {name:"오트밀", file:"36_오트밀.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/d/d2/Porridge.jpg"},
+    {name:"연어", file:"37_연어.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/3/39/SalmonSashimi.jpg"},
+    {name:"아보카도", file:"38_아보카도.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/6/6d/Good_Food_Display_-_NCI_Visuals_Online.jpg"},
+    {name:"두부", file:"39_두부.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/0/03/Korean_cuisine-Dubu-01.jpg"},
+    {name:"바나나", file:"40_바나나.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/8/8a/Banana-Single.jpg"},
+    {name:"프로틴쉐이크", file:"41_프로틴쉐이크.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/6/6d/Protein_shake.jpg"},
+    {name:"그릭요거트", file:"42_그릭요거트.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/e/ea/Turkish_strained_yogurt.jpg"},
+    {name:"스테이크", file:"43_스테이크.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/4/4c/Filet_Mignon_Beef_Steak.jpg"},
+    {name:"브로콜리", file:"44_브로콜리.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/0/03/Broccoli_and_cross_section_edit.jpg"},
+    {name:"견과류", file:"45_견과류.jpg", url:"https://upload.wikimedia.org/wikipedia/commons/1/10/Mixed_nuts_small_pile.jpg"},
+];
+
+const grid = document.getElementById('grid');
+const status = {};
+
+// 카드 생성
+foods.forEach((f, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.id = `card-${i}`;
+    card.innerHTML = `<img src="${f.url}" onerror="this.src=''" loading="lazy"><div class="name">${f.name}</div><div class="status" id="st-${i}">대기</div>`;
+    grid.appendChild(card);
+    status[i] = 'pending';
+});
+
+async function downloadOne(i) {
+    const f = foods[i];
+    document.getElementById(`st-${i}`).textContent = '다운로드 중...';
+    try {
+        const resp = await fetch(f.url);
+        if (!resp.ok) throw new Error(resp.status);
+        const blob = await resp.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = f.file;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        document.getElementById(`st-${i}`).textContent = '✓ 완료';
+        document.getElementById(`card-${i}`).className = 'card done';
+        status[i] = 'done';
+        return true;
+    } catch(e) {
+        document.getElementById(`st-${i}`).textContent = '✗ 실패';
+        document.getElementById(`card-${i}`).className = 'card fail';
+        status[i] = 'fail';
+        return false;
+    }
+}
+
+async function downloadAll() {
+    document.getElementById('btnAll').disabled = true;
+    let done = 0, fail = 0;
+    for (let i = 0; i < foods.length; i++) {
+        document.getElementById('progress').textContent = `진행: ${i+1}/${foods.length} (성공: ${done}, 실패: ${fail})`;
+        const ok = await downloadOne(i);
+        if (ok) done++; else fail++;
+        await new Promise(r => setTimeout(r, 300));
+    }
+    document.getElementById('progress').textContent = `완료! 성공: ${done}, 실패: ${fail}`;
+    document.getElementById('btnAll').disabled = false;
+}
+
+async function downloadSelected() {
+    document.getElementById('btnSel').disabled = true;
+    let done = 0, fail = 0;
+    const indices = Object.keys(status).filter(i => status[i] !== 'done');
+    for (const i of indices) {
+        document.getElementById('progress').textContent = `재시도: ${done+fail+1}/${indices.length}`;
+        const ok = await downloadOne(parseInt(i));
+        if (ok) done++; else fail++;
+        await new Promise(r => setTimeout(r, 300));
+    }
+    document.getElementById('progress').textContent = `재시도 완료! 성공: ${done}, 실패: ${fail}`;
+    document.getElementById('btnSel').disabled = false;
+}
+</script>
+</body>
+</html>

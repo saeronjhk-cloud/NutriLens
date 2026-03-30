@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """
-NutriLens 정확도 테스트 도구
-────────────────────────────
-한국 음식 사진을 수집하고, AI 인식 정확도를 자동 측정합니다.
+NutriLens 정확도 테스트 도구 v2
+────────────────────────────────
+두 가지 방식으로 정확도를 측정합니다:
+
+  1. DB 매칭 테스트 (--db)
+     → 흔한 음식 이름 100개로 DB에서 영양정보를 찾을 수 있는지 확인
+     → API 비용 없음, 즉시 실행
+
+  2. 실제 사진 테스트 (--photo)
+     → .tmp/test_images/ 폴더에 음식 사진을 넣으면 AI 인식 테스트
+     → 파일명이 정답 (예: "김치.jpg", "비빔밥.jpg")
 
 실행법:
-  1단계: 사진 수집  →  python tools/accuracy_test.py --collect
-  2단계: 정확도 측정 →  python tools/accuracy_test.py --test
-  3단계: 결과 보기   →  .tmp/accuracy_report.txt
-
-주의: OpenAI API 크레딧이 사용됩니다. --test 시 사진당 약 $0.01~0.02
+  python tools/accuracy_test.py --db       # DB 매칭 테스트
+  python tools/accuracy_test.py --photo    # 사진 인식 테스트
+  python tools/accuracy_test.py --all      # 둘 다
 """
 
 import os
@@ -18,7 +24,6 @@ import json
 import time
 import base64
 import urllib.request
-import urllib.parse
 import urllib.error
 from pathlib import Path
 from datetime import datetime
@@ -46,240 +51,185 @@ def load_env():
 load_env()
 
 
-# ── 테스트용 한국 음식 목록 + 위키미디어 커먼스 이미지 URL ──
-# (CC 라이선스 이미지 — 자유 사용 가능)
-TEST_FOODS = [
-    {
-        "name": "김치",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Korean_cuisine-Gimchi-01.jpg/800px-Korean_cuisine-Gimchi-01.jpg",
-    },
-    {
-        "name": "비빔밥",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Dolsot-bibimbap.jpg/800px-Dolsot-bibimbap.jpg",
-    },
-    {
-        "name": "불고기",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/Korean_cuisine-Bulgogi-01.jpg/800px-Korean_cuisine-Bulgogi-01.jpg",
-    },
-    {
-        "name": "김밥",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/Gimbap_%28pixabay%29.jpg/800px-Gimbap_%28pixabay%29.jpg",
-    },
-    {
-        "name": "떡볶이",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Tteok-bokki.jpg/800px-Tteok-bokki.jpg",
-    },
-    {
-        "name": "된장찌개",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Korean_cuisine-Doenjang_jjigae-01.jpg/800px-Korean_cuisine-Doenjang_jjigae-01.jpg",
-    },
-    {
-        "name": "삼겹살",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/59/Korean_barbeque-Samgyeopsal-01.jpg/800px-Korean_barbeque-Samgyeopsal-01.jpg",
-    },
-    {
-        "name": "잡채",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/54/Korean_cuisine-Japchae-01.jpg/800px-Korean_cuisine-Japchae-01.jpg",
-    },
-    {
-        "name": "순두부찌개",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/31/Korean_cuisine-Sundubu_jjigae-01.jpg/800px-Korean_cuisine-Sundubu_jjigae-01.jpg",
-    },
-    {
-        "name": "갈비탕",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/Korean_cuisine-Galbitang-01.jpg/800px-Korean_cuisine-Galbitang-01.jpg",
-    },
-    {
-        "name": "냉면",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/Korean_cuisine-Mul_naengmyeon-01.jpg/800px-Korean_cuisine-Mul_naengmyeon-01.jpg",
-    },
-    {
-        "name": "김치찌개",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Korean_cuisine-Kimchi_jjigae-01.jpg/800px-Korean_cuisine-Kimchi_jjigae-01.jpg",
-    },
-    {
-        "name": "제육볶음",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Korean_cuisine-Jeyuk_bokkeum-01.jpg/800px-Korean_cuisine-Jeyuk_bokkeum-01.jpg",
-    },
-    {
-        "name": "파전",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Korean_cuisine-Pajeon-01.jpg/800px-Korean_cuisine-Pajeon-01.jpg",
-    },
-    {
-        "name": "감자탕",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Gamjatang.jpg/800px-Gamjatang.jpg",
-    },
-    {
-        "name": "칼국수",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/Kalguksu.jpg/800px-Kalguksu.jpg",
-    },
-    {
-        "name": "삼계탕",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f8/Korean_cuisine-Samgyetang-01.jpg/800px-Korean_cuisine-Samgyetang-01.jpg",
-    },
-    {
-        "name": "족발",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Korean_cuisine-Jokbal-01.jpg/800px-Korean_cuisine-Jokbal-01.jpg",
-    },
-    {
-        "name": "라면",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bc/Ramyeon.jpg/800px-Ramyeon.jpg",
-    },
-    {
-        "name": "닭갈비",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/Dakgalbi.jpg/800px-Dakgalbi.jpg",
-    },
-    {
-        "name": "볶음밥",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2d/Bokkeumbap.jpg/800px-Bokkeumbap.jpg",
-    },
-    {
-        "name": "만두",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Korean_cuisine-Mandu-01.jpg/800px-Korean_cuisine-Mandu-01.jpg",
-    },
-    {
-        "name": "육회",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/89/Korean_cuisine-Yukhoe-01.jpg/800px-Korean_cuisine-Yukhoe-01.jpg",
-    },
-    {
-        "name": "떡국",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Tteokguk.jpg/800px-Tteokguk.jpg",
-    },
-    {
-        "name": "순대",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/Korean_blood_sausage-Sundae-01.jpg/800px-Korean_blood_sausage-Sundae-01.jpg",
-    },
-    {
-        "name": "치킨",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Korean_fried_chicken_%28cropped%29.jpg/800px-Korean_fried_chicken_%28cropped%29.jpg",
-    },
-    {
-        "name": "해물탕",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Korean_cuisine-Haemultang-01.jpg/800px-Korean_cuisine-Haemultang-01.jpg",
-    },
-    {
-        "name": "오징어볶음",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/Korean_cuisine-Ojingeo_bokkeum-01.jpg/800px-Korean_cuisine-Ojingeo_bokkeum-01.jpg",
-    },
-    {
-        "name": "떡",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Korean_rice_cake-Tteok-13.jpg/800px-Korean_rice_cake-Tteok-13.jpg",
-    },
-    {
-        "name": "김치볶음밥",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/Kimchi_bokkeumbap.jpg/800px-Kimchi_bokkeumbap.jpg",
-    },
-    # ── 다이어트 / 피트니스 음식 ──
-    {
-        "name": "닭가슴살",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Grilled_chicken_breast_%281%29.jpg/800px-Grilled_chicken_breast_%281%29.jpg",
-    },
-    {
-        "name": "샐러드",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/94/Salad_platter.jpg/800px-Salad_platter.jpg",
-    },
-    {
-        "name": "고구마",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/GunGoguma.jpg/800px-GunGoguma.jpg",
-    },
-    {
-        "name": "계란",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Boiled_eggs.jpg/800px-Boiled_eggs.jpg",
-    },
-    {
-        "name": "현미밥",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Brown_rice.jpg/800px-Brown_rice.jpg",
-    },
-    {
-        "name": "오트밀",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Porridge.jpg/800px-Porridge.jpg",
-    },
-    {
-        "name": "연어",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/39/SalmonSashimi.jpg/800px-SalmonSashimi.jpg",
-    },
-    {
-        "name": "아보카도",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Good_Food_Display_-_NCI_Visuals_Online.jpg/800px-Good_Food_Display_-_NCI_Visuals_Online.jpg",
-    },
-    {
-        "name": "두부",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/03/Korean_cuisine-Dubu-01.jpg/800px-Korean_cuisine-Dubu-01.jpg",
-    },
-    {
-        "name": "바나나",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Banana-Single.jpg/800px-Banana-Single.jpg",
-    },
-    {
-        "name": "프로틴쉐이크",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Protein_shake.jpg/800px-Protein_shake.jpg",
-    },
-    {
-        "name": "그릭요거트",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Turkish_strained_yogurt.jpg/800px-Turkish_strained_yogurt.jpg",
-    },
-    {
-        "name": "스테이크",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4c/Filet_Mignon_Beef_Steak.jpg/800px-Filet_Mignon_Beef_Steak.jpg",
-    },
-    {
-        "name": "브로콜리",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/03/Broccoli_and_cross_section_edit.jpg/800px-Broccoli_and_cross_section_edit.jpg",
-    },
-    {
-        "name": "견과류",
-        "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/Mixed_nuts_small_pile.jpg/800px-Mixed_nuts_small_pile.jpg",
-    },
+# ══════════════════════════════════════════════════════════
+#  1. DB 매칭 테스트
+# ══════════════════════════════════════════════════════════
+
+# 실제 한국인이 자주 먹는 음식 100개 (한식 + 다이어트 + 간식 + 외식)
+COMMON_FOODS = [
+    # 한식 (50개)
+    "김치", "비빔밥", "불고기", "김밥", "떡볶이",
+    "된장찌개", "삼겹살", "잡채", "순두부찌개", "갈비탕",
+    "냉면", "김치찌개", "제육볶음", "파전", "감자탕",
+    "칼국수", "삼계탕", "족발", "라면", "닭갈비",
+    "볶음밥", "만두", "육회", "떡국", "순대",
+    "치킨", "해물탕", "오징어볶음", "떡", "김치볶음밥",
+    "갈비찜", "보쌈", "콩나물국", "미역국", "어묵",
+    "김치전", "잔치국수", "비빔냉면", "소불고기", "돼지갈비",
+    "멸치볶음", "두부조림", "감자조림", "계란찜", "깍두기",
+    "시금치나물", "콩나물무침", "오이소박이", "무생채", "열무김치",
+    # 다이어트/피트니스 (20개)
+    "닭가슴살", "샐러드", "고구마", "계란", "현미밥",
+    "오트밀", "연어", "아보카도", "두부", "바나나",
+    "그릭요거트", "브로콜리", "퀴노아", "단호박", "토마토",
+    "블루베리", "아몬드", "땅콩버터", "치아시드", "단백질보충제",
+    # 프랜차이즈/외식 (15개)
+    "햄버거", "피자", "파스타", "초밥", "돈까스",
+    "짜장면", "짬뽕", "탕수육", "양장피", "마라탕",
+    "쌀국수", "카레", "우동", "스테이크", "리조또",
+    # 간식/음료 (15개)
+    "아메리카노", "카페라떼", "녹차", "콜라", "사이다",
+    "떡케이크", "호떡", "붕어빵", "아이스크림", "초콜릿",
+    "과일주스", "스무디", "쿠키", "마카롱", "크로와상",
 ]
 
 
-def collect_images():
-    """위키미디어 커먼스에서 한국 음식 이미지 다운로드"""
+def run_db_test():
+    """DB 매칭 정확도 테스트 — 흔한 음식이 DB에 있는지 확인"""
+    try:
+        import openpyxl
+    except ImportError:
+        print("  openpyxl 설치 중...")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl", "-q"])
+        import openpyxl
+
+    db_path = PROJECT_DIR / "NutriLens_음식DB.xlsx"
+    if not db_path.exists():
+        print(f"  DB 파일 없음: {db_path}")
+        return None
+
     print()
-    print("=" * 55)
-    print("  한국 음식 테스트 이미지 수집")
-    print("=" * 55)
+    print("=" * 60)
+    print("  NutriLens DB 매칭 테스트")
+    print("=" * 60)
+    print(f"  DB 파일: {db_path.name}")
+    print(f"  테스트 음식: {len(COMMON_FOODS)}종")
+    print()
 
-    TEST_DIR.mkdir(parents=True, exist_ok=True)
+    # DB 로드 — 음식 이름 목록 추출
+    print("  DB 로딩 중...", end=" ", flush=True)
+    wb = openpyxl.load_workbook(db_path, read_only=True, data_only=True)
+    ws = wb.active
 
-    success = 0
-    fail = 0
+    db_names = set()
+    db_names_lower = {}  # 소문자 → 원본 매핑
+    rows_checked = 0
+    name_col = None
 
-    for i, food in enumerate(TEST_FOODS, 1):
-        name = food["name"]
-        url = food["url"]
-        filename = f"{i:02d}_{name}.jpg"
-        filepath = TEST_DIR / filename
+    # 헤더에서 음식명 컬럼 찾기
+    for row in ws.iter_rows(min_row=1, max_row=1, values_only=False):
+        for cell in row:
+            val = str(cell.value or "").strip()
+            if val in ("식품명", "음식명", "food_name", "FOOD_NM_KR", "name"):
+                name_col = cell.column
+                break
 
-        if filepath.exists():
-            print(f"  [{i:02d}/{len(TEST_FOODS)}] {name} — 이미 있음 (스킵)")
-            success += 1
+    if name_col is None:
+        name_col = 2  # 기본값: B열
+
+    for row in ws.iter_rows(min_row=2, min_col=name_col, max_col=name_col, values_only=True):
+        val = row[0]
+        if val:
+            name = str(val).strip()
+            if name:
+                db_names.add(name)
+                db_names_lower[name.lower().replace(" ", "")] = name
+        rows_checked += 1
+
+    wb.close()
+    print(f"OK ({len(db_names):,}종)")
+    print()
+
+    # 매칭 테스트
+    results = []
+    found = 0
+    partial = 0
+    not_found = 0
+
+    for food_name in COMMON_FOODS:
+        norm = food_name.lower().replace(" ", "")
+
+        # 1) 정확 매칭
+        if food_name in db_names or norm in db_names_lower:
+            matched = db_names_lower.get(norm, food_name)
+            results.append({"food": food_name, "status": "EXACT", "matched": matched})
+            found += 1
+            print(f"  ✓ {food_name} → 정확 일치 ({matched})")
             continue
 
-        print(f"  [{i:02d}/{len(TEST_FOODS)}] {name} 다운로드 중...", end=" ")
-        try:
-            req = urllib.request.Request(url)
-            req.add_header("User-Agent", "NutriLens-Test/1.0 (food recognition accuracy test)")
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = resp.read()
-                with open(filepath, 'wb') as f:
-                    f.write(data)
-            size_kb = len(data) / 1024
-            print(f"OK ({size_kb:.0f}KB)")
-            success += 1
-        except Exception as e:
-            print(f"실패: {e}")
-            fail += 1
+        # 2) 부분 매칭 (DB에 포함된 이름)
+        partial_matches = []
+        for db_norm, db_orig in db_names_lower.items():
+            if norm in db_norm or db_norm in norm:
+                partial_matches.append(db_orig)
+            elif len(norm) >= 2 and (db_norm.startswith(norm[:2]) and db_norm.endswith(norm[-1])):
+                partial_matches.append(db_orig)
 
-        time.sleep(0.5)  # 서버 부하 방지
+        if partial_matches:
+            best = partial_matches[0]
+            results.append({"food": food_name, "status": "PARTIAL", "matched": best, "candidates": len(partial_matches)})
+            partial += 1
+            print(f"  △ {food_name} → 부분 일치 ({best}, +{len(partial_matches)-1}개)")
+            continue
 
-    print(f"\n  완료! 성공: {success}, 실패: {fail}")
-    print(f"  저장 위치: {TEST_DIR}")
-    return success
+        # 3) 매칭 실패
+        results.append({"food": food_name, "status": "MISS", "matched": None})
+        not_found += 1
+        print(f"  ✗ {food_name} → DB에 없음")
 
+    total = len(COMMON_FOODS)
+    exact_pct = found / total * 100
+    coverage_pct = (found + partial) / total * 100
+
+    print()
+    print("=" * 60)
+    print(f"  DB 매칭 결과")
+    print("=" * 60)
+    print(f"  총 테스트: {total}종")
+    print(f"  정확 일치: {found}종 ({exact_pct:.1f}%)")
+    print(f"  부분 일치: {partial}종")
+    print(f"  미발견:    {not_found}종")
+    print(f"  커버리지:  {coverage_pct:.1f}% (정확+부분)")
+    print("=" * 60)
+
+    # 미발견 목록
+    missed = [r["food"] for r in results if r["status"] == "MISS"]
+    if missed:
+        print(f"\n  DB에 없는 음식:")
+        for m in missed:
+            print(f"    - {m}")
+
+    # 리포트 저장
+    RESULT_DIR.mkdir(parents=True, exist_ok=True)
+    report = {
+        "test_type": "db_matching",
+        "date": datetime.now().isoformat(),
+        "db_size": len(db_names),
+        "test_count": total,
+        "exact_match": found,
+        "partial_match": partial,
+        "not_found": not_found,
+        "exact_pct": round(exact_pct, 1),
+        "coverage_pct": round(coverage_pct, 1),
+        "missed_foods": missed,
+        "details": results,
+    }
+
+    json_path = RESULT_DIR / "db_test_results.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    print(f"\n  결과 저장: {json_path}")
+
+    return coverage_pct
+
+
+# ══════════════════════════════════════════════════════════
+#  2. 실제 사진 AI 인식 테스트
+# ══════════════════════════════════════════════════════════
 
 def call_openai_vision(base64_image, media_type, api_key):
-    """GPT-4o Vision API 호출 (음식 이름만 간결하게)"""
+    """GPT-4o Vision API 호출"""
     from food_analyzer import SYSTEM_PROMPT
 
     url = "https://api.openai.com/v1/chat/completions"
@@ -295,7 +245,7 @@ def call_openai_vision(base64_image, media_type, api_key):
                         "type": "image_url",
                         "image_url": {
                             "url": f"data:{media_type};base64,{base64_image}",
-                            "detail": "low"  # 비용 절감
+                            "detail": "low"
                         }
                     }
                 ]
@@ -321,7 +271,6 @@ def call_openai_vision(base64_image, media_type, api_key):
 
     content = result["choices"][0]["message"]["content"]
 
-    # JSON 추출
     if "```json" in content:
         content = content.split("```json")[1].split("```")[0]
     elif "```" in content:
@@ -335,56 +284,58 @@ def call_openai_vision(base64_image, media_type, api_key):
 
 
 def normalize(name):
-    """비교용 이름 정규화"""
-    name = name.strip().lower()
-    # 일반적인 변형 처리
-    name = name.replace(" ", "").replace("_", "")
+    name = name.strip().lower().replace(" ", "").replace("_", "")
     return name
 
 
 def is_match(expected, ai_foods):
-    """AI 결과에서 정답 음식이 포함되어 있는지 확인"""
     expected_norm = normalize(expected)
-
     for food in ai_foods:
         ai_name = normalize(food.get("name_ko", "") or food.get("name", ""))
-        # 정확 일치
         if expected_norm == ai_name:
             return True, "정확 일치", ai_name
-        # 부분 일치 (하나가 다른 하나에 포함)
         if expected_norm in ai_name or ai_name in expected_norm:
             return True, "부분 일치", ai_name
-        # 핵심 단어 일치 (예: "김치찌개" ↔ "김치 찌개")
         if len(expected_norm) >= 2 and len(ai_name) >= 2:
             if expected_norm[:2] == ai_name[:2] and expected_norm[-2:] == ai_name[-2:]:
                 return True, "유사 일치", ai_name
-
-    # 모든 AI 결과의 이름 목록
     ai_names = [normalize(f.get("name_ko", "") or f.get("name", "")) for f in ai_foods]
     return False, "불일치", ", ".join(ai_names) if ai_names else "인식 없음"
 
 
-def run_test():
-    """수집된 이미지로 정확도 테스트 실행"""
+def run_photo_test():
+    """로컬 사진으로 AI 인식 정확도 테스트"""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        print("OPENAI_API_KEY가 설정되지 않았습니다.")
-        sys.exit(1)
+        print("  OPENAI_API_KEY가 설정되지 않았습니다.")
+        return None
 
-    # 테스트 이미지 확인
     if not TEST_DIR.exists():
-        print("테스트 이미지가 없습니다. 먼저 --collect를 실행하세요.")
-        sys.exit(1)
+        TEST_DIR.mkdir(parents=True, exist_ok=True)
 
-    images = sorted(TEST_DIR.glob("*.jpg"))
+    # jpg, jpeg, png 모두 지원
+    images = sorted(
+        [f for f in TEST_DIR.iterdir() if f.suffix.lower() in ('.jpg', '.jpeg', '.png')]
+    )
+
     if not images:
-        print("테스트 이미지가 없습니다. 먼저 --collect를 실행하세요.")
-        sys.exit(1)
+        print()
+        print("=" * 60)
+        print("  사진 테스트 — 이미지 없음")
+        print("=" * 60)
+        print()
+        print("  테스트 방법:")
+        print(f"  1. {TEST_DIR} 폴더에 음식 사진을 넣으세요")
+        print("  2. 파일명 = 정답 음식명 (예: 김치.jpg, 비빔밥.png)")
+        print("  3. 다시 python tools/accuracy_test.py --photo 실행")
+        print()
+        print("  팁: 핸드폰으로 음식 사진 10~20장만 찍으면 충분합니다!")
+        return None
 
     print()
-    print("=" * 55)
-    print("  NutriLens AI 정확도 테스트")
-    print("=" * 55)
+    print("=" * 60)
+    print("  NutriLens AI 사진 인식 테스트")
+    print("=" * 60)
     print(f"  테스트 이미지: {len(images)}장")
     print(f"  모델: GPT-4o Vision")
     cost_est = len(images) * 0.01
@@ -396,36 +347,34 @@ def run_test():
     errors = 0
 
     for i, img_path in enumerate(images, 1):
-        # 파일명에서 정답 추출 (예: "01_김치.jpg" → "김치")
-        filename = img_path.stem
-        parts = filename.split("_", 1)
-        if len(parts) < 2:
-            continue
-        expected_name = parts[1]
+        # 파일명에서 정답 추출
+        expected_name = img_path.stem
+        # "01_김치" 형태면 숫자 제거
+        if "_" in expected_name and expected_name.split("_")[0].isdigit():
+            expected_name = expected_name.split("_", 1)[1]
 
         print(f"  [{i:02d}/{len(images)}] {expected_name}...", end=" ", flush=True)
 
-        # 이미지 로드 & base64 인코딩
+        # 이미지 → base64
         with open(img_path, 'rb') as f:
             image_data = f.read()
         base64_image = base64.b64encode(image_data).decode('utf-8')
 
-        # API 호출
-        analysis, err = call_openai_vision(base64_image, "image/jpeg", api_key)
+        ext = img_path.suffix.lower()
+        media_type = "image/png" if ext == ".png" else "image/jpeg"
+
+        analysis, err = call_openai_vision(base64_image, media_type, api_key)
 
         if err:
             print(f"에러: {err}")
             results.append({
-                "expected": expected_name,
-                "result": "ERROR",
-                "match_type": "에러",
-                "ai_answer": str(err),
+                "expected": expected_name, "result": "ERROR",
+                "match_type": "에러", "ai_answer": str(err),
             })
             errors += 1
             time.sleep(1)
             continue
 
-        # 결과 비교
         foods = analysis.get("foods", [])
         matched, match_type, ai_answer = is_match(expected_name, foods)
 
@@ -442,100 +391,105 @@ def run_test():
             "ai_answer": ai_answer,
             "confidence": foods[0].get("confidence", 0) if foods else 0,
         })
+        time.sleep(1)
 
-        time.sleep(1)  # API 속도 제한 방지
-
-    # ── 결과 요약 ──
     total = len(results)
     accuracy = (correct / total * 100) if total > 0 else 0
 
     print()
-    print("=" * 55)
-    print(f"  테스트 결과")
-    print("=" * 55)
+    print("=" * 60)
+    print(f"  사진 인식 테스트 결과")
+    print("=" * 60)
     print(f"  총 테스트: {total}장")
     print(f"  정답: {correct}장")
     print(f"  오답: {total - correct - errors}장")
     print(f"  에러: {errors}장")
     print(f"  정확도: {accuracy:.1f}%")
-    print("=" * 55)
+    print("=" * 60)
 
-    # ── 상세 리포트 저장 ──
+    # 리포트 저장
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = RESULT_DIR / "accuracy_report.txt"
+    report = {
+        "test_type": "photo_recognition",
+        "date": datetime.now().isoformat(),
+        "model": "gpt-4o",
+        "total": total,
+        "correct": correct,
+        "errors": errors,
+        "accuracy_pct": round(accuracy, 1),
+        "details": results,
+    }
 
+    json_path = RESULT_DIR / "photo_test_results.json"
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    print(f"\n  결과 저장: {json_path}")
+
+    # 텍스트 리포트
+    report_path = RESULT_DIR / "accuracy_report.txt"
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write("NutriLens AI 정확도 테스트 리포트\n")
         f.write(f"테스트 일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
         f.write(f"모델: GPT-4o Vision\n")
         f.write("=" * 60 + "\n\n")
         f.write(f"총 테스트: {total}장\n")
-        f.write(f"정답: {correct}장\n")
-        f.write(f"오답: {total - correct - errors}장\n")
-        f.write(f"에러: {errors}장\n")
+        f.write(f"정답: {correct}장 / 오답: {total-correct-errors}장 / 에러: {errors}장\n")
         f.write(f"정확도: {accuracy:.1f}%\n\n")
         f.write("-" * 60 + "\n")
-        f.write(f"{'정답':<12} {'결과':<10} {'일치유형':<10} {'AI답변'}\n")
-        f.write("-" * 60 + "\n")
         for r in results:
-            status = "✓" if r["result"] == "CORRECT" else "✗" if r["result"] == "WRONG" else "!"
-            f.write(f"{status} {r['expected']:<10} {r['result']:<10} {r['match_type']:<10} {r['ai_answer']}\n")
-        f.write("-" * 60 + "\n")
-        f.write(f"\n오답 목록:\n")
-        for r in results:
-            if r["result"] != "CORRECT":
-                f.write(f"  - {r['expected']} → AI: {r['ai_answer']} ({r['match_type']})\n")
-
-    print(f"\n  상세 리포트: {report_path}")
-
-    # ── JSON 결과도 저장 ──
-    json_path = RESULT_DIR / "accuracy_results.json"
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump({
-            "date": datetime.now().isoformat(),
-            "model": "gpt-4o",
-            "total": total,
-            "correct": correct,
-            "errors": errors,
-            "accuracy_pct": round(accuracy, 1),
-            "details": results,
-        }, f, ensure_ascii=False, indent=2)
-
-    print(f"  JSON 결과: {json_path}")
+            status = "✓" if r["result"] == "CORRECT" else "✗"
+            f.write(f"{status} {r['expected']} → {r['ai_answer']} ({r['match_type']})\n")
+    print(f"  텍스트 리포트: {report_path}")
 
     return accuracy
 
 
+# ══════════════════════════════════════════════════════════
+#  메인
+# ══════════════════════════════════════════════════════════
+
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="NutriLens 정확도 테스트")
-    parser.add_argument("--collect", action="store_true", help="테스트 이미지 수집")
-    parser.add_argument("--test", action="store_true", help="정확도 테스트 실행")
-    parser.add_argument("--all", action="store_true", help="수집 + 테스트 한번에")
+    parser = argparse.ArgumentParser(description="NutriLens 정확도 테스트 v2")
+    parser.add_argument("--db", action="store_true", help="DB 매칭 테스트 (API 비용 없음)")
+    parser.add_argument("--photo", action="store_true", help="사진 인식 테스트 (GPT-4o)")
+    parser.add_argument("--all", action="store_true", help="DB + 사진 둘 다")
     args = parser.parse_args()
 
-    if not args.collect and not args.test and not args.all:
-        print("사용법:")
-        print("  python tools/accuracy_test.py --collect   # 이미지 수집")
-        print("  python tools/accuracy_test.py --test      # 정확도 테스트")
-        print("  python tools/accuracy_test.py --all       # 수집 + 테스트")
+    if not args.db and not args.photo and not args.all:
         print()
-        print(f"테스트 음식: {len(TEST_FOODS)}종")
-        print(f"예상 API 비용: ~${len(TEST_FOODS) * 0.01:.2f}")
+        print("NutriLens 정확도 테스트 v2")
+        print()
+        print("사용법:")
+        print("  python tools/accuracy_test.py --db      # DB 매칭 (무료, 즉시)")
+        print("  python tools/accuracy_test.py --photo   # 사진 인식 (~$0.01/장)")
+        print("  python tools/accuracy_test.py --all     # 둘 다")
+        print()
+        print("사진 테스트 준비:")
+        print(f"  1. {TEST_DIR} 폴더에 음식 사진 넣기")
+        print("  2. 파일명 = 정답 (예: 김치.jpg, 삼겹살.png)")
+        print("  3. --photo 실행")
         sys.exit(0)
 
-    if args.collect or args.all:
-        collect_images()
+    if args.db or args.all:
+        db_coverage = run_db_test()
+        if db_coverage is not None:
+            if db_coverage >= 90:
+                print(f"\n  ✓ DB 커버리지 {db_coverage:.1f}% — 우수!")
+            elif db_coverage >= 70:
+                print(f"\n  △ DB 커버리지 {db_coverage:.1f}% — 양호")
+            else:
+                print(f"\n  ✗ DB 커버리지 {db_coverage:.1f}% — 개선 필요")
 
-    if args.test or args.all:
-        print()
-        accuracy = run_test()
-        if accuracy >= 80:
-            print(f"\n  ✓ 정확도 {accuracy:.1f}% — 양호!")
-        elif accuracy >= 60:
-            print(f"\n  △ 정확도 {accuracy:.1f}% — 개선 필요")
-        else:
-            print(f"\n  ✗ 정확도 {accuracy:.1f}% — 심각한 개선 필요")
+    if args.photo or args.all:
+        accuracy = run_photo_test()
+        if accuracy is not None:
+            if accuracy >= 80:
+                print(f"\n  ✓ 인식 정확도 {accuracy:.1f}% — 양호!")
+            elif accuracy >= 60:
+                print(f"\n  △ 인식 정확도 {accuracy:.1f}% — 개선 필요")
+            else:
+                print(f"\n  ✗ 인식 정확도 {accuracy:.1f}% — 심각한 개선 필요")
 
 
 if __name__ == "__main__":

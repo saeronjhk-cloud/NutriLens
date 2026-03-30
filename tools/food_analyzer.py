@@ -39,15 +39,48 @@ load_env()
 
 # ── 음식 DB 로드 ──
 def load_food_db(db_path=None):
-    """엑셀 DB를 로드하여 딕셔너리 리스트로 반환"""
+    """SQLite DB를 로드 (빠르고 메모리 효율적)"""
+    import sqlite3
+
+    if db_path is None:
+        # SQLite 우선, 없으면 엑셀 fallback
+        sqlite_path = Path(__file__).parent.parent / 'nutrilens_db.sqlite'
+        xlsx_path = Path(__file__).parent.parent / 'NutriLens_음식DB.xlsx'
+
+        if sqlite_path.exists():
+            return _load_sqlite(sqlite_path)
+        elif xlsx_path.exists():
+            return _load_xlsx(xlsx_path)
+        else:
+            print("DB 파일을 찾을 수 없습니다.")
+            return []
+    else:
+        p = Path(db_path)
+        if p.suffix == '.sqlite':
+            return _load_sqlite(p)
+        else:
+            return _load_xlsx(p)
+
+
+def _load_sqlite(db_path):
+    """SQLite에서 로드 — 빠르고 메모리 효율적"""
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM foods")
+    foods = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    return foods
+
+
+def _load_xlsx(db_path):
+    """엑셀에서 로드 — SQLite 없을 때 fallback"""
     try:
         import openpyxl
     except ImportError:
         print("openpyxl 필요: pip install openpyxl --break-system-packages")
         sys.exit(1)
-
-    if db_path is None:
-        db_path = Path(__file__).parent.parent / 'NutriLens_음식DB.xlsx'
 
     if not Path(db_path).exists():
         print(f"DB 파일을 찾을 수 없습니다: {db_path}")

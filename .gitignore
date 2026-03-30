@@ -12,6 +12,11 @@ __pycache__/
 .tmp/
 *.tmp
 
+# 대용량 원본 파일 (DB에 이미 통합됨)
+FoodData_Central_sr_legacy_food_json_2018-04.json
+*.csv
+NutriLens_음식DB.json
+
 # OS
 .DS_Store
 Thumbs.db
@@ -19,5 +24,3 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-FoodData_Central_sr_legacy_food_json_2018-04.json 
-*.csv 
