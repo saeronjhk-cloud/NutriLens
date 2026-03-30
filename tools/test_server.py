@@ -158,6 +158,7 @@ def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o"):
         ],
         "max_tokens": 2000,
         "temperature": 0.2,
+        "response_format": {"type": "json_object"},
     }
 
     data = json.dumps(payload).encode('utf-8')
@@ -1197,6 +1198,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 ],
                 "max_tokens": 2000,
                 "temperature": 0.2,
+                "response_format": {"type": "json_object"},
             }
 
             data = json.dumps(payload).encode('utf-8')
@@ -1205,11 +1207,18 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             req.add_header("Content-Type", "application/json")
 
             try:
-                with urllib.request.urlopen(req, timeout=60) as resp:
+                with urllib.request.urlopen(req, timeout=90) as resp:
                     result = json.loads(resp.read().decode('utf-8'))
             except urllib.error.HTTPError as e:
                 body = e.read().decode('utf-8', errors='replace')
                 self._json_response(200, {"error": f"OpenAI API 에러 ({e.code}): {body}"})
+                return
+            except Exception as e:
+                self._json_response(200, {"error": f"API 호출 실패: {str(e)}"})
+                return
+
+            if "error" in result:
+                self._json_response(200, {"error": f"OpenAI: {result['error'].get('message', str(result['error']))}"})
                 return
 
             content = result["choices"][0]["message"]["content"]
