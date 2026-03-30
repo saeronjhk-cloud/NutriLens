@@ -1222,9 +1222,12 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 return
 
             content = result["choices"][0]["message"]["content"]
+            print(f"  AI 응답 길이: {len(content)}자")
+            print(f"  AI 응답 앞부분: {content[:200]}")
             analysis = _parse_ai_json(content)
             if analysis is None:
-                self._json_response(200, {"error": "AI 응답 파싱 실패", "raw": content[:300]})
+                print(f"  [ERROR] 파싱 실패! 전체 응답:\n{content}")
+                self._json_response(200, {"error": "AI 응답 파싱 실패", "raw": content[:500]})
                 return
 
             # DB 매칭
