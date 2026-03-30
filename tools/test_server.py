@@ -931,23 +931,20 @@ function renderResult(data, isLeftover) {
   const summary = data.meal_summary || {};
   sharingCount = 1;
 
-  // 나눠먹기 섹션 (일반 모드만)
-  let sharingHtml = '';
-  if (!isLeftover) {
-    sharingHtml = `
-      <div class="sharing-section">
-        <div class="sharing-row">
-          <span class="sharing-label">함께 먹은 인원</span>
-          <div class="sharing-controls">
-            <button class="sharing-btn" onclick="adjustSharing(-1)">−</button>
-            <span class="sharing-count" id="sharingNum">1</span>
-            <button class="sharing-btn" onclick="adjustSharing(1)">+</button>
-          </div>
+  // 나눠먹기 섹션 (일반 + 남은음식 모드 공통)
+  let sharingHtml = `
+    <div class="sharing-section">
+      <div class="sharing-row">
+        <span class="sharing-label">함께 먹은 인원</span>
+        <div class="sharing-controls">
+          <button class="sharing-btn" onclick="adjustSharing(-1)">−</button>
+          <span class="sharing-count" id="sharingNum">1</span>
+          <button class="sharing-btn" onclick="adjustSharing(1)">+</button>
         </div>
-        <div id="sharingSummary" style="font-size:0.85em; color:#aaa; text-align:center"></div>
       </div>
-    `;
-  }
+      <div id="sharingSummary" style="font-size:0.85em; color:#aaa; text-align:center"></div>
+    </div>
+  `;
 
   // 음식 카드들
   let cardsHtml = sharingHtml;
