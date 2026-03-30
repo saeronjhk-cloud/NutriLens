@@ -44,15 +44,16 @@ LEFTOVER_PROMPT = """당신은 NutriLens의 AI 음식 잔량 분석 전문가입
 2. 두 번째 사진(후)에서 남은 양을 추정하세요
 3. eaten_pct = 실제 먹은 비율 (0~100). 다 먹었으면 100, 절반 남겼으면 50
 4. 영양소는 원래 양 × (eaten_pct / 100) 으로 계산
-5. 반드시 아래 JSON 형식으로만 답변하세요
+5. 두 사진이 비슷해 보여도, 그릇의 내용물 높이나 양의 차이를 세심하게 비교하세요
 
-## 응답 형식
+## 중요: 반드시 JSON만 출력하세요. 설명 텍스트 없이 순수 JSON만 응답하세요.
+
 ```json
 {
   "foods": [
     {
-      "name_ko": "음식 한국어 이름",
-      "name_en": "English Name",
+      "name_ko": "음식명",
+      "name_en": "English",
       "category": "korean",
       "original_serving_g": 300,
       "eaten_pct": 75,
@@ -65,7 +66,7 @@ LEFTOVER_PROMPT = """당신은 NutriLens의 AI 음식 잔량 분석 전문가입
       "sodium_mg": 600,
       "sugar_g": 2,
       "confidence": 0.85,
-      "leftover_note": "밥을 1/4 정도 남김"
+      "leftover_note": "1/4 정도 남김"
     }
   ],
   "meal_summary": {
@@ -75,7 +76,7 @@ LEFTOVER_PROMPT = """당신은 NutriLens의 AI 음식 잔량 분석 전문가입
     "total_fat": 9,
     "meal_type": "점심",
     "health_score": 7,
-    "one_line_comment": "약 75% 섭취. 전체적으로 균형 잡힌 식사입니다."
+    "one_line_comment": "약 75% 섭취했습니다."
   }
 }
 ```"""
@@ -94,6 +95,35 @@ def load_env():
             break
 
 load_env()
+
+# ── AI JSON 파싱 (강화) ──
+def _parse_ai_json(content):
+    """AI 응답에서 JSON을 추출 — 여러 형식 대응"""
+    # 1) ```json ... ``` 블록
+    if "```json" in content:
+        content = content.split("```json")[1].split("```")[0]
+    elif "```" in content:
+        content = content.split("```")[1].split("```")[0]
+
+    # 2) 직접 파싱 시도
+    try:
+        return json.loads(content.strip())
+    except json.JSONDecodeError:
+        pass
+
+    # 3) { 로 시작하는 부분 찾기
+    start = content.find('{')
+    if start >= 0:
+        # 마지막 } 찾기
+        end = content.rfind('}')
+        if end > start:
+            try:
+                return json.loads(content[start:end+1])
+            except json.JSONDecodeError:
+                pass
+
+    return None
+
 
 # ── 음식 DB 미리 로드 ──
 print("음식 DB 로딩 중...")
@@ -149,16 +179,10 @@ def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o"):
 
     content = result["choices"][0]["message"]["content"]
 
-    # JSON 추출
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0]
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0]
-
-    try:
-        return json.loads(content.strip())
-    except json.JSONDecodeError:
-        return {"error": "AI 응답 파싱 실패", "raw": content}
+    parsed = _parse_ai_json(content)
+    if parsed is not None:
+        return parsed
+    return {"error": "AI 응답 파싱 실패", "raw": content[:300]}
 
 
 # ── HTML 페이지 ──
@@ -1192,15 +1216,9 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 return
 
             content = result["choices"][0]["message"]["content"]
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-
-            try:
-                analysis = json.loads(content.strip())
-            except json.JSONDecodeError:
-                self._json_response(200, {"error": "AI 응답 파싱 실패", "raw": content})
+            analysis = _parse_ai_json(content)
+            if analysis is None:
+                self._json_response(200, {"error": "AI 응답 파싱 실패", "raw": content[:300]})
                 return
 
             # DB 매칭
