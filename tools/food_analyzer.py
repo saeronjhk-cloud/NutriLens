@@ -306,14 +306,20 @@ def match_with_db(analysis, foods_db):
         return analysis
 
     for food in analysis["foods"]:
-        ai_name = food.get("name_ko", "")
+        ai_name = (food.get("name_ko") or "").strip()
+        if not ai_name:
+            food['db_matched'] = False
+            food['source'] = 'AI_ESTIMATED'
+            continue
 
         # DB에서 이름으로 검색 (정확 매칭 → 부분 매칭)
         exact_match = None
         partial_matches = []
 
         for db_food in foods_db:
-            db_name = db_food.get("name_ko", "")
+            db_name = (db_food.get("name_ko") or "").strip()
+            if not db_name:
+                continue
             if ai_name == db_name:
                 exact_match = db_food
                 break
