@@ -32,6 +32,54 @@ sys.path.insert(0, str(TOOLS_DIR))
 # food_analyzer 모듈 임포트
 from food_analyzer import load_food_db, match_with_db, SYSTEM_PROMPT
 
+# ── 전/후 비교 분석 프롬프트 ──
+LEFTOVER_PROMPT = """당신은 NutriLens의 AI 음식 잔량 분석 전문가입니다.
+
+## 역할
+사용자가 먹기 전(첫 번째 사진)과 먹은 후(두 번째 사진)를 보내줍니다.
+두 사진을 비교하여 **실제로 섭취한 양**을 계산하세요.
+
+## 규칙
+1. 첫 번째 사진(전)의 모든 음식을 식별하세요
+2. 두 번째 사진(후)에서 남은 양을 추정하세요
+3. eaten_pct = 실제 먹은 비율 (0~100). 다 먹었으면 100, 절반 남겼으면 50
+4. 영양소는 원래 양 × (eaten_pct / 100) 으로 계산
+5. 반드시 아래 JSON 형식으로만 답변하세요
+
+## 응답 형식
+```json
+{
+  "foods": [
+    {
+      "name_ko": "음식 한국어 이름",
+      "name_en": "English Name",
+      "category": "korean",
+      "original_serving_g": 300,
+      "eaten_pct": 75,
+      "estimated_serving_g": 225,
+      "calories_kcal": 338,
+      "protein_g": 11,
+      "carbs_g": 49,
+      "fat_g": 9,
+      "fiber_g": 1.5,
+      "sodium_mg": 600,
+      "sugar_g": 2,
+      "confidence": 0.85,
+      "leftover_note": "밥을 1/4 정도 남김"
+    }
+  ],
+  "meal_summary": {
+    "total_calories": 338,
+    "total_protein": 11,
+    "total_carbs": 49,
+    "total_fat": 9,
+    "meal_type": "점심",
+    "health_score": 7,
+    "one_line_comment": "약 75% 섭취. 전체적으로 균형 잡힌 식사입니다."
+  }
+}
+```"""
+
 # ── .env 로드 ──
 def load_env():
     env_paths = [PROJECT_DIR / '.env', Path.cwd() / '.env']
@@ -430,11 +478,122 @@ HTML_PAGE = """<!DOCTYPE html>
     color: #f87171;
   }
 
+  /* 모드 선택 */
+  .mode-selector {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .mode-card {
+    background: #1a1a2e;
+    border: 2px solid #2a2a4a;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .mode-card:hover { border-color: #3b82f6; }
+  .mode-card.active { border-color: #3b82f6; background: rgba(59,130,246,0.08); }
+  .mode-icon { font-size: 1.5em; margin-bottom: 6px; }
+  .mode-title { font-weight: 600; font-size: 0.95em; }
+  .mode-desc { font-size: 0.8em; color: #888; margin-top: 4px; }
+
+  /* 전/후 업로드 */
+  .dual-upload {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .upload-box {
+    flex: 1;
+    max-width: 45%;
+    background: #1a1a2e;
+    border: 2px dashed #3a3a5a;
+    border-radius: 12px;
+    padding: 12px;
+    text-align: center;
+    cursor: pointer;
+    position: relative;
+    min-height: 160px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .upload-box:hover { border-color: #3b82f6; }
+  .upload-box img {
+    max-width: 100%;
+    max-height: 140px;
+    border-radius: 8px;
+  }
+  .upload-box-label {
+    font-size: 0.8em;
+    color: #60a5fa;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .upload-box-placeholder { color: #888; font-size: 0.85em; }
+  .upload-arrow { font-size: 1.5em; color: #555; }
+
+  /* 나눠먹기 인원수 */
+  .sharing-section {
+    background: #1a1a2e;
+    border: 1px solid #2a2a4a;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .sharing-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .sharing-label { font-size: 0.9em; color: #ccc; }
+  .sharing-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .sharing-btn {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    border: 1px solid #3a3a5a;
+    background: #0f0f1a;
+    color: #e0e0e0;
+    font-size: 1.2em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sharing-btn:hover { border-color: #3b82f6; }
+  .sharing-count { font-size: 1.1em; font-weight: 700; min-width: 24px; text-align: center; }
+
+  /* 남은 양 표시 */
+  .eaten-bar {
+    height: 6px;
+    background: #2a2a4a;
+    border-radius: 3px;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .eaten-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #6ee7b7;
+  }
+
   /* 반응형 */
   @media (max-width: 600px) {
     .nutrition-grid { grid-template-columns: repeat(2, 1fr); }
     .summary-stats { grid-template-columns: repeat(2, 1fr); }
     .header h1 { font-size: 1.5em; }
+    .mode-title { font-size: 0.85em; }
+    .mode-desc { font-size: 0.75em; }
   }
 </style>
 </head>
@@ -458,7 +617,21 @@ HTML_PAGE = """<!DOCTYPE html>
     </p>
   </div>
 
-  <!-- 업로드 영역 -->
+  <!-- 모드 선택 -->
+  <div class="mode-selector" id="modeSelector">
+    <div class="mode-card active" id="modeNormal" onclick="setMode('normal')">
+      <div class="mode-icon">📸</div>
+      <div class="mode-title">일반 분석</div>
+      <div class="mode-desc">음식 사진 1장으로 분석</div>
+    </div>
+    <div class="mode-card" id="modeLeftover" onclick="setMode('leftover')">
+      <div class="mode-icon">📸➡📸</div>
+      <div class="mode-title">남은 음식 비교</div>
+      <div class="mode-desc">전/후 사진 2장 비교</div>
+    </div>
+  </div>
+
+  <!-- 일반 모드: 업로드 영역 -->
   <div class="upload-area" id="uploadArea">
     <div class="icon">📸</div>
     <div class="text">음식 사진을 여기에 끌어다 놓거나 클릭하세요</div>
@@ -466,7 +639,30 @@ HTML_PAGE = """<!DOCTYPE html>
     <input type="file" id="fileInput" accept="image/*" style="display:none" />
   </div>
 
-  <!-- 미리보기 -->
+  <!-- 남은음식 모드: 전/후 업로드 -->
+  <div class="leftover-upload" id="leftoverUpload" style="display:none">
+    <div class="dual-upload">
+      <div class="upload-box" id="beforeBox" onclick="document.getElementById('beforeInput').click()">
+        <div class="upload-box-label">먹기 전</div>
+        <img id="beforePreview" style="display:none" />
+        <div class="upload-box-placeholder" id="beforePlaceholder">📸 터치하여 선택</div>
+        <input type="file" id="beforeInput" accept="image/*" style="display:none" />
+      </div>
+      <div class="upload-arrow">➡</div>
+      <div class="upload-box" id="afterBox" onclick="document.getElementById('afterInput').click()">
+        <div class="upload-box-label">먹은 후</div>
+        <img id="afterPreview" style="display:none" />
+        <div class="upload-box-placeholder" id="afterPlaceholder">📸 터치하여 선택</div>
+        <input type="file" id="afterInput" accept="image/*" style="display:none" />
+      </div>
+    </div>
+    <div style="text-align:center; margin-top:14px">
+      <button class="btn btn-primary" id="leftoverBtn" onclick="analyzeLeftover()" disabled>🔍 남은 음식 분석</button>
+      <button class="btn btn-secondary" onclick="resetUpload()">다시 선택</button>
+    </div>
+  </div>
+
+  <!-- 일반 모드: 미리보기 -->
   <div class="preview-section" id="previewSection">
     <img id="previewImg" />
     <div class="preview-actions">
@@ -498,34 +694,44 @@ HTML_PAGE = """<!DOCTYPE html>
 </div>
 
 <script>
-// ── 파일 선택 & 드래그앤드롭 ──
+// ── 상태 ──
+let currentMode = 'normal';
+let selectedFile = null;
+let beforeFile = null;
+let afterFile = null;
+let currentAnalysis = null;  // 나눠먹기용
+
+// ── 모드 전환 ──
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('modeNormal').className = 'mode-card' + (mode === 'normal' ? ' active' : '');
+  document.getElementById('modeLeftover').className = 'mode-card' + (mode === 'leftover' ? ' active' : '');
+  resetUpload();
+  if (mode === 'normal') {
+    document.getElementById('uploadArea').style.display = 'block';
+    document.getElementById('leftoverUpload').style.display = 'none';
+  } else {
+    document.getElementById('uploadArea').style.display = 'none';
+    document.getElementById('leftoverUpload').style.display = 'block';
+  }
+}
+
+// ── 일반 모드: 파일 선택 ──
 const uploadArea = document.getElementById('uploadArea');
 const fileInput = document.getElementById('fileInput');
-let selectedFile = null;
 
 uploadArea.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-
-uploadArea.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  uploadArea.classList.add('dragover');
-});
+uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
 uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
 uploadArea.addEventListener('drop', (e) => {
-  e.preventDefault();
-  uploadArea.classList.remove('dragover');
+  e.preventDefault(); uploadArea.classList.remove('dragover');
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
 
 function handleFile(file) {
-  if (!file || !file.type.startsWith('image/')) {
-    alert('이미지 파일만 업로드할 수 있습니다.');
-    return;
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    alert('파일 크기는 10MB 이하여야 합니다.');
-    return;
-  }
+  if (!file || !file.type.startsWith('image/')) return alert('이미지 파일만 가능합니다.');
+  if (file.size > 10*1024*1024) return alert('10MB 이하만 가능합니다.');
   selectedFile = file;
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -538,30 +744,69 @@ function handleFile(file) {
   reader.readAsDataURL(file);
 }
 
+// ── 남은음식 모드: 전/후 파일 선택 ──
+document.getElementById('beforeInput').addEventListener('change', (e) => {
+  beforeFile = e.target.files[0];
+  if (beforeFile) {
+    const r = new FileReader();
+    r.onload = (ev) => {
+      document.getElementById('beforePreview').src = ev.target.result;
+      document.getElementById('beforePreview').style.display = 'block';
+      document.getElementById('beforePlaceholder').style.display = 'none';
+    };
+    r.readAsDataURL(beforeFile);
+  }
+  checkLeftoverReady();
+});
+document.getElementById('afterInput').addEventListener('change', (e) => {
+  afterFile = e.target.files[0];
+  if (afterFile) {
+    const r = new FileReader();
+    r.onload = (ev) => {
+      document.getElementById('afterPreview').src = ev.target.result;
+      document.getElementById('afterPreview').style.display = 'block';
+      document.getElementById('afterPlaceholder').style.display = 'none';
+    };
+    r.readAsDataURL(afterFile);
+  }
+  checkLeftoverReady();
+});
+function checkLeftoverReady() {
+  document.getElementById('leftoverBtn').disabled = !(beforeFile && afterFile);
+}
+
 function resetUpload() {
-  selectedFile = null;
+  selectedFile = null; beforeFile = null; afterFile = null; currentAnalysis = null;
   fileInput.value = '';
-  uploadArea.style.display = 'block';
+  document.getElementById('beforeInput').value = '';
+  document.getElementById('afterInput').value = '';
+  document.getElementById('beforePreview').style.display = 'none';
+  document.getElementById('afterPreview').style.display = 'none';
+  document.getElementById('beforePlaceholder').style.display = 'block';
+  document.getElementById('afterPlaceholder').style.display = 'block';
+  if (currentMode === 'normal') {
+    uploadArea.style.display = 'block';
+    document.getElementById('leftoverUpload').style.display = 'none';
+  } else {
+    uploadArea.style.display = 'none';
+    document.getElementById('leftoverUpload').style.display = 'block';
+  }
   document.getElementById('previewSection').style.display = 'none';
   document.getElementById('resultSection').style.display = 'none';
   document.getElementById('errorBox').style.display = 'none';
   document.getElementById('loading').style.display = 'none';
+  document.getElementById('leftoverBtn').disabled = true;
 }
 
-// ── API 호출 ──
+// ── 일반 분석 API ──
 async function analyzeFood() {
   const apiKey = document.getElementById('apiKey').value.trim();
-  if (!selectedFile) {
-    alert('사진을 먼저 선택해주세요.');
-    return;
-  }
+  if (!selectedFile) return alert('사진을 먼저 선택해주세요.');
 
-  // UI 전환
   document.getElementById('previewSection').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
   document.getElementById('errorBox').style.display = 'none';
   document.getElementById('resultSection').style.display = 'none';
-  document.getElementById('analyzeBtn').disabled = true;
 
   const formData = new FormData();
   formData.append('image', selectedFile);
@@ -570,41 +815,137 @@ async function analyzeFood() {
   try {
     const resp = await fetch('/analyze', { method: 'POST', body: formData });
     const data = await resp.json();
-
     document.getElementById('loading').style.display = 'none';
 
     if (data.error) {
       document.getElementById('errorBox').innerHTML = '<strong>오류:</strong> ' + data.error;
-      if (data.help) document.getElementById('errorBox').innerHTML += '<br><br>' + data.help.replace(/\\n/g, '<br>');
       document.getElementById('errorBox').style.display = 'block';
       document.getElementById('previewSection').style.display = 'block';
-      document.getElementById('analyzeBtn').disabled = false;
       return;
     }
-
+    currentAnalysis = data;
     renderResult(data);
-
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('errorBox').innerHTML = '<strong>네트워크 오류:</strong> ' + err.message;
     document.getElementById('errorBox').style.display = 'block';
     document.getElementById('previewSection').style.display = 'block';
-    document.getElementById('analyzeBtn').disabled = false;
   }
 }
 
+// ── 남은 음식 비교 API ──
+async function analyzeLeftover() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!beforeFile || !afterFile) return alert('전/후 사진 2장을 모두 선택해주세요.');
+
+  document.getElementById('leftoverUpload').style.display = 'none';
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('errorBox').style.display = 'none';
+
+  const formData = new FormData();
+  formData.append('before', beforeFile);
+  formData.append('after', afterFile);
+  formData.append('api_key', apiKey);
+
+  try {
+    const resp = await fetch('/analyze-leftover', { method: 'POST', body: formData });
+    const data = await resp.json();
+    document.getElementById('loading').style.display = 'none';
+
+    if (data.error) {
+      document.getElementById('errorBox').innerHTML = '<strong>오류:</strong> ' + data.error;
+      document.getElementById('errorBox').style.display = 'block';
+      document.getElementById('leftoverUpload').style.display = 'block';
+      return;
+    }
+    currentAnalysis = data;
+    renderResult(data, true);
+  } catch (err) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('errorBox').innerHTML = '<strong>네트워크 오류:</strong> ' + err.message;
+    document.getElementById('errorBox').style.display = 'block';
+    document.getElementById('leftoverUpload').style.display = 'block';
+  }
+}
+
+// ── 나눠먹기: 인원수 조절 ──
+let sharingCount = 1;
+
+function adjustSharing(delta) {
+  sharingCount = Math.max(1, Math.min(20, sharingCount + delta));
+  document.getElementById('sharingNum').textContent = sharingCount;
+  if (currentAnalysis) recalcSummary();
+}
+
+function recalcSummary() {
+  if (!currentAnalysis) return;
+  const foods = currentAnalysis.foods || [];
+  const div = sharingCount;
+  let tc=0, tp=0, tca=0, tf=0;
+  foods.forEach(f => {
+    tc += (f.calories_kcal||0)/div;
+    tp += (f.protein_g||0)/div;
+    tca += (f.carbs_g||0)/div;
+    tf += (f.fat_g||0)/div;
+  });
+  const el = document.getElementById('sharingSummary');
+  if (el) {
+    el.innerHTML = sharingCount > 1
+      ? `<span style="color:#6ee7b7">${sharingCount}명</span>이서 나눠 먹기: 1인당 <strong>${Math.round(tc)} kcal</strong> · 단백질 ${Math.round(tp)}g · 탄수화물 ${Math.round(tca)}g · 지방 ${Math.round(tf)}g`
+      : '';
+  }
+  // 요약카드도 업데이트
+  const sv = document.getElementById('sumCal'); if(sv) sv.textContent = Math.round(tc);
+  const sp = document.getElementById('sumPro'); if(sp) sp.textContent = Math.round(tp)+'g';
+  const sc = document.getElementById('sumCarb'); if(sc) sc.textContent = Math.round(tca)+'g';
+  const sfat = document.getElementById('sumFat'); if(sfat) sfat.textContent = Math.round(tf)+'g';
+}
+
 // ── 결과 렌더링 ──
-function renderResult(data) {
+function renderResult(data, isLeftover) {
   const foods = data.foods || [];
   const summary = data.meal_summary || {};
+  sharingCount = 1;
+
+  // 나눠먹기 섹션 (일반 모드만)
+  let sharingHtml = '';
+  if (!isLeftover) {
+    sharingHtml = `
+      <div class="sharing-section">
+        <div class="sharing-row">
+          <span class="sharing-label">함께 먹은 인원</span>
+          <div class="sharing-controls">
+            <button class="sharing-btn" onclick="adjustSharing(-1)">−</button>
+            <span class="sharing-count" id="sharingNum">1</span>
+            <button class="sharing-btn" onclick="adjustSharing(1)">+</button>
+          </div>
+        </div>
+        <div id="sharingSummary" style="font-size:0.85em; color:#aaa; text-align:center"></div>
+      </div>
+    `;
+  }
 
   // 음식 카드들
-  let cardsHtml = '';
+  let cardsHtml = sharingHtml;
   foods.forEach((food, i) => {
     const isDb = food.db_matched || food.source === 'DB_MATCHED';
     const conf = (food.confidence || 0);
     const confPct = Math.round(conf * 100);
     const confColor = conf >= 0.8 ? '#6ee7b7' : conf >= 0.5 ? '#fbbf24' : '#f87171';
+    const eatenPct = food.eaten_pct || 100;
+
+    // 남은 음식 바
+    let eatenBarHtml = '';
+    if (isLeftover && food.eaten_pct !== undefined) {
+      eatenBarHtml = `
+        <div style="font-size:0.8em; color:#6ee7b7; margin-bottom:4px">
+          섭취량: ${eatenPct}% ${food.leftover_note ? '· ' + food.leftover_note : ''}
+        </div>
+        <div class="eaten-bar">
+          <div class="eaten-fill" style="width:${eatenPct}%"></div>
+        </div>
+      `;
+    }
 
     cardsHtml += `
       <div class="food-card">
@@ -623,6 +964,7 @@ function renderResult(data) {
         <div style="font-size:0.8em; color:#888; margin-bottom:10px; margin-top:-8px">
           확신도 ${confPct}% · 약 ${food.estimated_serving_g || '?'}g
         </div>
+        ${eatenBarHtml}
         <div class="nutrition-grid">
           <div class="nutrition-item">
             <div class="nutrition-value">${food.calories_kcal || 0}</div>
@@ -652,22 +994,22 @@ function renderResult(data) {
 
   document.getElementById('summaryCard').innerHTML = `
     <div class="summary-card">
-      <div class="summary-title">식사 요약</div>
+      <div class="summary-title">${isLeftover ? '실제 섭취 요약' : '식사 요약'}</div>
       <div class="summary-stats">
         <div class="stat-item">
-          <div class="stat-value">${summary.total_calories || 0}</div>
+          <div class="stat-value" id="sumCal">${summary.total_calories || 0}</div>
           <div class="stat-label">총 칼로리 (kcal)</div>
         </div>
         <div class="stat-item">
-          <div class="stat-value" style="color:#60a5fa">${summary.total_protein || 0}g</div>
+          <div class="stat-value" style="color:#60a5fa" id="sumPro">${summary.total_protein || 0}g</div>
           <div class="stat-label">단백질</div>
         </div>
         <div class="stat-item">
-          <div class="stat-value" style="color:#fbbf24">${summary.total_carbs || 0}g</div>
+          <div class="stat-value" style="color:#fbbf24" id="sumCarb">${summary.total_carbs || 0}g</div>
           <div class="stat-label">탄수화물</div>
         </div>
         <div class="stat-item">
-          <div class="stat-value" style="color:#f87171">${summary.total_fat || 0}g</div>
+          <div class="stat-value" style="color:#f87171" id="sumFat">${summary.total_fat || 0}g</div>
           <div class="stat-label">지방</div>
         </div>
       </div>
@@ -708,69 +1050,181 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def _parse_multipart(self):
+        """multipart form data 파싱 — 파일 여러개 지원"""
+        content_type = self.headers.get('Content-Type', '')
+        if 'multipart/form-data' not in content_type:
+            return None, None, "multipart/form-data 필요"
+
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length)
+
+        boundary_match = re.search(r'boundary=([^\s;]+)', content_type)
+        if not boundary_match:
+            return None, None, "boundary를 찾을 수 없습니다."
+        boundary = boundary_match.group(1).encode()
+
+        parts = body.split(b'--' + boundary)
+        fields = {}
+        files = {}
+
+        for part in parts:
+            if b'Content-Disposition' not in part:
+                continue
+            header_end = part.find(b'\r\n\r\n')
+            if header_end == -1:
+                continue
+            header_section = part[:header_end].decode('utf-8', errors='replace')
+            body_section = part[header_end + 4:]
+            if body_section.endswith(b'\r\n'):
+                body_section = body_section[:-2]
+
+            name_match = re.search(r'name="([^"]+)"', header_section)
+            if not name_match:
+                continue
+            field_name = name_match.group(1)
+
+            filename_match = re.search(r'filename="([^"]*)"', header_section)
+            if filename_match and len(body_section) > 0:
+                files[field_name] = {
+                    'data': body_section,
+                    'filename': filename_match.group(1) or 'image.jpg'
+                }
+            else:
+                fields[field_name] = body_section.decode('utf-8', errors='replace')
+
+        return fields, files, None
+
+    def _get_api_key(self, fields):
+        """API 키 추출"""
+        api_key = (fields or {}).get('api_key', '').strip()
+        if not api_key:
+            api_key = os.environ.get('OPENAI_API_KEY', '')
+        return api_key
+
+    def _image_to_base64(self, file_info):
+        """파일 정보 → base64 + media_type"""
+        ext = Path(file_info['filename']).suffix.lower()
+        media_type = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.png': 'image/png', '.gif': 'image/gif',
+            '.webp': 'image/webp',
+        }.get(ext, 'image/jpeg')
+        b64 = base64.b64encode(file_info['data']).decode('utf-8')
+        return b64, media_type
+
     def do_POST(self):
         """음식 사진 분석 API"""
-        if self.path != '/analyze':
+        if self.path == '/analyze':
+            self._handle_analyze()
+        elif self.path == '/analyze-leftover':
+            self._handle_leftover()
+        else:
             self.send_response(404)
             self.end_headers()
             return
 
+    def _handle_leftover(self):
+        """전/후 사진 비교 — 남은 음식 분석"""
         try:
-            # multipart form data 파싱
-            content_type = self.headers.get('Content-Type', '')
-            if 'multipart/form-data' not in content_type:
-                self._json_response(400, {"error": "multipart/form-data 필요"})
+            fields, files, err = self._parse_multipart()
+            if err:
+                self._json_response(400, {"error": err})
                 return
 
-            # multipart 파싱 (cgi 모듈 미사용 — Python 3.13 호환)
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length)
-
-            # boundary 추출
-            boundary_match = re.search(r'boundary=([^\s;]+)', content_type)
-            if not boundary_match:
-                self._json_response(400, {"error": "boundary를 찾을 수 없습니다."})
-                return
-            boundary = boundary_match.group(1).encode()
-
-            # 파트 분리
-            parts = body.split(b'--' + boundary)
-            fields = {}   # text fields
-            file_data = None
-            file_name = 'image.jpg'
-
-            for part in parts:
-                if b'Content-Disposition' not in part:
-                    continue
-                # 헤더와 바디 분리
-                header_end = part.find(b'\r\n\r\n')
-                if header_end == -1:
-                    continue
-                header_section = part[:header_end].decode('utf-8', errors='replace')
-                body_section = part[header_end + 4:]
-                if body_section.endswith(b'\r\n'):
-                    body_section = body_section[:-2]
-
-                # 필드명 추출
-                name_match = re.search(r'name="([^"]+)"', header_section)
-                if not name_match:
-                    continue
-                field_name = name_match.group(1)
-
-                # 파일인지 텍스트인지 판별
-                filename_match = re.search(r'filename="([^"]*)"', header_section)
-                if filename_match:
-                    file_data = body_section
-                    file_name = filename_match.group(1) or 'image.jpg'
-                else:
-                    fields[field_name] = body_section.decode('utf-8', errors='replace')
-
-            # API 키
-            api_key = fields.get('api_key', '').strip()
-
+            api_key = self._get_api_key(fields)
             if not api_key:
-                api_key = os.environ.get('OPENAI_API_KEY', '')
+                self._json_response(400, {"error": "API 키가 없습니다."})
+                return
 
+            before_file = files.get('before')
+            after_file = files.get('after')
+
+            if not before_file or not after_file:
+                self._json_response(400, {"error": "전/후 사진 2장이 필요합니다."})
+                return
+
+            before_b64, before_mt = self._image_to_base64(before_file)
+            after_b64, after_mt = self._image_to_base64(after_file)
+
+            print(f"\n남은 음식 분석 요청")
+            print(f"  전: {before_file['filename']} ({len(before_file['data'])/1024:.0f}KB)")
+            print(f"  후: {after_file['filename']} ({len(after_file['data'])/1024:.0f}KB)")
+
+            # 전/후 비교 전용 프롬프트
+            leftover_prompt = LEFTOVER_PROMPT
+
+            url = "https://api.openai.com/v1/chat/completions"
+            payload = {
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": leftover_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "첫 번째 사진은 먹기 전, 두 번째 사진은 먹은 후입니다. 실제로 먹은 양을 분석해주세요."},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{before_mt};base64,{before_b64}", "detail": "high"}
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{after_mt};base64,{after_b64}", "detail": "high"}
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 2000,
+                "temperature": 0.2,
+            }
+
+            data = json.dumps(payload).encode('utf-8')
+            req = urllib.request.Request(url, data=data, method='POST')
+            req.add_header("Authorization", f"Bearer {api_key}")
+            req.add_header("Content-Type", "application/json")
+
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    result = json.loads(resp.read().decode('utf-8'))
+            except urllib.error.HTTPError as e:
+                body = e.read().decode('utf-8', errors='replace')
+                self._json_response(200, {"error": f"OpenAI API 에러 ({e.code}): {body}"})
+                return
+
+            content = result["choices"][0]["message"]["content"]
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
+
+            try:
+                analysis = json.loads(content.strip())
+            except json.JSONDecodeError:
+                self._json_response(200, {"error": "AI 응답 파싱 실패", "raw": content})
+                return
+
+            # DB 매칭
+            if FOODS_DB and "foods" in analysis:
+                analysis = match_with_db(analysis, FOODS_DB)
+
+            print("남은 음식 분석 완료!")
+            self._json_response(200, analysis)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._json_response(500, {"error": f"서버 에러: {str(e)}"})
+
+    def _handle_analyze(self):
+        """일반 음식 분석"""
+
+        try:
+            fields, files, err = self._parse_multipart()
+            if err:
+                self._json_response(400, {"error": err})
+                return
+
+            api_key = self._get_api_key(fields)
             if not api_key:
                 self._json_response(400, {
                     "error": "API 키가 없습니다.",
@@ -778,24 +1232,14 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            # 이미지 데이터
-            if not file_data:
+            image_file = files.get('image')
+            if not image_file:
                 self._json_response(400, {"error": "이미지가 업로드되지 않았습니다."})
                 return
 
-            image_data = file_data
-            filename = file_name
-
-            # MIME 타입 결정
-            ext = Path(filename).suffix.lower()
-            media_type = {
-                '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                '.png': 'image/png', '.gif': 'image/gif',
-                '.webp': 'image/webp',
-            }.get(ext, 'image/jpeg')
-
-            # base64 인코딩
-            base64_image = base64.b64encode(image_data).decode('utf-8')
+            base64_image, media_type = self._image_to_base64(image_file)
+            filename = image_file['filename']
+            image_data = image_file['data']
 
             print(f"\n분석 요청: {filename} ({len(image_data)/1024:.0f}KB)")
             print("GPT-4o Vision API 호출 중...")
