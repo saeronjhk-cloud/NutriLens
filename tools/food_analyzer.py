@@ -38,32 +38,89 @@ def load_env():
 load_env()
 
 # ── 음식 DB 로드 ──
+# DB 연결을 전역으로 유지 (SQLite 검색용)
+_DB_CONN = None
+_DB_PATH = None
+
 def load_food_db(db_path=None):
-    """SQLite DB를 로드 (빠르고 메모리 효율적)"""
+    """SQLite DB 연결을 열고 아이템 수만 반환 (전체를 메모리에 올리지 않음)"""
+    global _DB_CONN, _DB_PATH
     import sqlite3
 
     if db_path is None:
-        # SQLite 우선, 없으면 엑셀 fallback
         sqlite_path = Path(__file__).parent.parent / 'nutrilens_db.sqlite'
         xlsx_path = Path(__file__).parent.parent / 'NutriLens_음식DB.xlsx'
 
         if sqlite_path.exists():
-            return _load_sqlite(sqlite_path)
+            db_path = sqlite_path
         elif xlsx_path.exists():
             return _load_xlsx(xlsx_path)
         else:
             print("DB 파일을 찾을 수 없습니다.")
             return []
-    else:
-        p = Path(db_path)
-        if p.suffix == '.sqlite':
-            return _load_sqlite(p)
-        else:
-            return _load_xlsx(p)
+
+    p = Path(db_path)
+    if p.suffix != '.sqlite':
+        return _load_xlsx(p)
+
+    # SQLite: 연결만 열고 전체 로드 안 함
+    _DB_CONN = sqlite3.connect(str(p))
+    _DB_CONN.row_factory = sqlite3.Row
+    _DB_PATH = str(p)
+
+    cur = _DB_CONN.cursor()
+    cur.execute("SELECT COUNT(*) FROM foods")
+    count = cur.fetchone()[0]
+
+    # 호환성: 기존 코드에서 len(FOODS_DB) 쓰므로 count를 가진 리스트처럼 보이는 객체 반환
+    return _FoodDBProxy(count)
+
+
+class _FoodDBProxy:
+    """len()과 bool() 호환용 프록시 — 실제 데이터는 SQLite에서 검색"""
+    def __init__(self, count):
+        self._count = count
+    def __len__(self):
+        return self._count
+    def __bool__(self):
+        return self._count > 0
+
+
+def search_food_db(name):
+    """SQLite에서 음식 이름으로 빠르게 검색 (인덱스 활용)"""
+    global _DB_CONN
+    if _DB_CONN is None:
+        return None, []
+
+    cur = _DB_CONN.cursor()
+
+    # 1) 정확 매칭 (인덱스 사용 → 즉시)
+    cur.execute("SELECT * FROM foods WHERE name_ko = ? LIMIT 1", (name,))
+    row = cur.fetchone()
+    if row:
+        return dict(row), []
+
+    # 2) 부분 매칭 (LIKE — 인덱스 부분 활용)
+    cur.execute("SELECT * FROM foods WHERE name_ko LIKE ? LIMIT 5", (f"%{name}%",))
+    partials = [dict(r) for r in cur.fetchall()]
+    if partials:
+        return None, partials
+
+    # 3) 역방향 부분 매칭: DB 이름이 AI 이름에 포함되는 경우
+    # 예: AI가 "김치찌개" → DB에 "김치" 매칭
+    # 이건 짧은 이름에만 적용 (성능 보호)
+    if len(name) >= 2:
+        words = [name[:2], name]  # 첫 2글자로 범위 좁히기
+        cur.execute("SELECT * FROM foods WHERE ? LIKE '%' || name_ko || '%' AND length(name_ko) >= 2 LIMIT 5", (name,))
+        reverse_partials = [dict(r) for r in cur.fetchall()]
+        if reverse_partials:
+            return None, reverse_partials
+
+    return None, []
 
 
 def _load_sqlite(db_path):
-    """SQLite에서 로드 — 빠르고 메모리 효율적"""
+    """SQLite에서 전체 로드 — 하위 호환용 (accuracy_test 등)"""
     import sqlite3
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -300,7 +357,7 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
 def match_with_db(analysis, foods_db):
     """
     AI 분석 결과를 DB와 매칭하여 보정
-    AI가 인식한 음식이 DB에 있으면 DB의 공인 데이터를 사용
+    SQLite 인덱스 검색으로 238K 아이템에서도 즉시 매칭
     """
     if "error" in analysis or "foods" not in analysis:
         return analysis
@@ -312,21 +369,9 @@ def match_with_db(analysis, foods_db):
             food['source'] = 'AI_ESTIMATED'
             continue
 
-        # DB에서 이름으로 검색 (정확 매칭 → 부분 매칭)
-        exact_match = None
-        partial_matches = []
-
-        for db_food in foods_db:
-            db_name = (db_food.get("name_ko") or "").strip()
-            if not db_name:
-                continue
-            if ai_name == db_name:
-                exact_match = db_food
-                break
-            elif ai_name in db_name or db_name in ai_name:
-                partial_matches.append(db_food)
-
-        match = exact_match or (partial_matches[0] if partial_matches else None)
+        # SQLite 검색 (인덱스 활용 → 밀리초 단위)
+        exact, partials = search_food_db(ai_name)
+        match = exact or (partials[0] if partials else None)
 
         if match:
             # DB 매칭 성공: 1인분 영양소를 AI 추정 양에 비례하여 보정
@@ -360,10 +405,10 @@ def match_with_db(analysis, foods_db):
 
     # meal_summary 재계산
     if "meal_summary" in analysis:
-        analysis["meal_summary"]["total_calories"] = round(sum(f.get("calories_kcal", 0) for f in analysis["foods"]), 1)
-        analysis["meal_summary"]["total_protein"] = round(sum(f.get("protein_g", 0) for f in analysis["foods"]), 1)
-        analysis["meal_summary"]["total_carbs"] = round(sum(f.get("carbs_g", 0) for f in analysis["foods"]), 1)
-        analysis["meal_summary"]["total_fat"] = round(sum(f.get("fat_g", 0) for f in analysis["foods"]), 1)
+        analysis["meal_summary"]["total_calories"] = round(sum(f.get("calories_kcal", 0) or 0 for f in analysis["foods"]), 1)
+        analysis["meal_summary"]["total_protein"] = round(sum(f.get("protein_g", 0) or 0 for f in analysis["foods"]), 1)
+        analysis["meal_summary"]["total_carbs"] = round(sum(f.get("carbs_g", 0) or 0 for f in analysis["foods"]), 1)
+        analysis["meal_summary"]["total_fat"] = round(sum(f.get("fat_g", 0) or 0 for f in analysis["foods"]), 1)
 
     return analysis
 
