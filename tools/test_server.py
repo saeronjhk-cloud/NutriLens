@@ -223,7 +223,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NutriLens - AI 음식 분석 테스트</title>
+<title>NutriLens - AI 음식 영양 분석</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -241,505 +241,214 @@ HTML_PAGE = """<!DOCTYPE html>
   }
 
   /* 헤더 */
-  .header {
-    text-align: center;
-    padding: 30px 0 20px;
-  }
-  .header h1 {
-    font-size: 2em;
-    background: linear-gradient(135deg, #6ee7b7, #3b82f6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 8px;
-  }
-  .header p {
-    color: #888;
-    font-size: 0.95em;
-  }
-  .badge {
-    display: inline-block;
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.8em;
-    margin-top: 8px;
-  }
+  .header { text-align: center; padding: 30px 0 20px; }
+  .header h1 { font-size: 2em; background: linear-gradient(135deg, #6ee7b7, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+  .header p { color: #888; font-size: 0.95em; }
 
   /* 업로드 영역 */
-  .upload-area {
-    border: 2px dashed #3a3a5a;
-    border-radius: 16px;
-    padding: 50px 20px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.3s;
-    background: #1a1a2e;
-    margin-bottom: 20px;
-  }
-  .upload-area:hover, .upload-area.dragover {
-    border-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.05);
-  }
+  .upload-area { border: 2px dashed #3a3a5a; border-radius: 16px; padding: 50px 20px; text-align: center; cursor: pointer; transition: all 0.3s; background: #1a1a2e; margin-bottom: 20px; }
+  .upload-area:hover, .upload-area.dragover { border-color: #3b82f6; background: rgba(59,130,246,0.05); }
   .upload-area .icon { font-size: 3em; margin-bottom: 12px; }
   .upload-area .text { color: #888; font-size: 1em; }
   .upload-area .subtext { color: #555; font-size: 0.85em; margin-top: 6px; }
 
   /* 미리보기 */
-  .preview-section {
-    display: none;
-    margin-bottom: 20px;
-    text-align: center;
-  }
-  .preview-section img {
-    max-width: 100%;
-    max-height: 400px;
-    border-radius: 12px;
-    border: 1px solid #2a2a4a;
-  }
-  .preview-actions {
-    margin-top: 12px;
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-  }
+  .preview-section { display: none; margin-bottom: 20px; text-align: center; }
+  .preview-section img { max-width: 100%; max-height: 400px; border-radius: 12px; border: 1px solid #2a2a4a; }
+  .preview-actions { margin-top: 12px; display: flex; gap: 10px; justify-content: center; }
 
   /* 버튼 */
-  .btn {
-    padding: 12px 28px;
-    border: none;
-    border-radius: 10px;
-    font-size: 1em;
-    cursor: pointer;
-    font-weight: 600;
-    transition: all 0.3s;
-  }
-  .btn-primary {
-    background: linear-gradient(135deg, #3b82f6, #6366f1);
-    color: white;
-  }
-  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3); }
+  .btn { padding: 12px 28px; border: none; border-radius: 10px; font-size: 1em; cursor: pointer; font-weight: 600; transition: all 0.3s; }
+  .btn-primary { background: linear-gradient(135deg, #3b82f6, #6366f1); color: white; }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(59,130,246,0.3); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-  .btn-secondary {
-    background: #2a2a4a;
-    color: #ccc;
-  }
+  .btn-secondary { background: #2a2a4a; color: #ccc; }
   .btn-secondary:hover { background: #3a3a5a; }
+  .btn-green { background: linear-gradient(135deg, #059669, #10b981); color: white; }
+  .btn-green:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(16,185,129,0.3); }
+  .btn-orange { background: linear-gradient(135deg, #d97706, #f59e0b); color: white; }
+  .btn-orange:hover { transform: translateY(-1px); }
 
   /* 로딩 */
-  .loading {
-    display: none;
-    text-align: center;
-    padding: 40px;
-  }
-  .spinner {
-    width: 50px; height: 50px;
-    border: 4px solid #2a2a4a;
-    border-top-color: #3b82f6;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 16px;
-  }
+  .loading { display: none; text-align: center; padding: 40px; }
+  .spinner { width: 50px; height: 50px; border: 4px solid #2a2a4a; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading p { color: #888; }
 
+  /* 에러 */
+  .error-box { display: none; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px; padding: 20px; color: #f87171; }
+
   /* 결과 */
   .result-section { display: none; }
+  .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .result-header h2 { font-size: 1.3em; color: #6ee7b7; }
 
-  .result-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-  }
-  .result-header h2 {
-    font-size: 1.3em;
-    color: #6ee7b7;
-  }
-
-  .food-card {
-    background: #1a1a2e;
-    border: 1px solid #2a2a4a;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 12px;
-    transition: border-color 0.3s;
-  }
-  .food-card:hover { border-color: #3a3a5a; }
-
-  .food-title {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-  }
-  .food-name {
-    font-size: 1.15em;
-    font-weight: 600;
-  }
-  .food-name-en {
-    font-size: 0.85em;
-    color: #888;
-    margin-left: 8px;
-  }
-  .source-badge {
-    font-size: 0.75em;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-weight: 600;
-  }
-  .source-db {
-    background: rgba(110, 231, 183, 0.15);
-    color: #6ee7b7;
-  }
-  .source-ai {
-    background: rgba(251, 191, 36, 0.15);
-    color: #fbbf24;
-  }
-
-  .confidence-bar {
-    height: 4px;
-    background: #2a2a4a;
-    border-radius: 2px;
-    margin-bottom: 14px;
-    overflow: hidden;
-  }
-  .confidence-fill {
-    height: 100%;
-    border-radius: 2px;
-    transition: width 0.8s ease;
-  }
-
-  .nutrition-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
-  }
-  .nutrition-item {
-    text-align: center;
-    padding: 10px 6px;
-    background: #0f0f1a;
-    border-radius: 8px;
-  }
-  .nutrition-value {
-    font-size: 1.2em;
-    font-weight: 700;
-    color: #fff;
-  }
-  .nutrition-label {
-    font-size: 0.75em;
-    color: #888;
-    margin-top: 2px;
-  }
+  /* 음식 카드 */
+  .food-card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 20px; margin-bottom: 12px; }
+  .food-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .food-name { font-size: 1.15em; font-weight: 600; }
+  .food-name-en { font-size: 0.85em; color: #888; margin-left: 8px; }
+  .source-badge { font-size: 0.75em; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+  .source-db { background: rgba(110,231,183,0.15); color: #6ee7b7; }
+  .source-ai { background: rgba(251,191,36,0.15); color: #fbbf24; }
+  .confidence-bar { height: 4px; background: #2a2a4a; border-radius: 2px; margin-bottom: 14px; overflow: hidden; }
+  .confidence-fill { height: 100%; border-radius: 2px; transition: width 0.8s ease; }
+  .nutrition-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .nutrition-item { text-align: center; padding: 10px 6px; background: #0f0f1a; border-radius: 8px; }
+  .nutrition-value { font-size: 1.2em; font-weight: 700; color: #fff; }
+  .nutrition-label { font-size: 0.75em; color: #888; margin-top: 2px; }
 
   /* 요약 카드 */
-  .summary-card {
-    background: linear-gradient(135deg, #1a1a2e, #1e1e3a);
-    border: 1px solid #3b82f6;
-    border-radius: 16px;
-    padding: 24px;
-    margin-top: 20px;
-  }
-  .summary-title {
-    font-size: 1.1em;
-    color: #60a5fa;
-    margin-bottom: 16px;
-  }
-  .summary-stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  .stat-item {
-    text-align: center;
-  }
-  .stat-value {
-    font-size: 1.5em;
-    font-weight: 700;
-    color: #fff;
-  }
-  .stat-label {
-    font-size: 0.8em;
-    color: #888;
-  }
-  .health-score {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px;
-    background: rgba(0,0,0,0.2);
-    border-radius: 10px;
-    margin-bottom: 12px;
-  }
-  .score-circle {
-    width: 52px; height: 52px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.4em;
-    font-weight: 800;
-    color: #fff;
-    flex-shrink: 0;
-  }
-  .comment {
-    font-size: 0.95em;
-    color: #ccc;
-    line-height: 1.5;
-    padding: 10px 0;
-  }
+  .summary-card { background: linear-gradient(135deg, #1a1a2e, #1e1e3a); border: 1px solid #3b82f6; border-radius: 16px; padding: 24px; margin-top: 20px; }
+  .summary-title { font-size: 1.1em; color: #60a5fa; margin-bottom: 16px; }
+  .summary-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .stat-item { text-align: center; }
+  .stat-value { font-size: 1.5em; font-weight: 700; color: #fff; }
+  .stat-label { font-size: 0.8em; color: #888; }
+  .health-score { display: flex; align-items: center; gap: 12px; padding: 14px; background: rgba(0,0,0,0.2); border-radius: 10px; margin-bottom: 12px; }
+  .score-circle { width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.4em; font-weight: 800; color: #fff; flex-shrink: 0; }
+  .comment { font-size: 0.95em; color: #ccc; line-height: 1.5; padding: 10px 0; }
 
-  /* 에러 */
-  .error-box {
-    display: none;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 12px;
-    padding: 20px;
-    color: #f87171;
-  }
+  /* 식후 안내 배너 */
+  .after-meal-banner { background: linear-gradient(135deg, #1a2e1a, #1e3a1e); border: 1px solid #059669; border-radius: 12px; padding: 20px; margin-top: 16px; text-align: center; }
+  .after-meal-banner .banner-title { color: #6ee7b7; font-size: 1.05em; font-weight: 600; margin-bottom: 10px; }
+  .after-meal-banner .banner-desc { color: #aaa; font-size: 0.85em; margin-bottom: 14px; line-height: 1.5; }
+  .after-meal-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
-  /* 모드 선택 */
-  .mode-selector {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-  .mode-card {
-    background: #1a1a2e;
-    border: 2px solid #2a2a4a;
-    border-radius: 12px;
-    padding: 16px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.3s;
-  }
-  .mode-card:hover { border-color: #3b82f6; }
-  .mode-card.active { border-color: #3b82f6; background: rgba(59,130,246,0.08); }
-  .mode-icon { font-size: 1.5em; margin-bottom: 6px; }
-  .mode-title { font-weight: 600; font-size: 0.95em; }
-  .mode-desc { font-size: 0.8em; color: #888; margin-top: 4px; }
+  /* 식후 업로드 */
+  .after-upload-section { display: none; text-align: center; margin-top: 16px; }
+  .after-upload-box { border: 2px dashed #059669; border-radius: 12px; padding: 30px; cursor: pointer; background: #1a2e1a; margin-bottom: 12px; }
+  .after-upload-box:hover { border-color: #10b981; background: rgba(16,185,129,0.05); }
 
-  /* 전/후 업로드 */
-  .dual-upload {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-  }
-  .upload-box {
-    flex: 1;
-    max-width: 45%;
-    background: #1a1a2e;
-    border: 2px dashed #3a3a5a;
-    border-radius: 12px;
-    padding: 12px;
-    text-align: center;
-    cursor: pointer;
-    position: relative;
-    min-height: 160px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-  }
-  .upload-box:hover { border-color: #3b82f6; }
-  .upload-box img {
-    max-width: 100%;
-    max-height: 140px;
-    border-radius: 8px;
-  }
-  .upload-box-label {
-    font-size: 0.8em;
-    color: #60a5fa;
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-  .upload-box-placeholder { color: #888; font-size: 0.85em; }
-  .upload-arrow { font-size: 1.5em; color: #555; }
+  /* 수동 입력 */
+  .manual-section { display: none; margin-top: 16px; }
+  .manual-food-item { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px; padding: 14px; margin-bottom: 10px; }
+  .manual-food-name { font-weight: 600; margin-bottom: 8px; }
+  .eaten-slider { width: 100%; margin: 6px 0; accent-color: #3b82f6; }
+  .eaten-value { color: #60a5fa; font-weight: 600; }
 
-  /* 나눠먹기 인원수 */
-  .sharing-section {
-    background: #1a1a2e;
-    border: 1px solid #2a2a4a;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 12px;
-  }
-  .sharing-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-  }
-  .sharing-label { font-size: 0.9em; color: #ccc; }
-  .sharing-controls {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .sharing-btn {
-    width: 32px; height: 32px;
-    border-radius: 50%;
-    border: 1px solid #3a3a5a;
-    background: #0f0f1a;
-    color: #e0e0e0;
-    font-size: 1.2em;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .sharing-btn:hover { border-color: #3b82f6; }
-  .sharing-count { font-size: 1.1em; font-weight: 700; min-width: 24px; text-align: center; }
+  /* 음식별 나눠먹기 */
+  .food-sharing { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #2a2a4a; }
+  .food-sharing-label { font-size: 0.8em; color: #888; }
+  .food-sharing-btn { width: 26px; height: 26px; border-radius: 50%; border: 1px solid #3a3a5a; background: #0f0f1a; color: #e0e0e0; font-size: 1em; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .food-sharing-btn:hover { border-color: #3b82f6; }
+  .food-sharing-num { font-size: 0.95em; font-weight: 700; min-width: 20px; text-align: center; }
 
-  /* 남은 양 표시 */
-  .eaten-bar {
-    height: 6px;
-    background: #2a2a4a;
-    border-radius: 3px;
-    margin: 8px 0;
-    overflow: hidden;
-  }
-  .eaten-fill {
-    height: 100%;
-    border-radius: 3px;
-    background: #6ee7b7;
-  }
+  /* 남은 양 바 */
+  .eaten-bar { height: 6px; background: #2a2a4a; border-radius: 3px; margin: 8px 0; overflow: hidden; }
+  .eaten-fill { height: 100%; border-radius: 3px; background: #6ee7b7; }
 
   /* 반응형 */
   @media (max-width: 600px) {
     .nutrition-grid { grid-template-columns: repeat(2, 1fr); }
     .summary-stats { grid-template-columns: repeat(2, 1fr); }
     .header h1 { font-size: 1.5em; }
-    .mode-title { font-size: 0.85em; }
-    .mode-desc { font-size: 0.75em; }
+    .after-meal-actions { flex-direction: column; }
   }
 </style>
 </head>
 <body>
 <div class="container">
 
-  <!-- 헤더 -->
   <div class="header">
     <h1>NutriLens</h1>
     <p>AI 음식 영양 분석기</p>
-    <span class="badge">Phase 2 테스트</span>
   </div>
 
-  <!-- 모드 선택 -->
-  <div class="mode-selector" id="modeSelector">
-    <div class="mode-card active" id="modeNormal" onclick="setMode('normal')">
-      <div class="mode-icon">📸</div>
-      <div class="mode-title">일반 분석</div>
-      <div class="mode-desc">음식 사진 1장으로 분석</div>
-    </div>
-    <div class="mode-card" id="modeLeftover" onclick="setMode('leftover')">
-      <div class="mode-icon">📸➡📸</div>
-      <div class="mode-title">남은 음식 비교</div>
-      <div class="mode-desc">전/후 사진 2장 비교</div>
-    </div>
-  </div>
-
-  <!-- 일반 모드: 업로드 영역 -->
+  <!-- 1단계: 식전 사진 업로드 -->
   <div class="upload-area" id="uploadArea">
     <div class="icon">📸</div>
-    <div class="text">음식 사진을 여기에 끌어다 놓거나 클릭하세요</div>
-    <div class="subtext">JPG, PNG, WebP 지원 · 최대 10MB</div>
-    <input type="file" id="fileInput" accept="image/*" style="display:none" />
+    <div class="text">음식 사진을 촬영하거나 선택하세요</div>
+    <div class="subtext">식사 전 음식 사진을 찍어주세요</div>
+    <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none" />
   </div>
 
-  <!-- 남은음식 모드: 전/후 업로드 -->
-  <div class="leftover-upload" id="leftoverUpload" style="display:none">
-    <div class="dual-upload">
-      <div class="upload-box" id="beforeBox" onclick="document.getElementById('beforeInput').click()">
-        <div class="upload-box-label">먹기 전</div>
-        <img id="beforePreview" style="display:none" />
-        <div class="upload-box-placeholder" id="beforePlaceholder">📸 터치하여 선택</div>
-        <input type="file" id="beforeInput" accept="image/*" style="display:none" />
-      </div>
-      <div class="upload-arrow">➡</div>
-      <div class="upload-box" id="afterBox" onclick="document.getElementById('afterInput').click()">
-        <div class="upload-box-label">먹은 후</div>
-        <img id="afterPreview" style="display:none" />
-        <div class="upload-box-placeholder" id="afterPlaceholder">📸 터치하여 선택</div>
-        <input type="file" id="afterInput" accept="image/*" style="display:none" />
-      </div>
-    </div>
-    <div style="text-align:center; margin-top:14px">
-      <button class="btn btn-primary" id="leftoverBtn" onclick="analyzeLeftover()" disabled>🔍 남은 음식 분석</button>
-      <button class="btn btn-secondary" onclick="resetUpload()">다시 선택</button>
-    </div>
-  </div>
-
-  <!-- 일반 모드: 미리보기 -->
+  <!-- 미리보기 -->
   <div class="preview-section" id="previewSection">
     <img id="previewImg" />
     <div class="preview-actions">
-      <button class="btn btn-primary" id="analyzeBtn" onclick="analyzeFood()">🔍 분석 시작</button>
-      <button class="btn btn-secondary" onclick="resetUpload()">다시 선택</button>
+      <button class="btn btn-primary" id="analyzeBtn" onclick="analyzeFood()">🔍 영양 분석</button>
+      <button class="btn btn-secondary" onclick="resetAll()">다시 촬영</button>
     </div>
   </div>
 
   <!-- 로딩 -->
   <div class="loading" id="loading">
     <div class="spinner"></div>
-    <p>AI가 음식을 분석하고 있습니다...</p>
+    <p id="loadingText">AI가 음식을 분석하고 있습니다...</p>
     <p style="font-size:0.85em; color:#555; margin-top:8px">GPT-4o Vision + DB 매칭 (약 5~15초)</p>
   </div>
 
   <!-- 에러 -->
   <div class="error-box" id="errorBox"></div>
 
-  <!-- 결과 -->
+  <!-- 분석 결과 -->
   <div class="result-section" id="resultSection">
     <div class="result-header">
-      <h2>분석 결과</h2>
-      <button class="btn btn-secondary" onclick="resetUpload()" style="padding:8px 16px; font-size:0.85em">새 사진 분석</button>
+      <h2 id="resultTitle">분석 결과</h2>
+      <button class="btn btn-secondary" onclick="resetAll()" style="padding:8px 16px; font-size:0.85em">새 사진</button>
     </div>
     <div id="foodCards"></div>
     <div id="summaryCard"></div>
+
+    <!-- 식후 안내 배너 (첫 분석 후에만 보임) -->
+    <div class="after-meal-banner" id="afterMealBanner">
+      <div class="banner-title">식사를 마치셨나요?</div>
+      <div class="banner-desc">
+        식사 후 남은 음식 사진을 찍으면 <strong>실제 섭취한 영양소</strong>를 정확하게 계산해드려요.<br>
+        사진을 찍기 어려우면 직접 섭취량을 입력할 수도 있어요.
+      </div>
+      <div class="after-meal-actions">
+        <button class="btn btn-green" onclick="showAfterUpload()">📸 식후 사진 찍기</button>
+        <button class="btn btn-orange" onclick="showManualEntry()">✏️ 직접 입력하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 식후 사진 업로드 -->
+  <div class="after-upload-section" id="afterUploadSection">
+    <div class="after-upload-box" onclick="document.getElementById('afterInput').click()">
+      <div style="font-size:2em; margin-bottom:8px">📸</div>
+      <div style="color:#6ee7b7; font-weight:600">식후 사진을 선택하세요</div>
+      <div style="color:#888; font-size:0.85em; margin-top:6px">남은 음식이 보이도록 촬영해주세요</div>
+      <input type="file" id="afterInput" accept="image/*" capture="environment" style="display:none" />
+    </div>
+    <img id="afterPreviewImg" style="display:none; max-width:100%; max-height:300px; border-radius:12px; margin-bottom:12px" />
+    <div id="afterActions" style="display:none">
+      <button class="btn btn-green" onclick="analyzeLeftover()">🔍 실제 섭취량 분석</button>
+      <button class="btn btn-secondary" onclick="hideAfterUpload()">취소</button>
+    </div>
+  </div>
+
+  <!-- 수동 섭취량 입력 -->
+  <div class="manual-section" id="manualSection">
+    <h3 style="color:#f59e0b; margin-bottom:12px">각 음식을 얼마나 드셨나요?</h3>
+    <div id="manualFoodList"></div>
+    <div style="text-align:center; margin-top:14px">
+      <button class="btn btn-orange" onclick="applyManualEntry()">✅ 섭취량 반영</button>
+      <button class="btn btn-secondary" onclick="hideManualEntry()">취소</button>
+    </div>
   </div>
 
 </div>
 
 <script>
 // ── 상태 ──
-let currentMode = 'normal';
 let selectedFile = null;
-let beforeFile = null;
 let afterFile = null;
-let currentAnalysis = null;  // 나눠먹기용
+let currentAnalysis = null;
+let originalAnalysis = null; // 원본 분석 (100% 기준)
+let foodSharing = {}; // 음식별 나눠먹기 인원수 { index: count }
+let isAfterMealDone = false;
 
-// ── 모드 전환 ──
-function setMode(mode) {
-  currentMode = mode;
-  document.getElementById('modeNormal').className = 'mode-card' + (mode === 'normal' ? ' active' : '');
-  document.getElementById('modeLeftover').className = 'mode-card' + (mode === 'leftover' ? ' active' : '');
-  resetUpload();
-  if (mode === 'normal') {
-    document.getElementById('uploadArea').style.display = 'block';
-    document.getElementById('leftoverUpload').style.display = 'none';
-  } else {
-    document.getElementById('uploadArea').style.display = 'none';
-    document.getElementById('leftoverUpload').style.display = 'block';
-  }
-}
-
-// ── 일반 모드: 파일 선택 ──
+// ── 파일 선택 ──
 const uploadArea = document.getElementById('uploadArea');
 const fileInput = document.getElementById('fileInput');
-
 uploadArea.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
 uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
-uploadArea.addEventListener('drop', (e) => {
-  e.preventDefault(); uploadArea.classList.remove('dragover');
-  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-});
+uploadArea.addEventListener('drop', (e) => { e.preventDefault(); uploadArea.classList.remove('dragover'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
 
 function handleFile(file) {
   if (!file || !file.type.startsWith('image/')) return alert('이미지 파일만 가능합니다.');
@@ -750,93 +459,49 @@ function handleFile(file) {
     document.getElementById('previewImg').src = e.target.result;
     uploadArea.style.display = 'none';
     document.getElementById('previewSection').style.display = 'block';
-    document.getElementById('resultSection').style.display = 'none';
-    document.getElementById('errorBox').style.display = 'none';
   };
   reader.readAsDataURL(file);
 }
 
-// ── 남은음식 모드: 전/후 파일 선택 ──
-document.getElementById('beforeInput').addEventListener('change', (e) => {
-  beforeFile = e.target.files[0];
-  if (beforeFile) {
-    const r = new FileReader();
-    r.onload = (ev) => {
-      document.getElementById('beforePreview').src = ev.target.result;
-      document.getElementById('beforePreview').style.display = 'block';
-      document.getElementById('beforePlaceholder').style.display = 'none';
-    };
-    r.readAsDataURL(beforeFile);
-  }
-  checkLeftoverReady();
-});
-document.getElementById('afterInput').addEventListener('change', (e) => {
-  afterFile = e.target.files[0];
-  if (afterFile) {
-    const r = new FileReader();
-    r.onload = (ev) => {
-      document.getElementById('afterPreview').src = ev.target.result;
-      document.getElementById('afterPreview').style.display = 'block';
-      document.getElementById('afterPlaceholder').style.display = 'none';
-    };
-    r.readAsDataURL(afterFile);
-  }
-  checkLeftoverReady();
-});
-function checkLeftoverReady() {
-  document.getElementById('leftoverBtn').disabled = !(beforeFile && afterFile);
-}
-
-function resetUpload() {
-  selectedFile = null; beforeFile = null; afterFile = null; currentAnalysis = null;
+function resetAll() {
+  selectedFile = null; afterFile = null; currentAnalysis = null; originalAnalysis = null;
+  foodSharing = {}; isAfterMealDone = false;
   fileInput.value = '';
-  document.getElementById('beforeInput').value = '';
-  document.getElementById('afterInput').value = '';
-  document.getElementById('beforePreview').style.display = 'none';
-  document.getElementById('afterPreview').style.display = 'none';
-  document.getElementById('beforePlaceholder').style.display = 'block';
-  document.getElementById('afterPlaceholder').style.display = 'block';
-  if (currentMode === 'normal') {
-    uploadArea.style.display = 'block';
-    document.getElementById('leftoverUpload').style.display = 'none';
-  } else {
-    uploadArea.style.display = 'none';
-    document.getElementById('leftoverUpload').style.display = 'block';
-  }
+  uploadArea.style.display = 'block';
   document.getElementById('previewSection').style.display = 'none';
   document.getElementById('resultSection').style.display = 'none';
   document.getElementById('errorBox').style.display = 'none';
   document.getElementById('loading').style.display = 'none';
-  document.getElementById('leftoverBtn').disabled = true;
+  document.getElementById('afterUploadSection').style.display = 'none';
+  document.getElementById('manualSection').style.display = 'none';
 }
 
-// ── 일반 분석 API ──
+// ── 식전 분석 API ──
 async function analyzeFood() {
-  const apiKey = '';
   if (!selectedFile) return alert('사진을 먼저 선택해주세요.');
-
   document.getElementById('previewSection').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
+  document.getElementById('loadingText').textContent = 'AI가 음식을 분석하고 있습니다...';
   document.getElementById('errorBox').style.display = 'none';
-  document.getElementById('resultSection').style.display = 'none';
 
   const formData = new FormData();
   formData.append('image', selectedFile);
-  formData.append('api_key', apiKey);
+  formData.append('api_key', '');
 
   try {
     const resp = await fetch('/analyze', { method: 'POST', body: formData });
     const data = await resp.json();
     document.getElementById('loading').style.display = 'none';
-
     if (data.error) {
       document.getElementById('errorBox').innerHTML = '<strong>오류:</strong> ' + data.error;
       document.getElementById('errorBox').style.display = 'block';
       document.getElementById('previewSection').style.display = 'block';
       return;
     }
+    originalAnalysis = JSON.parse(JSON.stringify(data));
     currentAnalysis = data;
-    renderResult(data);
+    isAfterMealDone = false;
+    renderResult(data, false);
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('errorBox').innerHTML = '<strong>네트워크 오류:</strong> ' + err.message;
@@ -845,202 +510,175 @@ async function analyzeFood() {
   }
 }
 
-// ── 남은 음식 비교 API ──
-async function analyzeLeftover() {
-  const apiKey = '';
-  if (!beforeFile || !afterFile) return alert('전/후 사진 2장을 모두 선택해주세요.');
+// ── 식후 사진 업로드 ──
+function showAfterUpload() {
+  document.getElementById('afterMealBanner').style.display = 'none';
+  document.getElementById('afterUploadSection').style.display = 'block';
+}
+function hideAfterUpload() {
+  document.getElementById('afterUploadSection').style.display = 'none';
+  document.getElementById('afterMealBanner').style.display = 'block';
+}
 
-  document.getElementById('leftoverUpload').style.display = 'none';
+document.getElementById('afterInput').addEventListener('change', (e) => {
+  afterFile = e.target.files[0];
+  if (afterFile) {
+    const r = new FileReader();
+    r.onload = (ev) => {
+      const img = document.getElementById('afterPreviewImg');
+      img.src = ev.target.result;
+      img.style.display = 'block';
+      document.getElementById('afterActions').style.display = 'block';
+    };
+    r.readAsDataURL(afterFile);
+  }
+});
+
+async function analyzeLeftover() {
+  if (!selectedFile || !afterFile) return alert('식후 사진이 필요합니다.');
+  document.getElementById('afterUploadSection').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
-  document.getElementById('errorBox').style.display = 'none';
+  document.getElementById('loadingText').textContent = '식전/식후 사진을 비교하고 있습니다...';
 
   const formData = new FormData();
-  formData.append('before', beforeFile);
+  formData.append('before', selectedFile);
   formData.append('after', afterFile);
-  formData.append('api_key', apiKey);
+  formData.append('api_key', '');
 
   try {
     const resp = await fetch('/analyze-leftover', { method: 'POST', body: formData });
     const data = await resp.json();
     document.getElementById('loading').style.display = 'none';
-
     if (data.error) {
       let errMsg = '<strong>오류:</strong> ' + data.error;
-      if (data.raw) errMsg += '<br><br><small style="color:#888">AI 원본 응답: ' + data.raw.substring(0, 300) + '</small>';
+      if (data.raw) errMsg += '<br><small style="color:#888">' + data.raw.substring(0,200) + '</small>';
       document.getElementById('errorBox').innerHTML = errMsg;
       document.getElementById('errorBox').style.display = 'block';
-      document.getElementById('leftoverUpload').style.display = 'block';
+      document.getElementById('afterUploadSection').style.display = 'block';
       return;
     }
     currentAnalysis = data;
+    isAfterMealDone = true;
     renderResult(data, true);
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('errorBox').innerHTML = '<strong>네트워크 오류:</strong> ' + err.message;
     document.getElementById('errorBox').style.display = 'block';
-    document.getElementById('leftoverUpload').style.display = 'block';
+    document.getElementById('afterUploadSection').style.display = 'block';
   }
 }
 
-// ── 나눠먹기: 인원수 조절 ──
-let sharingCount = 1;
-
-function adjustSharing(delta) {
-  sharingCount = Math.max(1, Math.min(20, sharingCount + delta));
-  document.getElementById('sharingNum').textContent = sharingCount;
-  if (currentAnalysis) recalcSummary();
+// ── 수동 섭취량 입력 ──
+function showManualEntry() {
+  document.getElementById('afterMealBanner').style.display = 'none';
+  const foods = originalAnalysis ? originalAnalysis.foods || [] : [];
+  let html = '';
+  foods.forEach((f, i) => {
+    html += `
+      <div class="manual-food-item">
+        <div class="manual-food-name">${f.name_ko || '음식 '+(i+1)}</div>
+        <div style="display:flex; align-items:center; gap:10px">
+          <input type="range" class="eaten-slider" id="slider_${i}" min="0" max="100" value="100" oninput="updateSliderLabel(${i})">
+          <span class="eaten-value" id="sliderVal_${i}">100%</span>
+        </div>
+      </div>
+    `;
+  });
+  document.getElementById('manualFoodList').innerHTML = html;
+  document.getElementById('manualSection').style.display = 'block';
+}
+function hideManualEntry() {
+  document.getElementById('manualSection').style.display = 'none';
+  document.getElementById('afterMealBanner').style.display = 'block';
+}
+function updateSliderLabel(i) {
+  const val = document.getElementById('slider_'+i).value;
+  document.getElementById('sliderVal_'+i).textContent = val + '%';
+}
+function applyManualEntry() {
+  if (!originalAnalysis) return;
+  const data = JSON.parse(JSON.stringify(originalAnalysis));
+  (data.foods || []).forEach((f, i) => {
+    const pct = parseInt(document.getElementById('slider_'+i).value) || 0;
+    const ratio = pct / 100;
+    f.eaten_pct = pct;
+    f.calories_kcal = Math.round((f.calories_kcal||0) * ratio);
+    f.protein_g = Math.round((f.protein_g||0) * ratio * 10) / 10;
+    f.carbs_g = Math.round((f.carbs_g||0) * ratio * 10) / 10;
+    f.fat_g = Math.round((f.fat_g||0) * ratio * 10) / 10;
+    f.estimated_serving_g = Math.round((f.estimated_serving_g||0) * ratio);
+    f.leftover_note = pct === 100 ? '전부 섭취' : pct === 0 ? '먹지 않음' : pct + '% 섭취';
+  });
+  const s = data.meal_summary || {};
+  s.total_calories = Math.round(data.foods.reduce((a,f) => a+(f.calories_kcal||0), 0));
+  s.total_protein = Math.round(data.foods.reduce((a,f) => a+(f.protein_g||0), 0) * 10) / 10;
+  s.total_carbs = Math.round(data.foods.reduce((a,f) => a+(f.carbs_g||0), 0) * 10) / 10;
+  s.total_fat = Math.round(data.foods.reduce((a,f) => a+(f.fat_g||0), 0) * 10) / 10;
+  data.meal_summary = s;
+  currentAnalysis = data;
+  isAfterMealDone = true;
+  document.getElementById('manualSection').style.display = 'none';
+  renderResult(data, true);
 }
 
-function recalcSummary() {
+// ── 음식별 나눠먹기 ──
+function adjustFoodSharing(idx, delta) {
+  foodSharing[idx] = Math.max(1, Math.min(20, (foodSharing[idx]||1) + delta));
+  document.getElementById('fs_num_'+idx).textContent = foodSharing[idx];
+  recalcTotal();
+}
+function recalcTotal() {
   if (!currentAnalysis) return;
-  const foods = currentAnalysis.foods || [];
-  const div = sharingCount;
   let tc=0, tp=0, tca=0, tf=0;
-  foods.forEach(f => {
+  (currentAnalysis.foods||[]).forEach((f, i) => {
+    const div = foodSharing[i] || 1;
     tc += (f.calories_kcal||0)/div;
     tp += (f.protein_g||0)/div;
     tca += (f.carbs_g||0)/div;
     tf += (f.fat_g||0)/div;
   });
-  const el = document.getElementById('sharingSummary');
-  if (el) {
-    el.innerHTML = sharingCount > 1
-      ? `<span style="color:#6ee7b7">${sharingCount}명</span>이서 나눠 먹기: 1인당 <strong>${Math.round(tc)} kcal</strong> · 단백질 ${Math.round(tp)}g · 탄수화물 ${Math.round(tca)}g · 지방 ${Math.round(tf)}g`
-      : '';
-  }
-  // 요약카드도 업데이트
-  const sv = document.getElementById('sumCal'); if(sv) sv.textContent = Math.round(tc);
-  const sp = document.getElementById('sumPro'); if(sp) sp.textContent = Math.round(tp)+'g';
-  const sc = document.getElementById('sumCarb'); if(sc) sc.textContent = Math.round(tca)+'g';
-  const sfat = document.getElementById('sumFat'); if(sfat) sfat.textContent = Math.round(tf)+'g';
+  const el = id => document.getElementById(id);
+  if(el('sumCal')) el('sumCal').textContent = Math.round(tc);
+  if(el('sumPro')) el('sumPro').textContent = Math.round(tp)+'g';
+  if(el('sumCarb')) el('sumCarb').textContent = Math.round(tca)+'g';
+  if(el('sumFat')) el('sumFat').textContent = Math.round(tf)+'g';
 }
 
 // ── 결과 렌더링 ──
-function renderResult(data, isLeftover) {
+function renderResult(data, isAfterMeal) {
   const foods = data.foods || [];
   const summary = data.meal_summary || {};
-  sharingCount = 1;
+  foodSharing = {};
 
-  // 나눠먹기 섹션 (일반 + 남은음식 모드 공통)
-  let sharingHtml = `
-    <div class="sharing-section">
-      <div class="sharing-row">
-        <span class="sharing-label">함께 먹은 인원</span>
-        <div class="sharing-controls">
-          <button class="sharing-btn" onclick="adjustSharing(-1)">−</button>
-          <span class="sharing-count" id="sharingNum">1</span>
-          <button class="sharing-btn" onclick="adjustSharing(1)">+</button>
-        </div>
-      </div>
-      <div id="sharingSummary" style="font-size:0.85em; color:#aaa; text-align:center"></div>
-    </div>
-  `;
-
-  // 음식 카드들
-  let cardsHtml = sharingHtml;
+  let cardsHtml = '';
   foods.forEach((food, i) => {
+    foodSharing[i] = 1;
     const isDb = food.db_matched || food.source === 'DB_MATCHED';
-    const conf = (food.confidence || 0);
+    const conf = food.confidence || 0;
     const confPct = Math.round(conf * 100);
     const confColor = conf >= 0.8 ? '#6ee7b7' : conf >= 0.5 ? '#fbbf24' : '#f87171';
-    const eatenPct = food.eaten_pct || 100;
 
-    // 남은 음식 바
     let eatenBarHtml = '';
-    if (isLeftover && food.eaten_pct !== undefined) {
-      eatenBarHtml = `
-        <div style="font-size:0.8em; color:#6ee7b7; margin-bottom:4px">
-          섭취량: ${eatenPct}% ${food.leftover_note ? '· ' + food.leftover_note : ''}
-        </div>
-        <div class="eaten-bar">
-          <div class="eaten-fill" style="width:${eatenPct}%"></div>
-        </div>
-      `;
+    if (isAfterMeal && food.eaten_pct !== undefined) {
+      const ep = food.eaten_pct;
+      eatenBarHtml = '<div style="font-size:0.8em; color:#6ee7b7; margin-bottom:4px">섭취량: '+ep+'% '+(food.leftover_note ? '· '+food.leftover_note : '')+'</div><div class="eaten-bar"><div class="eaten-fill" style="width:'+ep+'%"></div></div>';
     }
 
-    cardsHtml += `
-      <div class="food-card">
-        <div class="food-title">
-          <div>
-            <span class="food-name">${food.name_ko || '?'}</span>
-            <span class="food-name-en">${food.name_en || ''}</span>
-          </div>
-          <span class="source-badge ${isDb ? 'source-db' : 'source-ai'}">
-            ${isDb ? 'DB 검증' : 'AI 추정'}
-          </span>
-        </div>
-        <div class="confidence-bar">
-          <div class="confidence-fill" style="width:${confPct}%; background:${confColor}"></div>
-        </div>
-        <div style="font-size:0.8em; color:#888; margin-bottom:10px; margin-top:-8px">
-          확신도 ${confPct}% · 약 ${food.estimated_serving_g || '?'}g
-        </div>
-        ${eatenBarHtml}
-        <div class="nutrition-grid">
-          <div class="nutrition-item">
-            <div class="nutrition-value">${food.calories_kcal || 0}</div>
-            <div class="nutrition-label">칼로리 kcal</div>
-          </div>
-          <div class="nutrition-item">
-            <div class="nutrition-value" style="color:#60a5fa">${food.protein_g || 0}g</div>
-            <div class="nutrition-label">단백질</div>
-          </div>
-          <div class="nutrition-item">
-            <div class="nutrition-value" style="color:#fbbf24">${food.carbs_g || 0}g</div>
-            <div class="nutrition-label">탄수화물</div>
-          </div>
-          <div class="nutrition-item">
-            <div class="nutrition-value" style="color:#f87171">${food.fat_g || 0}g</div>
-            <div class="nutrition-label">지방</div>
-          </div>
-        </div>
-      </div>
-    `;
+    cardsHtml += '<div class="food-card"><div class="food-title"><div><span class="food-name">'+(food.name_ko||'?')+'</span><span class="food-name-en">'+(food.name_en||'')+'</span></div><span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div><div class="confidence-bar"><div class="confidence-fill" style="width:'+confPct+'%;background:'+confColor+'"></div></div><div style="font-size:0.8em;color:#888;margin-bottom:10px;margin-top:-8px">확신도 '+confPct+'% · 약 '+(food.estimated_serving_g||'?')+'g</div>'+eatenBarHtml+'<div class="nutrition-grid"><div class="nutrition-item"><div class="nutrition-value">'+(food.calories_kcal||0)+'</div><div class="nutrition-label">칼로리 kcal</div></div><div class="nutrition-item"><div class="nutrition-value" style="color:#60a5fa">'+(food.protein_g||0)+'g</div><div class="nutrition-label">단백질</div></div><div class="nutrition-item"><div class="nutrition-value" style="color:#fbbf24">'+(food.carbs_g||0)+'g</div><div class="nutrition-label">탄수화물</div></div><div class="nutrition-item"><div class="nutrition-value" style="color:#f87171">'+(food.fat_g||0)+'g</div><div class="nutrition-label">지방</div></div></div><div class="food-sharing"><span class="food-sharing-label">나눠먹기</span><button class="food-sharing-btn" onclick="adjustFoodSharing('+i+',-1)">−</button><span class="food-sharing-num" id="fs_num_'+i+'">1</span><button class="food-sharing-btn" onclick="adjustFoodSharing('+i+',1)">+</button><span class="food-sharing-label">명</span></div></div>';
   });
   document.getElementById('foodCards').innerHTML = cardsHtml;
 
-  // 요약 카드
+  // 요약
   const score = summary.health_score || 0;
   const scoreColor = score >= 7 ? '#6ee7b7' : score >= 5 ? '#fbbf24' : '#f87171';
+  document.getElementById('resultTitle').textContent = isAfterMeal ? '실제 섭취 결과' : '분석 결과';
+  document.getElementById('summaryCard').innerHTML = '<div class="summary-card"><div class="summary-title">'+(isAfterMeal?'실제 섭취 요약':'식사 영양 정보')+'</div><div class="summary-stats"><div class="stat-item"><div class="stat-value" id="sumCal">'+(summary.total_calories||0)+'</div><div class="stat-label">총 칼로리 (kcal)</div></div><div class="stat-item"><div class="stat-value" style="color:#60a5fa" id="sumPro">'+(summary.total_protein||0)+'g</div><div class="stat-label">단백질</div></div><div class="stat-item"><div class="stat-value" style="color:#fbbf24" id="sumCarb">'+(summary.total_carbs||0)+'g</div><div class="stat-label">탄수화물</div></div><div class="stat-item"><div class="stat-value" style="color:#f87171" id="sumFat">'+(summary.total_fat||0)+'g</div><div class="stat-label">지방</div></div></div><div class="health-score"><div class="score-circle" style="background:'+scoreColor+'33;border:2px solid '+scoreColor+'"><span style="color:'+scoreColor+'">'+score+'</span></div><div><div style="font-weight:600;margin-bottom:4px">건강 점수 '+score+'/10</div><div style="font-size:0.85em;color:#888">'+(summary.meal_type?summary.meal_type+' 식사':'')+'</div></div></div><div class="comment">'+(summary.one_line_comment||'')+'</div></div>';
 
-  document.getElementById('summaryCard').innerHTML = `
-    <div class="summary-card">
-      <div class="summary-title">${isLeftover ? '실제 섭취 요약' : '식사 요약'}</div>
-      <div class="summary-stats">
-        <div class="stat-item">
-          <div class="stat-value" id="sumCal">${summary.total_calories || 0}</div>
-          <div class="stat-label">총 칼로리 (kcal)</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" style="color:#60a5fa" id="sumPro">${summary.total_protein || 0}g</div>
-          <div class="stat-label">단백질</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" style="color:#fbbf24" id="sumCarb">${summary.total_carbs || 0}g</div>
-          <div class="stat-label">탄수화물</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" style="color:#f87171" id="sumFat">${summary.total_fat || 0}g</div>
-          <div class="stat-label">지방</div>
-        </div>
-      </div>
-      <div class="health-score">
-        <div class="score-circle" style="background:${scoreColor}33; border: 2px solid ${scoreColor}">
-          <span style="color:${scoreColor}">${score}</span>
-        </div>
-        <div>
-          <div style="font-weight:600; margin-bottom:4px">건강 점수 ${score}/10</div>
-          <div style="font-size:0.85em; color:#888">
-            ${summary.meal_type ? summary.meal_type + ' 식사' : ''}
-          </div>
-        </div>
-      </div>
-      <div class="comment">${summary.one_line_comment || ''}</div>
-    </div>
-  `;
-
+  // 식후 배너: 첫 분석 후에만 표시, 이미 식후 분석 완료되면 숨김
+  document.getElementById('afterMealBanner').style.display = isAfterMeal ? 'none' : 'block';
+  document.getElementById('afterUploadSection').style.display = 'none';
+  document.getElementById('manualSection').style.display = 'none';
   document.getElementById('resultSection').style.display = 'block';
-  document.getElementById('analyzeBtn').disabled = false;
 }
 </script>
 </body>
