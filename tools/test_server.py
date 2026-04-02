@@ -360,7 +360,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="icon">📸</div>
     <div class="text">음식 사진을 촬영하거나 선택하세요</div>
     <div class="subtext">식사 전 음식 사진을 찍어주세요</div>
-    <input type="file" id="fileInput" accept="image/*" capture="environment" style="display:none" />
+    <input type="file" id="fileInput" accept="image/*" style="display:none" />
   </div>
 
   <!-- 미리보기 -->
@@ -411,7 +411,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <div style="font-size:2em; margin-bottom:8px">📸</div>
       <div style="color:#6ee7b7; font-weight:600">식후 사진을 선택하세요</div>
       <div style="color:#888; font-size:0.85em; margin-top:6px">남은 음식이 보이도록 촬영해주세요</div>
-      <input type="file" id="afterInput" accept="image/*" capture="environment" style="display:none" />
+      <input type="file" id="afterInput" accept="image/*" style="display:none" />
     </div>
     <img id="afterPreviewImg" style="display:none; max-width:100%; max-height:300px; border-radius:12px; margin-bottom:12px" />
     <div id="afterActions" style="display:none">
