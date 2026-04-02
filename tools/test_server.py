@@ -690,16 +690,17 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """메인 페이지 서빙"""
-        if self.path == '/' or self.path == '/index.html':
+        path = self.path.split('?')[0]  # 쿼리 파라미터 제거
+        if path == '/' or path == '/index.html':
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(HTML_PAGE.encode('utf-8'))
-        elif self.path == '/version':
+        elif path == '/version':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.end_headers()
-            self.wfile.write(json.dumps({"version": "2.1", "json_mode": True, "db_count": len(FOODS_DB)}, ensure_ascii=False).encode('utf-8'))
+            self.wfile.write(json.dumps({"version": "3.0", "json_mode": True, "db_count": len(FOODS_DB)}, ensure_ascii=False).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
