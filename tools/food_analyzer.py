@@ -86,6 +86,38 @@ class _FoodDBProxy:
         return self._count > 0
 
 
+def _is_relevant_match(query, db_name):
+    """부분 매칭 결과가 실제로 관련 있는지 판단
+    예: "귤" → "레귤러 피자"는 관련 없음 (False)
+    예: "김치찌개" → "김치찌개(돼지고기)"는 관련 있음 (True)
+    """
+    query = query.strip()
+    db_name = db_name.strip()
+
+    # DB 이름이 query로 시작하면 → 관련 있음 (예: "귤" → "귤차")
+    if db_name.startswith(query):
+        return True
+
+    # DB 이름에 query가 독립적 단어로 포함되는지 확인
+    # 구분자: 공백, _, (, ), /, 등
+    import re
+    # query 앞뒤가 단어 경계이거나 구분자인 경우만 허용
+    # 예: "귤"이 "레귤러"에 포함 → 앞에 "레"가 붙어있으므로 False
+    # 예: "귤"이 "귤차"에 포함 → 귤로 시작하므로 True (위에서 이미 처리)
+    # 예: "김치"가 "김치찌개"에 포함 → 김치로 시작하므로 True
+    idx = db_name.find(query)
+    if idx < 0:
+        return False
+
+    # query 앞의 문자가 구분자이면 OK
+    if idx > 0:
+        prev_char = db_name[idx - 1]
+        if prev_char not in ' _(/·\t':
+            return False
+
+    return True
+
+
 def search_food_db(name):
     """SQLite에서 음식 이름으로 빠르게 검색 (인덱스 활용)"""
     global _DB_CONN
@@ -100,17 +132,17 @@ def search_food_db(name):
     if row:
         return dict(row), []
 
-    # 2) 부분 매칭 (LIKE — 인덱스 부분 활용)
-    cur.execute("SELECT * FROM foods WHERE name_ko LIKE ? LIMIT 5", (f"%{name}%",))
-    partials = [dict(r) for r in cur.fetchall()]
+    # 2) 부분 매칭 (LIKE) + 관련성 필터
+    cur.execute("SELECT * FROM foods WHERE name_ko LIKE ? LIMIT 20", (f"%{name}%",))
+    raw_partials = [dict(r) for r in cur.fetchall()]
+    # 엉뚱한 매칭 걸러내기 (예: "귤" → "레귤러 피자" 제거)
+    partials = [r for r in raw_partials if _is_relevant_match(name, r.get('name_ko', ''))]
     if partials:
-        return None, partials
+        return None, partials[:5]
 
     # 3) 역방향 부분 매칭: DB 이름이 AI 이름에 포함되는 경우
     # 예: AI가 "김치찌개" → DB에 "김치" 매칭
-    # 이건 짧은 이름에만 적용 (성능 보호)
-    if len(name) >= 2:
-        words = [name[:2], name]  # 첫 2글자로 범위 좁히기
+    if len(name) >= 3:  # 최소 3글자 이상일 때만 역방향 매칭
         cur.execute("SELECT * FROM foods WHERE ? LIKE '%' || name_ko || '%' AND length(name_ko) >= 2 LIMIT 5", (name,))
         reverse_partials = [dict(r) for r in cur.fetchall()]
         if reverse_partials:
@@ -375,15 +407,21 @@ def match_with_db(analysis, foods_db):
 
         if match:
             # DB 매칭 성공: 1인분 영양소를 AI 추정 양에 비례하여 보정
-            db_serving = match.get('serving_size_g', 100) or 100
-            ai_serving = food.get('estimated_serving_g', db_serving) or db_serving
-            ratio = ai_serving / db_serving
+            db_serving = match.get('serving_size_g') or 0
+            ai_serving = food.get('estimated_serving_g') or 0
+
+            # serving_size_g가 0이거나 없으면 비율 보정 불가 → AI 값 유지하되 DB 참고 표시만
+            if db_serving > 0 and ai_serving > 0:
+                ratio = ai_serving / db_serving
+            else:
+                ratio = 1.0  # 비율 보정 불가 시 1:1
 
             food['db_matched'] = True
             food['db_food_id'] = match.get('food_id', '')
             food['db_name'] = match.get('name_ko', '')
 
             # DB 값으로 보정 (양 비율 적용)
+            # 단, DB 값이 0인 필드는 AI 추정값을 유지 (DB 데이터 누락일 수 있음)
             for field_pair in [
                 ('calories_kcal', 'calories_kcal'),
                 ('protein_g', 'protein_g'),
@@ -395,8 +433,9 @@ def match_with_db(analysis, foods_db):
             ]:
                 ai_field, db_field = field_pair
                 db_val = match.get(db_field)
-                if db_val is not None and isinstance(db_val, (int, float)):
+                if db_val is not None and isinstance(db_val, (int, float)) and db_val > 0:
                     food[ai_field] = round(db_val * ratio, 1)
+                # db_val이 0이면 AI 추정값 유지 (DB 데이터 누락 가능성)
 
             food['source'] = 'DB_MATCHED'
         else:

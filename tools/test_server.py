@@ -327,12 +327,29 @@ HTML_PAGE = """<!DOCTYPE html>
   .eaten-slider { width: 100%; margin: 6px 0; accent-color: #3b82f6; }
   .eaten-value { color: #60a5fa; font-weight: 600; }
 
-  /* 음식별 나눠먹기 */
-  .food-sharing { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #2a2a4a; }
-  .food-sharing-label { font-size: 0.8em; color: #888; }
-  .food-sharing-btn { width: 26px; height: 26px; border-radius: 50%; border: 1px solid #3a3a5a; background: #0f0f1a; color: #e0e0e0; font-size: 1em; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-  .food-sharing-btn:hover { border-color: #3b82f6; }
-  .food-sharing-num { font-size: 0.95em; font-weight: 700; min-width: 20px; text-align: center; }
+  /* 나눠먹기 팝업 */
+  .sharing-overlay { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center; }
+  .sharing-overlay.active { display:flex; }
+  .sharing-popup { background:#1a1a2e; border:1px solid #3b82f6; border-radius:16px; padding:28px 24px; max-width:340px; width:90%; text-align:center; }
+  .sharing-popup h3 { color:#e0e0e0; margin-bottom:6px; font-size:1.1em; }
+  .sharing-popup .sub { color:#888; font-size:0.85em; margin-bottom:18px; }
+  .people-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-bottom:18px; }
+  .people-btn { padding:12px 0; border-radius:10px; border:1px solid #3a3a5a; background:#0f0f1a; color:#e0e0e0; font-size:1.05em; font-weight:600; cursor:pointer; transition:all 0.2s; }
+  .people-btn:hover { border-color:#3b82f6; background:rgba(59,130,246,0.1); }
+  .people-btn.selected { border-color:#3b82f6; background:#3b82f6; color:#fff; }
+
+  /* 음식별 나눠먹기 슬라이더 */
+  .food-sharing { margin-top:10px; padding-top:10px; border-top:1px solid #2a2a4a; }
+  .sharing-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .sharing-label { font-size:0.82em; color:#888; }
+  .sharing-pct { font-size:0.95em; font-weight:700; color:#60a5fa; min-width:42px; text-align:right; }
+  .sharing-slider { width:100%; margin:4px 0 6px; accent-color:#3b82f6; height:6px; cursor:pointer; }
+  .sharing-presets { display:flex; gap:6px; flex-wrap:wrap; }
+  .preset-btn { padding:4px 10px; border-radius:14px; border:1px solid #3a3a5a; background:#0f0f1a; color:#aaa; font-size:0.75em; cursor:pointer; transition:all 0.2s; }
+  .preset-btn:hover { border-color:#3b82f6; color:#60a5fa; }
+  .preset-btn.active { border-color:#3b82f6; background:rgba(59,130,246,0.15); color:#60a5fa; }
+  .sharing-summary { display:flex; align-items:center; gap:6px; margin-top:4px; }
+  .sharing-summary-text { font-size:0.78em; color:#6ee7b7; }
 
   /* 남은 양 바 */
   .eaten-bar { height: 6px; background: #2a2a4a; border-radius: 3px; margin: 8px 0; overflow: hidden; }
@@ -381,6 +398,16 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <!-- 에러 -->
   <div class="error-box" id="errorBox"></div>
+
+  <!-- 나눠먹기 인원 선택 팝업 -->
+  <div class="sharing-overlay" id="sharingOverlay">
+    <div class="sharing-popup">
+      <h3>몇 명이서 드셨나요?</h3>
+      <div class="sub">인원을 선택하면 균등 분배되고, 이후 음식별로 세부 조정할 수 있어요</div>
+      <div class="people-grid" id="peopleGrid"></div>
+      <button class="btn btn-secondary" onclick="closeSharingPopup()" style="width:100%; padding:10px">취소</button>
+    </div>
+  </div>
 
   <!-- 분석 결과 -->
   <div class="result-section" id="resultSection">
@@ -438,7 +465,7 @@ let selectedFile = null;
 let afterFile = null;
 let currentAnalysis = null;
 let originalAnalysis = null; // 원본 분석 (100% 기준)
-let foodSharing = {}; // 음식별 나눠먹기 인원수 { index: count }
+// 나눠먹기는 sharingPcts / sharingPeople / sharingMode로 관리
 let isAfterMealDone = false;
 
 // ── 파일 선택 ──
@@ -465,7 +492,7 @@ function handleFile(file) {
 
 function resetAll() {
   selectedFile = null; afterFile = null; currentAnalysis = null; originalAnalysis = null;
-  foodSharing = {}; isAfterMealDone = false;
+  sharingPcts = {}; sharingMode = false; sharingPeople = 1; isAfterMealDone = false;
   fileInput.value = '';
   uploadArea.style.display = 'block';
   document.getElementById('previewSection').style.display = 'none';
@@ -621,21 +648,93 @@ function applyManualEntry() {
   renderResult(data, true);
 }
 
-// ── 음식별 나눠먹기 ──
-function adjustFoodSharing(idx, delta) {
-  foodSharing[idx] = Math.max(1, Math.min(20, (foodSharing[idx]||1) + delta));
-  document.getElementById('fs_num_'+idx).textContent = foodSharing[idx];
+// ── 나눠먹기 시스템 ──
+let sharingPeople = 1;    // 총 인원수
+let sharingPcts = {};     // 음식별 내 비율 { index: 0~100 }
+let sharingMode = false;  // 나눠먹기 활성화 여부
+
+function openSharingPopup() {
+  const grid = document.getElementById('peopleGrid');
+  grid.innerHTML = '';
+  for (let n = 1; n <= 10; n++) {
+    const btn = document.createElement('button');
+    btn.className = 'people-btn' + (n === sharingPeople ? ' selected' : '');
+    btn.textContent = n + '명';
+    btn.onclick = () => selectPeople(n);
+    grid.appendChild(btn);
+  }
+  document.getElementById('sharingOverlay').classList.add('active');
+}
+function closeSharingPopup() {
+  document.getElementById('sharingOverlay').classList.remove('active');
+}
+function selectPeople(n) {
+  sharingPeople = n;
+  sharingMode = (n > 1);
+  const defaultPct = Math.round(100 / n);
+  // 모든 음식에 균등 비율 적용
+  if (currentAnalysis && currentAnalysis.foods) {
+    currentAnalysis.foods.forEach((f, i) => {
+      sharingPcts[i] = defaultPct;
+    });
+  }
+  closeSharingPopup();
+  updateSharingUI();
   recalcTotal();
+}
+function setSharingPct(idx, val) {
+  val = Math.max(0, Math.min(100, parseInt(val) || 0));
+  sharingPcts[idx] = val;
+  const slider = document.getElementById('share_slider_'+idx);
+  const label = document.getElementById('share_pct_'+idx);
+  const summary = document.getElementById('share_summary_'+idx);
+  if (slider) slider.value = val;
+  if (label) label.textContent = val + '%';
+  if (summary) {
+    const food = currentAnalysis.foods[idx];
+    const cal = Math.round((food.calories_kcal||0) * val / 100);
+    summary.textContent = '내 섭취: ' + cal + 'kcal';
+  }
+  // 프리셋 버튼 활성 상태 업데이트
+  document.querySelectorAll('.preset-btn[data-idx="'+idx+'"]').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.val) === val);
+  });
+  recalcTotal();
+}
+function updateSharingUI() {
+  if (!currentAnalysis) return;
+  (currentAnalysis.foods||[]).forEach((f, i) => {
+    const container = document.getElementById('sharing_container_'+i);
+    if (!container) return;
+    if (!sharingMode) {
+      container.style.display = 'none';
+      sharingPcts[i] = 100;
+      return;
+    }
+    container.style.display = 'block';
+    const pct = sharingPcts[i] || 100;
+    const slider = document.getElementById('share_slider_'+i);
+    const label = document.getElementById('share_pct_'+i);
+    if (slider) slider.value = pct;
+    if (label) label.textContent = pct + '%';
+    // 프리셋 버튼 상태
+    document.querySelectorAll('.preset-btn[data-idx="'+i+'"]').forEach(b => {
+      b.classList.toggle('active', parseInt(b.dataset.val) === pct);
+    });
+  });
+  // 나눠먹기 버튼 텍스트 업데이트
+  const btn = document.getElementById('sharingToggleBtn');
+  if (btn) btn.textContent = sharingMode ? '👥 ' + sharingPeople + '명 나눠먹기 (변경)' : '👥 나눠먹기';
 }
 function recalcTotal() {
   if (!currentAnalysis) return;
   let tc=0, tp=0, tca=0, tf=0;
   (currentAnalysis.foods||[]).forEach((f, i) => {
-    const div = foodSharing[i] || 1;
-    tc += (f.calories_kcal||0)/div;
-    tp += (f.protein_g||0)/div;
-    tca += (f.carbs_g||0)/div;
-    tf += (f.fat_g||0)/div;
+    const pct = (sharingMode ? (sharingPcts[i] ?? 100) : 100) / 100;
+    tc += (f.calories_kcal||0) * pct;
+    tp += (f.protein_g||0) * pct;
+    tca += (f.carbs_g||0) * pct;
+    tf += (f.fat_g||0) * pct;
   });
   const el = id => document.getElementById(id);
   if(el('sumCal')) el('sumCal').textContent = Math.round(tc);
@@ -648,11 +747,13 @@ function recalcTotal() {
 function renderResult(data, isAfterMeal) {
   const foods = data.foods || [];
   const summary = data.meal_summary || {};
-  foodSharing = {};
+  sharingPcts = {};
+  sharingMode = false;
+  sharingPeople = 1;
 
   let cardsHtml = '';
   foods.forEach((food, i) => {
-    foodSharing[i] = 1;
+    sharingPcts[i] = 100;
     const isDb = food.db_matched || food.source === 'DB_MATCHED';
     const conf = food.confidence || 0;
     const confPct = Math.round(conf * 100);
@@ -664,15 +765,59 @@ function renderResult(data, isAfterMeal) {
       eatenBarHtml = '<div style="font-size:0.8em; color:#6ee7b7; margin-bottom:4px">섭취량: '+ep+'% '+(food.leftover_note ? '· '+food.leftover_note : '')+'</div><div class="eaten-bar"><div class="eaten-fill" style="width:'+ep+'%"></div></div>';
     }
 
-    cardsHtml += '<div class="food-card"><div class="food-title"><div><span class="food-name">'+(food.name_ko||'?')+'</span><span class="food-name-en">'+(food.name_en||'')+'</span></div><span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div><div class="confidence-bar"><div class="confidence-fill" style="width:'+confPct+'%;background:'+confColor+'"></div></div><div style="font-size:0.8em;color:#888;margin-bottom:10px;margin-top:-8px">확신도 '+confPct+'% · 약 '+(food.estimated_serving_g||'?')+'g</div>'+eatenBarHtml+'<div class="nutrition-grid"><div class="nutrition-item"><div class="nutrition-value">'+(food.calories_kcal||0)+'</div><div class="nutrition-label">칼로리 kcal</div></div><div class="nutrition-item"><div class="nutrition-value" style="color:#60a5fa">'+(food.protein_g||0)+'g</div><div class="nutrition-label">단백질</div></div><div class="nutrition-item"><div class="nutrition-value" style="color:#fbbf24">'+(food.carbs_g||0)+'g</div><div class="nutrition-label">탄수화물</div></div><div class="nutrition-item"><div class="nutrition-value" style="color:#f87171">'+(food.fat_g||0)+'g</div><div class="nutrition-label">지방</div></div></div><div class="food-sharing"><span class="food-sharing-label">나눠먹기</span><button class="food-sharing-btn" onclick="adjustFoodSharing('+i+',-1)">−</button><span class="food-sharing-num" id="fs_num_'+i+'">1</span><button class="food-sharing-btn" onclick="adjustFoodSharing('+i+',1)">+</button><span class="food-sharing-label">명</span></div></div>';
+    // 나눠먹기 프리셋 (인원수 기반 + 고정값)
+    const presetBtns = [25, 33, 50, 75, 100].map(v =>
+      '<button class="preset-btn" data-idx="'+i+'" data-val="'+v+'" onclick="setSharingPct('+i+','+v+')">'+v+'%</button>'
+    ).join('');
+
+    const sharingHtml = '<div class="food-sharing" id="sharing_container_'+i+'" style="display:none">'
+      + '<div class="sharing-header">'
+      + '<span class="sharing-label">내가 먹은 비율</span>'
+      + '<span class="sharing-pct" id="share_pct_'+i+'">100%</span>'
+      + '</div>'
+      + '<input type="range" class="sharing-slider" id="share_slider_'+i+'" min="0" max="100" value="100" '
+      + 'oninput="setSharingPct('+i+', this.value)">'
+      + '<div class="sharing-presets">'+presetBtns+'</div>'
+      + '<div class="sharing-summary"><span class="sharing-summary-text" id="share_summary_'+i+'"></span></div>'
+      + '</div>';
+
+    cardsHtml += '<div class="food-card">'
+      + '<div class="food-title"><div><span class="food-name">'+(food.name_ko||'?')+'</span>'
+      + '<span class="food-name-en">'+(food.name_en||'')+'</span></div>'
+      + '<span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div>'
+      + '<div class="confidence-bar"><div class="confidence-fill" style="width:'+confPct+'%;background:'+confColor+'"></div></div>'
+      + '<div style="font-size:0.8em;color:#888;margin-bottom:10px;margin-top:-8px">확신도 '+confPct+'% · 약 '+(food.estimated_serving_g||'?')+'g</div>'
+      + eatenBarHtml
+      + '<div class="nutrition-grid">'
+      + '<div class="nutrition-item"><div class="nutrition-value">'+(food.calories_kcal||0)+'</div><div class="nutrition-label">칼로리 kcal</div></div>'
+      + '<div class="nutrition-item"><div class="nutrition-value" style="color:#60a5fa">'+(food.protein_g||0)+'g</div><div class="nutrition-label">단백질</div></div>'
+      + '<div class="nutrition-item"><div class="nutrition-value" style="color:#fbbf24">'+(food.carbs_g||0)+'g</div><div class="nutrition-label">탄수화물</div></div>'
+      + '<div class="nutrition-item"><div class="nutrition-value" style="color:#f87171">'+(food.fat_g||0)+'g</div><div class="nutrition-label">지방</div></div>'
+      + '</div>'
+      + sharingHtml
+      + '</div>';
   });
   document.getElementById('foodCards').innerHTML = cardsHtml;
 
-  // 요약
+  // 요약 (나눠먹기 버튼 포함)
   const score = summary.health_score || 0;
   const scoreColor = score >= 7 ? '#6ee7b7' : score >= 5 ? '#fbbf24' : '#f87171';
   document.getElementById('resultTitle').textContent = isAfterMeal ? '실제 섭취 결과' : '분석 결과';
-  document.getElementById('summaryCard').innerHTML = '<div class="summary-card"><div class="summary-title">'+(isAfterMeal?'실제 섭취 요약':'식사 영양 정보')+'</div><div class="summary-stats"><div class="stat-item"><div class="stat-value" id="sumCal">'+(summary.total_calories||0)+'</div><div class="stat-label">총 칼로리 (kcal)</div></div><div class="stat-item"><div class="stat-value" style="color:#60a5fa" id="sumPro">'+(summary.total_protein||0)+'g</div><div class="stat-label">단백질</div></div><div class="stat-item"><div class="stat-value" style="color:#fbbf24" id="sumCarb">'+(summary.total_carbs||0)+'g</div><div class="stat-label">탄수화물</div></div><div class="stat-item"><div class="stat-value" style="color:#f87171" id="sumFat">'+(summary.total_fat||0)+'g</div><div class="stat-label">지방</div></div></div><div class="health-score"><div class="score-circle" style="background:'+scoreColor+'33;border:2px solid '+scoreColor+'"><span style="color:'+scoreColor+'">'+score+'</span></div><div><div style="font-weight:600;margin-bottom:4px">건강 점수 '+score+'/10</div><div style="font-size:0.85em;color:#888">'+(summary.meal_type?summary.meal_type+' 식사':'')+'</div></div></div><div class="comment">'+(summary.one_line_comment||'')+'</div></div>';
+  document.getElementById('summaryCard').innerHTML = '<div class="summary-card">'
+    + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">'
+    + '<div class="summary-title" style="margin-bottom:0">'+(isAfterMeal?'실제 섭취 요약':'식사 영양 정보')+'</div>'
+    + '<button class="btn btn-secondary" id="sharingToggleBtn" onclick="openSharingPopup()" style="padding:6px 14px; font-size:0.82em; border-radius:20px">👥 나눠먹기</button>'
+    + '</div>'
+    + '<div class="summary-stats">'
+    + '<div class="stat-item"><div class="stat-value" id="sumCal">'+(summary.total_calories||0)+'</div><div class="stat-label">총 칼로리 (kcal)</div></div>'
+    + '<div class="stat-item"><div class="stat-value" style="color:#60a5fa" id="sumPro">'+(summary.total_protein||0)+'g</div><div class="stat-label">단백질</div></div>'
+    + '<div class="stat-item"><div class="stat-value" style="color:#fbbf24" id="sumCarb">'+(summary.total_carbs||0)+'g</div><div class="stat-label">탄수화물</div></div>'
+    + '<div class="stat-item"><div class="stat-value" style="color:#f87171" id="sumFat">'+(summary.total_fat||0)+'g</div><div class="stat-label">지방</div></div>'
+    + '</div>'
+    + '<div class="health-score"><div class="score-circle" style="background:'+scoreColor+'33;border:2px solid '+scoreColor+'"><span style="color:'+scoreColor+'">'+score+'</span></div>'
+    + '<div><div style="font-weight:600;margin-bottom:4px">건강 점수 '+score+'/10</div>'
+    + '<div style="font-size:0.85em;color:#888">'+(summary.meal_type?summary.meal_type+' 식사':'')+'</div></div></div>'
+    + '<div class="comment">'+(summary.one_line_comment||'')+'</div></div>';
 
   // 식후 배너: 첫 분석 후에만 표시, 이미 식후 분석 완료되면 숨김
   document.getElementById('afterMealBanner').style.display = isAfterMeal ? 'none' : 'block';
