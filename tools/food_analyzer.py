@@ -579,6 +579,16 @@ CORE_FOODS = {
     "파프리카": {"cal":31,"prot":1.0,"carbs":6.0,"fat":0.3,"fiber":2.1,"sodium":4,"sugar":4.2,"serving":100,"category":"korean"},
     "상추": {"cal":15,"prot":1.4,"carbs":2.9,"fat":0.2,"fiber":1.3,"sodium":28,"sugar":0.8,"serving":30,"category":"korean"},
     "토스트": {"cal":280,"prot":8.0,"carbs":35.0,"fat":12.0,"fiber":1.5,"sodium":400,"sugar":5.0,"serving":150,"category":"snack_drink"},
+    "떡갈비": {"cal":220,"prot":12.0,"carbs":12.0,"fat":14.0,"fiber":0.5,"sodium":400,"sugar":3.0,"serving":150,"category":"korean"},
+    "탕수육": {"cal":240,"prot":12.0,"carbs":25.0,"fat":10.0,"fiber":0.5,"sodium":350,"sugar":10.0,"serving":200,"category":"korean"},
+    "갈비찜": {"cal":168,"prot":11.2,"carbs":8.0,"fat":9.6,"fiber":0.6,"sodium":392,"sugar":4.0,"serving":250,"category":"korean"},
+    "간장게장": {"cal":80,"prot":12.0,"carbs":3.3,"fat":3.3,"fiber":0,"sodium":500,"sugar":1.0,"serving":150,"category":"korean"},
+    "곰탕": {"cal":56,"prot":3.6,"carbs":1.6,"fat":3.6,"fiber":0,"sodium":300,"sugar":0,"serving":500,"category":"korean"},
+    "곱창구이": {"cal":187,"prot":10.7,"carbs":1.3,"fat":14.7,"fiber":0,"sodium":300,"sugar":0,"serving":150,"category":"korean"},
+    "계란찜": {"cal":73,"prot":6.0,"carbs":1.3,"fat":5.0,"fiber":0,"sodium":250,"sugar":0.5,"serving":150,"category":"korean"},
+    "닭갈비": {"cal":128,"prot":10.0,"carbs":8.0,"fat":6.0,"fiber":0.5,"sodium":400,"sugar":4.0,"serving":250,"category":"korean"},
+    "비빔냉면": {"cal":130,"prot":4.5,"carbs":25.0,"fat":1.5,"fiber":1.5,"sodium":450,"sugar":5.0,"serving":500,"category":"korean"},
+    "스테이크": {"cal":271,"prot":26.0,"carbs":0.0,"fat":18.0,"fiber":0,"sodium":65,"sugar":0,"serving":200,"category":"foreign_popular"},
 }
 
 
@@ -620,10 +630,100 @@ def _search_core_foods(name):
     return None, None
 
 
+# ── 골드 테이블 검색 (1,771건 검증된 데이터) ──
+_GOLD_DATA = None
+
+def _load_gold_db():
+    """골드 테이블 JSON 로드 (메모리 캐싱)"""
+    global _GOLD_DATA
+    if _GOLD_DATA is not None:
+        return _GOLD_DATA
+    gold_path = Path(__file__).parent.parent / 'gold_foods.json'
+    if gold_path.exists():
+        with open(gold_path, 'r', encoding='utf-8') as f:
+            _GOLD_DATA = json.load(f)
+        return _GOLD_DATA
+    return None
+
+def _normalize_food_name(name):
+    """AI가 반환한 음식명을 검색 가능한 형태로 정규화"""
+    import re
+    n = name.strip()
+    # 괄호 안 수량 제거: "삼겹살 (200g)" → "삼겹살"
+    n = re.sub(r'\s*\(\d+[가-힣a-zA-Z]*\)\s*', ' ', n)
+    # 앞뒤 공백/특수문자
+    n = re.sub(r'^[!@#$%^&*()"\']+', '', n)
+    n = n.strip()
+    return n
+
+def _search_gold(name):
+    """골드 테이블에서 음식 검색 — 정확→CORE→시작→부분→키워드 순"""
+    import re
+    gold = _load_gold_db()
+    if gold is None:
+        return None, None
+
+    clean = _normalize_food_name(name)
+
+    # 1) 정확 매칭
+    if clean in gold:
+        return clean, gold[clean]
+
+    # 2) CORE_FOODS 스타일 매칭 (startsWith 우선, 가장 긴 것)
+    core_key, core_data = _search_core_foods(clean)
+    if core_data:
+        return core_key, {
+            'cal': core_data['cal'], 'prot': core_data['prot'],
+            'carbs': core_data['carbs'], 'fat': core_data['fat'],
+            'fiber': core_data.get('fiber', 0), 'sodium': core_data.get('sodium', 0),
+            'sugar': core_data.get('sugar', 0), 'serving': core_data['serving'],
+            'category': core_data['category'], 'source': 'core',
+        }
+
+    # 3) 골드 키가 clean으로 시작하는 경우 (가장 짧은 것 = 가장 일반적)
+    starts_with = [(k, v) for k, v in gold.items() if k.startswith(clean) and len(clean) >= 2]
+    if starts_with:
+        starts_with.sort(key=lambda x: len(x[0]))
+        return starts_with[0][0], starts_with[0][1]
+
+    # 4) clean이 골드 키로 시작하는 경우 (가장 긴 매칭 우선, 최소 3자)
+    contained = [(k, v) for k, v in gold.items() if clean.startswith(k) and len(k) >= 3]
+    if contained:
+        contained.sort(key=lambda x: len(x[0]), reverse=True)
+        return contained[0][0], contained[0][1]
+
+    # 5) 공백 구분자 뒤 매칭: "매운 김치찌개" → "김치찌개"
+    words = clean.split()
+    if len(words) > 1:
+        for word in sorted(words, key=len, reverse=True):
+            if len(word) >= 2 and word in gold:
+                return word, gold[word]
+
+    # 6) 검색키 기반 퍼지 매칭
+    search_key = re.sub(r'[^가-힣a-zA-Z0-9]', '', clean).lower()
+    if len(search_key) >= 2:
+        # 정확 검색키 매칭
+        for k, v in gold.items():
+            if v.get('search_key') == search_key:
+                return k, v
+
+        # 검색키 시작 매칭
+        matches = [(k, v) for k, v in gold.items()
+                   if v.get('search_key', '').startswith(search_key)]
+        if matches:
+            matches.sort(key=lambda x: len(x[0]))
+            return matches[0][0], matches[0][1]
+
+    return None, None
+
+
 def match_with_db(analysis, foods_db):
     """
     AI 분석 결과를 DB와 매칭하여 보정
-    우선순위: 핵심 참조 테이블 → 기존 DB(품질 통과만) → AI 추정값 유지
+    우선순위: 골드 테이블(1,771건 검증) → 기존 DB(품질 통과만) → AI 추정값 유지
+
+    골드 테이블 = CORE_FOODS(146건 수동 검증) + DB 고품질(1,625건, 5대 영양소+서빙 완비)
+    모두 100g당 기준으로 통일되어 있음
     """
     if "error" in analysis or "foods" not in analysis:
         return analysis
@@ -635,22 +735,23 @@ def match_with_db(analysis, foods_db):
             food['source'] = 'AI_ESTIMATED'
             continue
 
-        # ── 1순위: 핵심 음식 참조 테이블 ──
-        core_key, core_data = _search_core_foods(ai_name)
-        if core_data:
-            ai_serving = food.get('estimated_serving_g') or core_data['serving']
-            ratio = ai_serving / 100  # CORE_FOODS는 100g 기준
+        # ── 1순위: 골드 테이블 (1,771건, 100g 기준 통일) ──
+        gold_key, gold_data = _search_gold(ai_name)
+        if gold_data:
+            gold_serving = gold_data.get('serving') or 100
+            ai_serving = food.get('estimated_serving_g') or gold_serving
+            ratio = ai_serving / 100  # 골드 테이블은 100g 기준
 
             food['db_matched'] = True
-            food['db_name'] = core_key
-            food['calories_kcal'] = round(core_data['cal'] * ratio, 1)
-            food['protein_g'] = round(core_data['prot'] * ratio, 1)
-            food['carbs_g'] = round(core_data['carbs'] * ratio, 1)
-            food['fat_g'] = round(core_data['fat'] * ratio, 1)
-            food['fiber_g'] = round(core_data['fiber'] * ratio, 1)
-            food['sodium_mg'] = round(core_data['sodium'] * ratio, 1)
-            food['sugar_g'] = round(core_data['sugar'] * ratio, 1)
-            food['source'] = 'CORE_REF'
+            food['db_name'] = gold_key
+            food['calories_kcal'] = round(gold_data['cal'] * ratio, 1)
+            food['protein_g'] = round(gold_data['prot'] * ratio, 1)
+            food['carbs_g'] = round(gold_data['carbs'] * ratio, 1)
+            food['fat_g'] = round(gold_data['fat'] * ratio, 1)
+            food['fiber_g'] = round(gold_data.get('fiber', 0) * ratio, 1)
+            food['sodium_mg'] = round(gold_data.get('sodium', 0) * ratio, 1)
+            food['sugar_g'] = round(gold_data.get('sugar', 0) * ratio, 1)
+            food['source'] = 'GOLD_REF' if gold_data.get('source') == 'core' else 'GOLD_DB'
             continue
 
         # ── 2순위: 기존 SQLite DB (품질 필터 적용) ──
