@@ -389,13 +389,21 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
 def _db_quality_score(match):
     """DB 항목의 데이터 품질을 0~5점으로 평가
     핵심 영양소(칼로리, 단백질, 탄수화물, 지방, serving_size)가 있으면 각 1점
+    serving_size 없으면 비율 보정 불가 → 최대 3점까지만 (사실상 통과 불가)
     """
     score = 0
+    has_serving = (match.get('serving_size_g') or 0) > 0
     if (match.get('calories_kcal') or 0) > 0: score += 1
     if (match.get('protein_g') or 0) > 0: score += 1
     if (match.get('carbs_g') or 0) > 0: score += 1
     if (match.get('fat_g') or 0) > 0: score += 1
-    if (match.get('serving_size_g') or 0) > 0: score += 1
+    if has_serving: score += 1
+
+    # serving_size 없으면 비율 보정이 불가능하므로 최대 2점으로 제한
+    # → 품질 3점 기준을 통과하지 못해 AI 추정값 사용됨
+    if not has_serving and score > 2:
+        score = 2
+
     return score
 
 
@@ -559,6 +567,17 @@ CORE_FOODS = {
     "해물파전": {"cal":160,"prot":6.0,"carbs":20.0,"fat":6.0,"fiber":1.0,"sodium":400,"sugar":2.0,"serving":200,"category":"korean"},
     "빈대떡": {"cal":200,"prot":8.0,"carbs":20.0,"fat":10.0,"fiber":1.5,"sodium":350,"sugar":1.0,"serving":150,"category":"korean"},
     "옥수수": {"cal":96,"prot":3.2,"carbs":19.0,"fat":1.2,"fiber":2.7,"sodium":15,"sugar":3.2,"serving":150,"category":"korean"},
+    "양파": {"cal":40,"prot":1.1,"carbs":9.3,"fat":0.1,"fiber":1.7,"sodium":4,"sugar":4.2,"serving":150,"category":"korean"},
+    "튀긴양파": {"cal":300,"prot":3.5,"carbs":30.0,"fat":19.0,"fiber":2.0,"sodium":200,"sugar":5.0,"serving":30,"category":"korean"},
+    "튀긴 양파": {"cal":300,"prot":3.5,"carbs":30.0,"fat":19.0,"fiber":2.0,"sodium":200,"sugar":5.0,"serving":30,"category":"korean"},
+    "마늘": {"cal":149,"prot":6.4,"carbs":33.1,"fat":0.5,"fiber":2.1,"sodium":17,"sugar":1.0,"serving":10,"category":"korean"},
+    "당근": {"cal":41,"prot":0.9,"carbs":9.6,"fat":0.2,"fiber":2.8,"sodium":69,"sugar":4.7,"serving":100,"category":"korean"},
+    "오이": {"cal":15,"prot":0.7,"carbs":3.6,"fat":0.1,"fiber":0.5,"sodium":2,"sugar":1.7,"serving":100,"category":"korean"},
+    "토마토": {"cal":18,"prot":0.9,"carbs":3.9,"fat":0.2,"fiber":1.2,"sodium":5,"sugar":2.6,"serving":150,"category":"korean"},
+    "버섯": {"cal":22,"prot":3.1,"carbs":3.3,"fat":0.3,"fiber":1.0,"sodium":5,"sugar":2.0,"serving":70,"category":"korean"},
+    "브로콜리": {"cal":34,"prot":2.8,"carbs":7.0,"fat":0.4,"fiber":2.6,"sodium":33,"sugar":1.7,"serving":100,"category":"diet_fitness"},
+    "파프리카": {"cal":31,"prot":1.0,"carbs":6.0,"fat":0.3,"fiber":2.1,"sodium":4,"sugar":4.2,"serving":100,"category":"korean"},
+    "상추": {"cal":15,"prot":1.4,"carbs":2.9,"fat":0.2,"fiber":1.3,"sodium":28,"sugar":0.8,"serving":30,"category":"korean"},
     "토스트": {"cal":280,"prot":8.0,"carbs":35.0,"fat":12.0,"fiber":1.5,"sodium":400,"sugar":5.0,"serving":150,"category":"snack_drink"},
 }
 
