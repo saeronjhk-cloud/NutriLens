@@ -377,6 +377,12 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="icon">📸</div>
     <div class="text">음식 사진을 촬영하거나 선택하세요</div>
     <div class="subtext">식사 전 음식 사진을 찍어주세요</div>
+    <div style="display:flex; gap:10px; justify-content:center; margin-top:16px">
+      <button class="btn btn-primary" onclick="event.stopPropagation(); document.getElementById('cameraInput').click()" style="padding:10px 20px; font-size:0.9em">📷 카메라 촬영</button>
+      <button class="btn btn-secondary" onclick="event.stopPropagation(); document.getElementById('galleryInput').click()" style="padding:10px 20px; font-size:0.9em">🖼️ 갤러리 선택</button>
+    </div>
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" />
+    <input type="file" id="galleryInput" accept="image/*" style="display:none" />
     <input type="file" id="fileInput" accept="image/*" style="display:none" />
   </div>
 
@@ -434,11 +440,17 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <!-- 식후 사진 업로드 -->
   <div class="after-upload-section" id="afterUploadSection">
-    <div class="after-upload-box" onclick="document.getElementById('afterInput').click()">
+    <div class="after-upload-box">
       <div style="font-size:2em; margin-bottom:8px">📸</div>
-      <div style="color:#6ee7b7; font-weight:600">식후 사진을 선택하세요</div>
+      <div style="color:#6ee7b7; font-weight:600">식후 사진을 촬영하거나 선택하세요</div>
       <div style="color:#888; font-size:0.85em; margin-top:6px">남은 음식이 보이도록 촬영해주세요</div>
+      <div style="display:flex; gap:10px; justify-content:center; margin-top:12px">
+        <button class="btn btn-green" onclick="document.getElementById('afterCameraInput').click()" style="padding:8px 16px; font-size:0.85em">📷 카메라</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('afterGalleryInput').click()" style="padding:8px 16px; font-size:0.85em">🖼️ 갤러리</button>
+      </div>
       <input type="file" id="afterInput" accept="image/*" style="display:none" />
+      <input type="file" id="afterCameraInput" accept="image/*" capture="environment" style="display:none" />
+      <input type="file" id="afterGalleryInput" accept="image/*" style="display:none" />
     </div>
     <img id="afterPreviewImg" style="display:none; max-width:100%; max-height:300px; border-radius:12px; margin-bottom:12px" />
     <div id="afterActions" style="display:none">
@@ -471,8 +483,13 @@ let isAfterMealDone = false;
 // ── 파일 선택 ──
 const uploadArea = document.getElementById('uploadArea');
 const fileInput = document.getElementById('fileInput');
-uploadArea.addEventListener('click', () => fileInput.click());
+const cameraInput = document.getElementById('cameraInput');
+const galleryInput = document.getElementById('galleryInput');
+// 영역 클릭 시 기본 파일 선택 (PC 등 버튼 외 영역 클릭)
+uploadArea.addEventListener('click', (e) => { if (e.target === uploadArea || e.target.closest('.icon') || e.target.closest('.text') || e.target.closest('.subtext')) fileInput.click(); });
 fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+cameraInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+galleryInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
 uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
 uploadArea.addEventListener('drop', (e) => { e.preventDefault(); uploadArea.classList.remove('dragover'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
@@ -547,7 +564,7 @@ function hideAfterUpload() {
   document.getElementById('afterMealBanner').style.display = 'block';
 }
 
-document.getElementById('afterInput').addEventListener('change', (e) => {
+function handleAfterFile(e) {
   afterFile = e.target.files[0];
   if (afterFile) {
     const r = new FileReader();
@@ -559,7 +576,10 @@ document.getElementById('afterInput').addEventListener('change', (e) => {
     };
     r.readAsDataURL(afterFile);
   }
-});
+}
+document.getElementById('afterInput').addEventListener('change', handleAfterFile);
+document.getElementById('afterCameraInput').addEventListener('change', handleAfterFile);
+document.getElementById('afterGalleryInput').addEventListener('change', handleAfterFile);
 
 async function analyzeLeftover() {
   if (!selectedFile || !afterFile) return alert('식후 사진이 필요합니다.');
