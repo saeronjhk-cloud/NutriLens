@@ -1,0 +1,28 @@
+name: NutriLens 배포 전 검증
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/food_analyzer.py'
+      - 'tools/pre_deploy_test.py'
+      - 'tools/test_server.py'
+  pull_request:
+    branches: [main]
+
+jobs:
+  pre-deploy-test:
+    runs-on: ubuntu-latest
+    name: 영양분석 정확도 검증
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 배포 전 검증 실행
+        run: python tools/pre_deploy_test.py
