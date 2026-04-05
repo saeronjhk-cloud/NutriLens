@@ -41,24 +41,39 @@ def load_env():
 load_env()
 
 
-def fetch_mfds_page(api_key, start, end):
+def fetch_mfds_page(api_key, start, end, service_id="I2790"):
     """식품안전나라 API에서 한 페이지 가져오기"""
-    # I2790: 식품영양성분DB (~2023) — 100g당 기준
-    url = f"http://openapi.foodsafetykorea.go.kr/api/{api_key}/I2790/json/{start}/{end}"
+    url = f"http://openapi.foodsafetykorea.go.kr/api/{api_key}/{service_id}/json/{start}/{end}"
 
     try:
         req = urllib.request.Request(url)
         req.add_header('User-Agent', 'NutriLens/1.0')
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
+            raw = resp.read().decode('utf-8')
 
-        result = data.get('I2790', {})
+        # JSON 파싱 시도
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # JSON이 아닌 응답 (HTML 에러 페이지 등)
+            preview = raw[:300].strip()
+            return 0, [], f"JSON 파싱 실패 (API가 HTML을 반환함):\n    {preview}"
+
+        # 에러 응답 처리
+        if 'RESULT' in data:
+            code = data['RESULT'].get('CODE', '')
+            msg = data['RESULT'].get('MSG', '')
+            if code != 'INFO-000':
+                return 0, [], f"API 에러 [{code}]: {msg}"
+
+        result = data.get(service_id, {})
         total = int(result.get('total_count', '0'))
         rows = result.get('row', [])
         return total, rows, None
 
     except urllib.error.HTTPError as e:
-        return 0, [], f"HTTP {e.code}: {e.read().decode('utf-8', errors='replace')[:200]}"
+        body = e.read().decode('utf-8', errors='replace')[:300]
+        return 0, [], f"HTTP {e.code}: {body}"
     except Exception as e:
         return 0, [], str(e)
 
@@ -156,13 +171,41 @@ def main():
     mfds_count = sum(1 for v in gold.values() if v.get('source') == 'mfds')
     print(f"    CORE: {core_count}, DB골드: {db_count}, 식약처: {mfds_count}")
 
-    # API 첫 호출 — 총 건수 확인
-    print("\n  API 연결 중...", end=" ", flush=True)
-    total, first_rows, err = fetch_mfds_page(api_key, 1, 1)
-    if err:
-        print(f"실패: {err}")
+    # API 연결 테스트 — 여러 서비스 ID 시도
+    print(f"\n  API 키: {api_key[:6]}...{api_key[-4:]}")
+
+    service_ids = [
+        ("I2790", "식품영양성분DB (~2023)"),
+        ("I0750", "식품영양성분DB (최신)"),
+    ]
+
+    working_service = None
+    total = 0
+
+    for sid, desc in service_ids:
+        print(f"\n  [{sid}] {desc} 시도 중...", end=" ", flush=True)
+        total, first_rows, err = fetch_mfds_page(api_key, 1, 1, service_id=sid)
+        if err:
+            print(f"실패")
+            print(f"    → {err}")
+        else:
+            print(f"OK! (총 {total:,}건)")
+            working_service = sid
+            break
+
+    if not working_service:
+        print("\n  ⚠ 모든 API 연결 실패!")
+        print()
+        print("  가능한 원인:")
+        print("  1. API 키가 만료됨 → 식품안전나라에서 재발급 필요")
+        print("     https://www.foodsafetykorea.go.kr/apiMain.do")
+        print("  2. I2790 서비스 신청이 안 됨 → 위 사이트에서 '인증키 신청' 필요")
+        print("  3. 네트워크 문제 → 인터넷 연결 확인")
+        print()
+        print("  대안: 식품영양성분 DB 엑셀 직접 다운로드")
+        print("  https://various.foodsafetykorea.go.kr/nutrient/general/down/list.do")
+        print("  → 다운받은 엑셀을 NutriLens 폴더에 넣으면 다음에 처리해드리겠습니다.")
         sys.exit(1)
-    print(f"OK (총 {total:,}건)")
 
     # 전체 가져오기 (1000건씩)
     page_size = 1000
@@ -173,7 +216,7 @@ def main():
         end = min(start + page_size - 1, total)
         print(f"  [{start:,}~{end:,}] 가져오는 중...", end=" ", flush=True)
 
-        _, rows, err = fetch_mfds_page(api_key, start, end)
+        _, rows, err = fetch_mfds_page(api_key, start, end, service_id=working_service)
         if err:
             print(f"에러: {err}")
             time.sleep(2)

@@ -18,6 +18,8 @@ import base64
 import tempfile
 import urllib.request
 import urllib.error
+import uuid
+import time
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs
@@ -31,6 +33,63 @@ sys.path.insert(0, str(TOOLS_DIR))
 
 # food_analyzer 모듈 임포트
 from food_analyzer import load_food_db, match_with_db, SYSTEM_PROMPT
+
+# ── 식사 세션 관리 (메모리 저장, 1시간 TTL) ──
+MEAL_SESSIONS = {}   # { session_id: { foods:[], created: timestamp } }
+SESSION_TTL = 3600   # 1시간
+
+def _cleanup_sessions():
+    """만료된 세션 정리"""
+    now = time.time()
+    expired = [sid for sid, s in MEAL_SESSIONS.items() if now - s['created'] > SESSION_TTL]
+    for sid in expired:
+        del MEAL_SESSIONS[sid]
+
+# ── 피드백 학습 시스템 ──
+FEEDBACK_LOG_PATH = None  # 서버 시작 시 설정
+
+def _load_feedback_log():
+    """피드백 로그 로드"""
+    if FEEDBACK_LOG_PATH and FEEDBACK_LOG_PATH.exists():
+        try:
+            with open(FEEDBACK_LOG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass
+    return {"corrections": [], "patterns": {}}
+
+def _save_feedback_log(log):
+    """피드백 로그 저장"""
+    if FEEDBACK_LOG_PATH:
+        with open(FEEDBACK_LOG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(log, f, ensure_ascii=False, indent=1)
+
+def _record_correction(original_name, corrected_name, corrected_serving=None):
+    """음식 수정 기록 — 패턴 학습용"""
+    log = _load_feedback_log()
+    # 수정 기록 추가
+    log["corrections"].append({
+        "original": original_name,
+        "corrected": corrected_name,
+        "serving": corrected_serving,
+        "timestamp": time.time()
+    })
+    # 패턴 집계 (AI가 X라고 했을 때 실제 Y인 횟수)
+    key = f"{original_name}→{corrected_name}"
+    if original_name != corrected_name:
+        log["patterns"][key] = log["patterns"].get(key, 0) + 1
+    _save_feedback_log(log)
+    return log["patterns"].get(key, 1)
+
+def _get_correction_hints():
+    """자주 틀리는 패턴을 AI 프롬프트 힌트로 변환"""
+    log = _load_feedback_log()
+    hints = []
+    for pattern, count in sorted(log.get("patterns", {}).items(), key=lambda x: -x[1]):
+        if count >= 3:  # 3회 이상 같은 수정이면 힌트로 추가
+            original, corrected = pattern.split("→", 1)
+            hints.append(f"- '{original}'으로 보이면 '{corrected}'일 가능성이 높음 (사용자 피드백 {count}회)")
+    return hints[:10]  # 최대 10개
 
 # ── 전/후 비교 분석 프롬프트 ──
 LEFTOVER_PROMPT = """당신은 NutriLens의 AI 음식 잔량 분석 전문가입니다.
@@ -161,15 +220,25 @@ print("음식 DB 로딩 중...")
 FOODS_DB = load_food_db()
 print(f"DB 로드 완료: {len(FOODS_DB)}종")
 
+# 피드백 로그 경로 설정
+FEEDBACK_LOG_PATH = PROJECT_DIR / 'feedback_log.json'
+
 # ── OpenAI API 호출 (urllib 사용, 외부 패키지 불필요) ──
 def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o"):
     """GPT-4o Vision API 호출"""
     url = "https://api.openai.com/v1/chat/completions"
 
+    # 피드백 학습 힌트 반영
+    hints = _get_correction_hints()
+    system_content = SYSTEM_PROMPT
+    if hints:
+        hint_text = "\n\n## 사용자 피드백 기반 주의사항\n다음은 자주 잘못 인식되는 음식입니다:\n" + "\n".join(hints)
+        system_content += hint_text
+
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_content},
             {
                 "role": "user",
                 "content": [
@@ -351,6 +420,37 @@ HTML_PAGE = """<!DOCTYPE html>
   .sharing-summary { display:flex; align-items:center; gap:6px; margin-top:4px; }
   .sharing-summary-text { font-size:0.78em; color:#6ee7b7; }
 
+  /* 식사 세션 바 */
+  .session-bar { display:none; background:linear-gradient(135deg,#1a2e1a,#1e3a1e); border:1px solid #059669; border-radius:12px; padding:14px 20px; margin-bottom:16px; }
+  .session-bar.active { display:flex; align-items:center; justify-content:space-between; }
+  .session-info { display:flex; align-items:center; gap:10px; }
+  .session-dot { width:10px; height:10px; border-radius:50%; background:#10b981; animation:pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .session-stats { font-size:0.85em; color:#6ee7b7; }
+  .session-cal { font-size:1.1em; font-weight:700; color:#fff; }
+
+  /* 음식 수정 버튼 */
+  .edit-btn { background:none; border:1px solid #3a3a5a; color:#888; font-size:0.78em; padding:4px 10px; border-radius:14px; cursor:pointer; transition:all 0.2s; }
+  .edit-btn:hover { border-color:#f59e0b; color:#f59e0b; }
+
+  /* 수정 모달 */
+  .edit-overlay { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:200; align-items:center; justify-content:center; }
+  .edit-overlay.active { display:flex; }
+  .edit-popup { background:#1a1a2e; border:1px solid #f59e0b; border-radius:16px; padding:24px; max-width:380px; width:90%; }
+  .edit-popup h3 { color:#f59e0b; margin-bottom:4px; font-size:1.05em; }
+  .edit-popup .sub { color:#888; font-size:0.82em; margin-bottom:16px; }
+  .edit-field { margin-bottom:14px; }
+  .edit-field label { display:block; color:#aaa; font-size:0.82em; margin-bottom:4px; }
+  .edit-field input { width:100%; padding:10px 12px; background:#0f0f1a; border:1px solid #3a3a5a; border-radius:8px; color:#fff; font-size:1em; outline:none; }
+  .edit-field input:focus { border-color:#f59e0b; }
+  .edit-slider-row { display:flex; align-items:center; gap:10px; }
+  .edit-slider-row input[type=range] { flex:1; accent-color:#f59e0b; }
+  .edit-slider-val { font-size:1.1em; font-weight:700; color:#f59e0b; min-width:48px; text-align:right; }
+  .edit-actions { display:flex; gap:10px; margin-top:18px; }
+  .edit-actions .btn { flex:1; text-align:center; }
+  .btn-warn { background:linear-gradient(135deg,#d97706,#f59e0b); color:white; }
+  .btn-danger { background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3); }
+
   /* 남은 양 바 */
   .eaten-bar { height: 6px; background: #2a2a4a; border-radius: 3px; margin: 8px 0; overflow: hidden; }
   .eaten-fill { height: 100%; border-radius: 3px; background: #6ee7b7; }
@@ -370,6 +470,54 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="header">
     <h1>NutriLens</h1>
     <p>AI 음식 영양 분석기</p>
+    <div style="margin-top:10px">
+      <button class="btn btn-green" id="sessionToggleBtn" onclick="toggleSession()" style="padding:8px 18px; font-size:0.85em; border-radius:20px">🍽️ 정찬 모드 시작</button>
+    </div>
+  </div>
+
+  <!-- 식사 세션 바 -->
+  <div class="session-bar" id="sessionBar">
+    <div class="session-info">
+      <div class="session-dot"></div>
+      <span class="session-stats">사진 <strong id="sessionPhotoCount">0</strong>장 · 음식 <strong id="sessionFoodCount">0</strong>개</span>
+    </div>
+    <div>
+      <span class="session-cal" id="sessionTotalCal">0</span><span style="color:#888; font-size:0.8em"> kcal</span>
+      <button class="btn btn-orange" onclick="endSession()" style="padding:6px 14px; font-size:0.8em; margin-left:10px; border-radius:20px">식사 끝</button>
+    </div>
+  </div>
+
+  <!-- 음식 수정 모달 -->
+  <div class="edit-overlay" id="editOverlay">
+    <div class="edit-popup">
+      <h3>음식 수정</h3>
+      <div class="sub">AI가 잘못 인식했나요? 음식명과 양을 수정하세요.</div>
+      <div class="edit-field">
+        <label>음식명</label>
+        <input type="text" id="editFoodName" placeholder="예: 김치찌개" />
+      </div>
+      <div class="edit-field">
+        <label>먹은 양</label>
+        <div class="edit-slider-row">
+          <input type="range" id="editServingPct" min="10" max="200" value="100" step="10" oninput="document.getElementById('editServingVal').textContent=this.value+'%'" />
+          <span class="edit-slider-val" id="editServingVal">100%</span>
+        </div>
+        <div style="display:flex; gap:6px; margin-top:6px">
+          <button class="preset-btn" onclick="setEditPct(50)">반그릇</button>
+          <button class="preset-btn" onclick="setEditPct(75)">3/4</button>
+          <button class="preset-btn" onclick="setEditPct(100)">1인분</button>
+          <button class="preset-btn" onclick="setEditPct(150)">1.5인분</button>
+          <button class="preset-btn" onclick="setEditPct(200)">2인분</button>
+        </div>
+      </div>
+      <input type="hidden" id="editFoodIndex" value="" />
+      <input type="hidden" id="editOriginalName" value="" />
+      <div class="edit-actions">
+        <button class="btn btn-secondary" onclick="closeEditModal()">취소</button>
+        <button class="btn btn-warn" onclick="submitCorrection()">수정 적용</button>
+        <button class="btn btn-danger" onclick="deleteFood()" style="flex:0.5">삭제</button>
+      </div>
+    </div>
   </div>
 
   <!-- 1단계: 식전 사진 업로드 -->
@@ -480,6 +628,141 @@ let originalAnalysis = null; // 원본 분석 (100% 기준)
 // 나눠먹기는 sharingPcts / sharingPeople / sharingMode로 관리
 let isAfterMealDone = false;
 
+// ── 식사 세션 상태 ──
+let sessionId = null;
+let sessionActive = false;
+let sessionPhotoCount = 0;
+let sessionFoodCount = 0;
+let sessionTotalCal = 0;
+
+// ── 식사 세션 함수 ──
+async function toggleSession() {
+  if (sessionActive) {
+    if (confirm('정찬 모드를 종료할까요?')) endSession();
+    return;
+  }
+  try {
+    const resp = await fetch('/session/start', { method: 'POST' });
+    const data = await resp.json();
+    sessionId = data.session_id;
+    sessionActive = true;
+    sessionPhotoCount = 0; sessionFoodCount = 0; sessionTotalCal = 0;
+    document.getElementById('sessionBar').classList.add('active');
+    document.getElementById('sessionToggleBtn').textContent = '🍽️ 정찬 모드 진행중';
+    document.getElementById('sessionToggleBtn').className = 'btn btn-orange';
+    document.getElementById('sessionToggleBtn').style.cssText += 'padding:8px 18px;font-size:0.85em;border-radius:20px';
+    updateSessionBar();
+  } catch(e) { alert('세션 시작 실패: ' + e.message); }
+}
+
+async function endSession() {
+  if (!sessionId) return;
+  try {
+    const resp = await fetch('/session/end', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id: sessionId })
+    });
+    const data = await resp.json();
+    sessionActive = false;
+    document.getElementById('sessionBar').classList.remove('active');
+    document.getElementById('sessionToggleBtn').textContent = '🍽️ 정찬 모드 시작';
+    document.getElementById('sessionToggleBtn').className = 'btn btn-green';
+    document.getElementById('sessionToggleBtn').style.cssText += 'padding:8px 18px;font-size:0.85em;border-radius:20px';
+    // 최종 결과 표시
+    if (data.foods && data.foods.length > 0) {
+      currentAnalysis = data;
+      originalAnalysis = JSON.parse(JSON.stringify(data));
+      renderResult(data, false);
+    }
+    sessionId = null;
+  } catch(e) { alert('세션 종료 실패: ' + e.message); }
+}
+
+function updateSessionBar() {
+  document.getElementById('sessionPhotoCount').textContent = sessionPhotoCount;
+  document.getElementById('sessionFoodCount').textContent = sessionFoodCount;
+  document.getElementById('sessionTotalCal').textContent = Math.round(sessionTotalCal);
+}
+
+// ── 음식 수정 함수 ──
+function openEditModal(idx) {
+  const food = currentAnalysis.foods[idx];
+  document.getElementById('editFoodName').value = food.name_ko || '';
+  document.getElementById('editServingPct').value = 100;
+  document.getElementById('editServingVal').textContent = '100%';
+  document.getElementById('editFoodIndex').value = idx;
+  document.getElementById('editOriginalName').value = food.name_ko || '';
+  document.getElementById('editOverlay').classList.add('active');
+}
+
+function closeEditModal() {
+  document.getElementById('editOverlay').classList.remove('active');
+}
+
+function setEditPct(pct) {
+  document.getElementById('editServingPct').value = pct;
+  document.getElementById('editServingVal').textContent = pct + '%';
+}
+
+async function submitCorrection() {
+  const idx = parseInt(document.getElementById('editFoodIndex').value);
+  const originalName = document.getElementById('editOriginalName').value;
+  const correctedName = document.getElementById('editFoodName').value.trim();
+  const servingPct = parseInt(document.getElementById('editServingPct').value);
+
+  if (!correctedName) return alert('음식명을 입력하세요.');
+
+  try {
+    const resp = await fetch('/correct', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ original_name: originalName, corrected_name: correctedName, serving_pct: servingPct })
+    });
+    const data = await resp.json();
+
+    if (data.matched) {
+      // DB 매칭 성공 — 영양소 교체
+      currentAnalysis.foods[idx].name_ko = correctedName;
+      currentAnalysis.foods[idx].db_name = data.db_name;
+      currentAnalysis.foods[idx].source = data.source;
+      currentAnalysis.foods[idx].db_matched = true;
+      currentAnalysis.foods[idx].calories_kcal = data.calories_kcal;
+      currentAnalysis.foods[idx].protein_g = data.protein_g;
+      currentAnalysis.foods[idx].carbs_g = data.carbs_g;
+      currentAnalysis.foods[idx].fat_g = data.fat_g;
+      currentAnalysis.foods[idx].fiber_g = data.fiber_g;
+      currentAnalysis.foods[idx].sodium_mg = data.sodium_mg;
+      currentAnalysis.foods[idx].sugar_g = data.sugar_g;
+      currentAnalysis.foods[idx].estimated_serving_g = data.estimated_serving_g;
+    } else {
+      // DB에 없으면 이름만 바꾸고 양 조절
+      currentAnalysis.foods[idx].name_ko = correctedName;
+      const ratio = servingPct / 100;
+      const orig = originalAnalysis.foods[idx];
+      if (orig) {
+        currentAnalysis.foods[idx].calories_kcal = Math.round((orig.calories_kcal||0) * ratio * 10) / 10;
+        currentAnalysis.foods[idx].protein_g = Math.round((orig.protein_g||0) * ratio * 10) / 10;
+        currentAnalysis.foods[idx].carbs_g = Math.round((orig.carbs_g||0) * ratio * 10) / 10;
+        currentAnalysis.foods[idx].fat_g = Math.round((orig.fat_g||0) * ratio * 10) / 10;
+      }
+    }
+
+    closeEditModal();
+    renderResult(currentAnalysis, isAfterMealDone);
+  } catch(e) { alert('수정 실패: ' + e.message); }
+}
+
+function deleteFood() {
+  const idx = parseInt(document.getElementById('editFoodIndex').value);
+  if (confirm('이 음식을 삭제할까요?')) {
+    currentAnalysis.foods.splice(idx, 1);
+    if (originalAnalysis && originalAnalysis.foods) originalAnalysis.foods.splice(idx, 1);
+    closeEditModal();
+    renderResult(currentAnalysis, isAfterMealDone);
+  }
+}
+
 // ── 파일 선택 ──
 const uploadArea = document.getElementById('uploadArea');
 const fileInput = document.getElementById('fileInput');
@@ -507,10 +790,23 @@ function handleFile(file) {
   reader.readAsDataURL(file);
 }
 
+function addNextPhoto() {
+  // 세션 모드에서 다음 사진 추가 — 세션 유지, 업로드만 초기화
+  selectedFile = null; afterFile = null;
+  currentAnalysis = null; originalAnalysis = null;
+  sharingPcts = {}; sharingMode = false; sharingPeople = 1;
+  fileInput.value = ''; cameraInput.value = ''; galleryInput.value = '';
+  uploadArea.style.display = 'block';
+  document.getElementById('previewSection').style.display = 'none';
+  document.getElementById('resultSection').style.display = 'none';
+  document.getElementById('errorBox').style.display = 'none';
+  document.getElementById('loading').style.display = 'none';
+}
+
 function resetAll() {
   selectedFile = null; afterFile = null; currentAnalysis = null; originalAnalysis = null;
   sharingPcts = {}; sharingMode = false; sharingPeople = 1; isAfterMealDone = false;
-  fileInput.value = '';
+  fileInput.value = ''; cameraInput.value = ''; galleryInput.value = '';
   uploadArea.style.display = 'block';
   document.getElementById('previewSection').style.display = 'none';
   document.getElementById('resultSection').style.display = 'none';
@@ -518,6 +814,8 @@ function resetAll() {
   document.getElementById('loading').style.display = 'none';
   document.getElementById('afterUploadSection').style.display = 'none';
   document.getElementById('manualSection').style.display = 'none';
+  const sessionNextBtn = document.getElementById('sessionNextPhotoArea');
+  if (sessionNextBtn) sessionNextBtn.style.display = 'none';
 }
 
 // ── 식전 분석 API ──
@@ -531,6 +829,7 @@ async function analyzeFood() {
   const formData = new FormData();
   formData.append('image', selectedFile);
   formData.append('api_key', '');
+  if (sessionActive && sessionId) formData.append('session_id', sessionId);
 
   try {
     const resp = await fetch('/analyze', { method: 'POST', body: formData });
@@ -545,6 +844,15 @@ async function analyzeFood() {
     originalAnalysis = JSON.parse(JSON.stringify(data));
     currentAnalysis = data;
     isAfterMealDone = false;
+
+    // 세션 모드면 누적 바 업데이트
+    if (sessionActive && data.session_summary) {
+      sessionPhotoCount = data.session_photo_count || 0;
+      sessionFoodCount = data.session_total_foods || 0;
+      sessionTotalCal = data.session_summary.total_calories || 0;
+      updateSessionBar();
+    }
+
     renderResult(data, false);
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
@@ -804,7 +1112,8 @@ function renderResult(data, isAfterMeal) {
     cardsHtml += '<div class="food-card">'
       + '<div class="food-title"><div><span class="food-name">'+(food.name_ko||'?')+'</span>'
       + '<span class="food-name-en">'+(food.name_en||'')+'</span></div>'
-      + '<span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div>'
+      + '<div><button class="edit-btn" onclick="openEditModal('+i+')">✏️ 수정</button> '
+      + '<span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div></div>'
       + '<div class="confidence-bar"><div class="confidence-fill" style="width:'+confPct+'%;background:'+confColor+'"></div></div>'
       + '<div style="font-size:0.8em;color:#888;margin-bottom:10px;margin-top:-8px">확신도 '+confPct+'% · 약 '+(food.estimated_serving_g||'?')+'g</div>'
       + eatenBarHtml
@@ -839,8 +1148,27 @@ function renderResult(data, isAfterMeal) {
     + '<div style="font-size:0.85em;color:#888">'+(summary.meal_type?summary.meal_type+' 식사':'')+'</div></div></div>'
     + '<div class="comment">'+(summary.one_line_comment||'')+'</div></div>';
 
-  // 식후 배너: 첫 분석 후에만 표시, 이미 식후 분석 완료되면 숨김
-  document.getElementById('afterMealBanner').style.display = isAfterMeal ? 'none' : 'block';
+  // 세션 모드면 afterMealBanner 대신 "다음 사진 추가" 버튼 표시
+  if (sessionActive) {
+    document.getElementById('afterMealBanner').style.display = 'none';
+    // 세션 모드 전용 "다음 사진 추가" 버튼
+    let sessionNextBtn = document.getElementById('sessionNextPhotoArea');
+    if (!sessionNextBtn) {
+      sessionNextBtn = document.createElement('div');
+      sessionNextBtn.id = 'sessionNextPhotoArea';
+      sessionNextBtn.style.cssText = 'text-align:center; margin-top:16px; padding:20px; background:linear-gradient(135deg,#1a2e1a,#1e3a1e); border:1px solid #059669; border-radius:12px;';
+      sessionNextBtn.innerHTML = '<div style="color:#6ee7b7; font-weight:600; margin-bottom:8px">이 사진의 음식이 추가되었습니다!</div>'
+        + '<button class="btn btn-green" onclick="addNextPhoto()" style="padding:10px 24px; font-size:0.95em">📸 다음 사진 추가</button>'
+        + '<div style="color:#888; font-size:0.8em; margin-top:8px">더 찍을 음식이 없으면 위 세션바에서 "식사 끝"을 눌러주세요</div>';
+      document.getElementById('resultSection').appendChild(sessionNextBtn);
+    }
+    sessionNextBtn.style.display = 'block';
+  } else {
+    // 일반 모드: 식후 배너
+    document.getElementById('afterMealBanner').style.display = isAfterMeal ? 'none' : 'block';
+    const sessionNextBtn = document.getElementById('sessionNextPhotoArea');
+    if (sessionNextBtn) sessionNextBtn.style.display = 'none';
+  }
   document.getElementById('afterUploadSection').style.display = 'none';
   document.getElementById('manualSection').style.display = 'none';
   document.getElementById('resultSection').style.display = 'block';
@@ -935,10 +1263,17 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """음식 사진 분석 API"""
-        if self.path == '/analyze':
+        path = self.path.split('?')[0]
+        if path == '/analyze':
             self._handle_analyze()
-        elif self.path == '/analyze-leftover':
+        elif path == '/analyze-leftover':
             self._handle_leftover()
+        elif path == '/session/start':
+            self._handle_session_start()
+        elif path == '/session/end':
+            self._handle_session_end()
+        elif path == '/correct':
+            self._handle_correct()
         else:
             self.send_response(404)
             self.end_headers()
@@ -1110,7 +1445,33 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 total = len(analysis.get('foods', []))
                 print(f"DB 매칭: {matched}/{total}개 음식 매칭됨")
 
-            # 3. 결과 반환
+            # 3. 세션 모드: session_id가 있으면 세션에 누적
+            session_id = (fields or {}).get('session_id', '').strip()
+            if session_id and session_id in MEAL_SESSIONS:
+                session = MEAL_SESSIONS[session_id]
+                new_foods = analysis.get('foods', [])
+                session['foods'].extend(new_foods)
+                session['photo_count'] += 1
+
+                # 누적 합산 계산
+                all_foods = session['foods']
+                total_cal = sum(f.get('calories_kcal', 0) for f in all_foods)
+                total_prot = sum(f.get('protein_g', 0) for f in all_foods)
+                total_carbs = sum(f.get('carbs_g', 0) for f in all_foods)
+                total_fat = sum(f.get('fat_g', 0) for f in all_foods)
+
+                analysis['session_id'] = session_id
+                analysis['session_photo_count'] = session['photo_count']
+                analysis['session_total_foods'] = len(all_foods)
+                analysis['session_summary'] = {
+                    "total_calories": round(total_cal, 1),
+                    "total_protein": round(total_prot, 1),
+                    "total_carbs": round(total_carbs, 1),
+                    "total_fat": round(total_fat, 1)
+                }
+                print(f"[세션] {session_id}: 사진 {session['photo_count']}장, 총 {len(all_foods)}개 음식, {total_cal:.0f}kcal")
+
+            # 4. 결과 반환
             print("분석 완료!")
             self._json_response(200, analysis)
 
@@ -1119,9 +1480,127 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._json_response(500, {"error": f"서버 에러: {str(e)}"})
 
+    # ── 식사 세션 API ──
+    def _handle_session_start(self):
+        """식사 세션 시작 — 빈 세션 생성"""
+        _cleanup_sessions()
+        session_id = str(uuid.uuid4())[:8]
+        MEAL_SESSIONS[session_id] = {
+            'foods': [],
+            'created': time.time(),
+            'photo_count': 0
+        }
+        print(f"[세션] 새 식사 세션 시작: {session_id}")
+        self._json_response(200, {"session_id": session_id})
+
+    def _handle_session_end(self):
+        """식사 세션 종료 — 누적 결과 반환 후 세션 삭제"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
+            req = json.loads(body) if body.strip() else {}
+            session_id = req.get('session_id', '')
+
+            if session_id not in MEAL_SESSIONS:
+                self._json_response(404, {"error": "세션을 찾을 수 없습니다."})
+                return
+
+            session = MEAL_SESSIONS[session_id]
+            foods = session['foods']
+
+            # 합산 계산
+            total_cal = sum(f.get('calories_kcal', 0) for f in foods)
+            total_prot = sum(f.get('protein_g', 0) for f in foods)
+            total_carbs = sum(f.get('carbs_g', 0) for f in foods)
+            total_fat = sum(f.get('fat_g', 0) for f in foods)
+
+            result = {
+                "session_id": session_id,
+                "photo_count": session['photo_count'],
+                "foods": foods,
+                "meal_summary": {
+                    "total_calories": round(total_cal, 1),
+                    "total_protein": round(total_prot, 1),
+                    "total_carbs": round(total_carbs, 1),
+                    "total_fat": round(total_fat, 1),
+                    "meal_type": "정찬",
+                    "health_score": 7,
+                    "one_line_comment": f"총 {session['photo_count']}장의 사진에서 {len(foods)}개 음식을 분석했습니다."
+                }
+            }
+
+            del MEAL_SESSIONS[session_id]
+            print(f"[세션] 세션 종료: {session_id} → {len(foods)}개 음식, {total_cal:.0f}kcal")
+            self._json_response(200, result)
+
+        except Exception as e:
+            self._json_response(500, {"error": f"세션 종료 에러: {str(e)}"})
+
+    # ── 음식 수정 API ──
+    def _handle_correct(self):
+        """음식명/양 수정 — DB 재매칭 + 피드백 기록"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            req = json.loads(body)
+
+            original_name = req.get('original_name', '')
+            corrected_name = req.get('corrected_name', '').strip()
+            serving_pct = req.get('serving_pct', 100)  # 양 비율 (50 = 반 그릇)
+
+            if not corrected_name:
+                self._json_response(400, {"error": "수정할 음식명을 입력하세요."})
+                return
+
+            # 1. 피드백 기록
+            correction_count = _record_correction(original_name, corrected_name)
+            print(f"[수정] '{original_name}' → '{corrected_name}' (피드백 {correction_count}회)")
+
+            # 2. 골드 테이블/DB에서 새 음식 검색
+            from food_analyzer import _search_gold, _search_core_foods
+            gold_key, gold_data = _search_gold(corrected_name)
+
+            if gold_data:
+                # 골드 테이블 매칭 성공
+                serving_ratio = (serving_pct / 100)
+                result = {
+                    "matched": True,
+                    "name_ko": corrected_name,
+                    "db_name": gold_key,
+                    "source": gold_data.get('source', 'GOLD_DB'),
+                    "calories_kcal": round(gold_data['cal'] * serving_ratio, 1),
+                    "protein_g": round(gold_data['prot'] * serving_ratio, 1),
+                    "carbs_g": round(gold_data['carbs'] * serving_ratio, 1),
+                    "fat_g": round(gold_data['fat'] * serving_ratio, 1),
+                    "fiber_g": round(gold_data.get('fiber', 0) * serving_ratio, 1),
+                    "sodium_mg": round(gold_data.get('sodium', 0) * serving_ratio, 1),
+                    "sugar_g": round(gold_data.get('sugar', 0) * serving_ratio, 1),
+                    "estimated_serving_g": round(gold_data.get('serving', 100) * serving_ratio),
+                    "serving_pct": serving_pct,
+                    "correction_count": correction_count
+                }
+            else:
+                # DB에 없음 — AI 값 유지하되 양만 조절
+                result = {
+                    "matched": False,
+                    "name_ko": corrected_name,
+                    "source": "AI_ESTIMATED",
+                    "serving_pct": serving_pct,
+                    "correction_count": correction_count,
+                    "message": "DB에 없는 음식이라 영양정보는 기존 AI 추정치를 사용합니다."
+                }
+
+            self._json_response(200, result)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._json_response(500, {"error": f"수정 에러: {str(e)}"})
+
     def _json_response(self, code, data):
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
 
