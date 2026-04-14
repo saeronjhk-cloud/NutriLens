@@ -91,6 +91,170 @@ def _get_correction_hints():
             hints.append(f"- '{original}'으로 보이면 '{corrected}'일 가능성이 높음 (사용자 피드백 {count}회)")
     return hints[:10]  # 최대 10개
 
+# ── 식사 기록 저장 시스템 ──
+MEAL_LOG_PATH = None  # 서버 시작 시 설정
+
+def _load_meal_log():
+    """식사 기록 로드"""
+    if MEAL_LOG_PATH and MEAL_LOG_PATH.exists():
+        try:
+            with open(MEAL_LOG_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass
+    return {"users": {}}
+
+def _save_meal_log(log):
+    """식사 기록 저장"""
+    if MEAL_LOG_PATH:
+        with open(MEAL_LOG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(log, f, ensure_ascii=False, indent=1)
+
+def _save_meal_record(nickname, meal_data):
+    """한 끼 식사 기록 저장"""
+    log = _load_meal_log()
+    if nickname not in log["users"]:
+        log["users"][nickname] = {"created": time.strftime("%Y-%m-%d"), "meals": []}
+
+    foods_list = []
+    for food in meal_data.get("foods", []):
+        foods_list.append({
+            "name": food.get("name_ko", "?"),
+            "calories": food.get("calories_kcal", 0) or 0,
+            "protein": food.get("protein_g", 0) or 0,
+            "carbs": food.get("carbs_g", 0) or 0,
+            "fat": food.get("fat_g", 0) or 0,
+            "sodium": food.get("sodium_mg", 0) or 0,
+            "sugar": food.get("sugar_g", 0) or 0,
+            "fiber": food.get("fiber_g", 0) or 0,
+            "serving_g": food.get("estimated_serving_g", 0) or 0
+        })
+
+    summary = meal_data.get("meal_summary", {})
+    record = {
+        "id": str(uuid.uuid4())[:8],
+        "date": time.strftime("%Y-%m-%d"),
+        "time": time.strftime("%H:%M"),
+        "meal_type": summary.get("meal_type", "식사"),
+        "foods": foods_list,
+        "summary": {
+            "total_calories": round(summary.get("total_calories", 0) or 0),
+            "total_protein": round(summary.get("total_protein", 0) or 0, 1),
+            "total_carbs": round(summary.get("total_carbs", 0) or 0, 1),
+            "total_fat": round(summary.get("total_fat", 0) or 0, 1),
+            "total_sodium": round(sum(f["sodium"] for f in foods_list)),
+            "total_sugar": round(sum(f["sugar"] for f in foods_list), 1),
+            "total_fiber": round(sum(f["fiber"] for f in foods_list), 1)
+        }
+    }
+
+    log["users"][nickname]["meals"].append(record)
+    _save_meal_log(log)
+    print(f"[기록] {nickname}: {record['date']} {record['time']} - {len(foods_list)}개 음식, {record['summary']['total_calories']}kcal 저장")
+    return record["id"]
+
+def _get_dashboard_data(nickname, days=30):
+    """대시보드용 데이터 집계"""
+    from datetime import datetime, timedelta
+    log = _load_meal_log()
+    user = log.get("users", {}).get(nickname)
+    empty = {"daily": [], "meal_pattern": {}, "balance": {}, "top_foods": [], "warnings": [], "weekly_report": "기록이 없습니다.", "total_meals": 0, "total_days": 0}
+    if not user:
+        return empty
+
+    meals = user.get("meals", [])
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    recent = [m for m in meals if m.get("date", "") >= cutoff]
+    if not recent:
+        return empty
+
+    # 1. 일별 집계
+    daily = {}
+    for m in recent:
+        d = m["date"]
+        if d not in daily:
+            daily[d] = {"calories": 0, "protein": 0, "carbs": 0, "fat": 0, "sodium": 0, "sugar": 0, "fiber": 0, "meal_count": 0}
+        s = m.get("summary", {})
+        for k in ["calories", "protein", "carbs", "fat", "sodium", "sugar", "fiber"]:
+            daily[d][k] += s.get(f"total_{k}", 0)
+        daily[d]["meal_count"] += 1
+    daily_sorted = [{"date": k, **v} for k, v in sorted(daily.items())]
+
+    # 2. 식사 패턴 (시간대별)
+    meal_times = {"아침(6-10시)": 0, "점심(11-14시)": 0, "저녁(17-21시)": 0, "야식(21-6시)": 0, "간식(기타)": 0}
+    for m in recent:
+        t = m.get("time", "12:00")
+        hour = int(t.split(":")[0]) if ":" in t else 12
+        if 6 <= hour < 10: meal_times["아침(6-10시)"] += 1
+        elif 11 <= hour < 14: meal_times["점심(11-14시)"] += 1
+        elif 17 <= hour < 21: meal_times["저녁(17-21시)"] += 1
+        elif hour >= 21 or hour < 6: meal_times["야식(21-6시)"] += 1
+        else: meal_times["간식(기타)"] += 1
+
+    # 3. 영양 균형 (일 평균)
+    n = len(daily_sorted)
+    avg = {k: round(sum(d[k] for d in daily_sorted) / n, 1) for k in ["calories", "protein", "carbs", "fat", "sodium", "sugar", "fiber"]}
+    total_macro_cal = avg["carbs"] * 4 + avg["protein"] * 4 + avg["fat"] * 9
+    if total_macro_cal > 0:
+        carb_pct = round(avg["carbs"] * 4 / total_macro_cal * 100, 1)
+        prot_pct = round(avg["protein"] * 4 / total_macro_cal * 100, 1)
+        fat_pct = round(avg["fat"] * 9 / total_macro_cal * 100, 1)
+    else:
+        carb_pct = prot_pct = fat_pct = 0
+    balance = {
+        "avg_calories": round(avg["calories"]), "avg_protein": avg["protein"],
+        "avg_carbs": avg["carbs"], "avg_fat": avg["fat"],
+        "avg_sodium": round(avg["sodium"]), "avg_sugar": avg["sugar"], "avg_fiber": avg["fiber"],
+        "carb_pct": carb_pct, "prot_pct": prot_pct, "fat_pct": fat_pct
+    }
+
+    # 4. 자주 먹는 음식 TOP 10
+    food_counts = {}
+    for m in recent:
+        for f in m.get("foods", []):
+            name = f.get("name", "?")
+            if name not in food_counts:
+                food_counts[name] = {"count": 0, "total_cal": 0}
+            food_counts[name]["count"] += 1
+            food_counts[name]["total_cal"] += f.get("calories", 0)
+    top_foods = sorted(food_counts.items(), key=lambda x: -x[1]["count"])[:10]
+    top_foods = [{"name": k, "count": v["count"], "avg_cal": round(v["total_cal"] / v["count"]) if v["count"] > 0 else 0} for k, v in top_foods]
+
+    # 5. 경고 (일일 권장량 대비)
+    warnings = []
+    if balance["avg_sodium"] > 2000:
+        warnings.append({"type": "danger", "icon": "🧂", "msg": f"나트륨 일평균 {balance['avg_sodium']}mg", "detail": f"권장 2,000mg 대비 +{balance['avg_sodium'] - 2000}mg"})
+    if balance["avg_sugar"] > 50:
+        warnings.append({"type": "danger", "icon": "🍬", "msg": f"당류 일평균 {balance['avg_sugar']}g", "detail": f"권장 50g 대비 +{round(balance['avg_sugar'] - 50)}g"})
+    if balance["avg_fiber"] < 25:
+        warnings.append({"type": "warning", "icon": "🥦", "msg": f"식이섬유 일평균 {balance['avg_fiber']}g", "detail": f"권장 25g 대비 -{round(25 - balance['avg_fiber'])}g"})
+    if balance["avg_protein"] < 50:
+        warnings.append({"type": "warning", "icon": "🥩", "msg": f"단백질 일평균 {balance['avg_protein']}g", "detail": f"권장 50g 대비 -{round(50 - balance['avg_protein'])}g"})
+    if carb_pct > 65:
+        warnings.append({"type": "warning", "icon": "🍚", "msg": f"탄수화물 비율 {carb_pct}%", "detail": "권장 50-65% 초과"})
+
+    # 6. 주간 리포트
+    week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    this_week = [d for d in daily_sorted if d["date"] >= week_ago]
+    if this_week:
+        wn = len(this_week)
+        wc = round(sum(d["calories"] for d in this_week) / wn)
+        wp = round(sum(d["protein"] for d in this_week) / wn, 1)
+        ws = round(sum(d["sodium"] for d in this_week) / wn)
+        parts = [f"이번 주 {wn}일 기록, 일평균 {wc}kcal"]
+        if wp < 50: parts.append(f"단백질 부족(-{round(50 - wp)}g)")
+        elif wp >= 50: parts.append(f"단백질 양호({wp}g)")
+        if ws > 2000: parts.append(f"나트륨 주의(+{ws - 2000}mg)")
+        weekly_report = ", ".join(parts)
+    else:
+        weekly_report = "이번 주 기록이 없습니다."
+
+    return {
+        "daily": daily_sorted, "meal_pattern": meal_times, "balance": balance,
+        "top_foods": top_foods, "warnings": warnings, "weekly_report": weekly_report,
+        "total_meals": len(recent), "total_days": n
+    }
+
 # ── 전/후 비교 분석 프롬프트 ──
 LEFTOVER_PROMPT = """당신은 NutriLens의 AI 음식 잔량 분석 전문가입니다.
 
@@ -222,6 +386,7 @@ print(f"DB 로드 완료: {len(FOODS_DB)}종")
 
 # 피드백 로그 경로 설정
 FEEDBACK_LOG_PATH = PROJECT_DIR / 'feedback_log.json'
+MEAL_LOG_PATH = PROJECT_DIR / 'meal_log.json'
 
 # ── OpenAI API 호출 (urllib 사용, 외부 패키지 불필요) ──
 def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o"):
@@ -293,6 +458,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NutriLens - AI 음식 영양 분석</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -455,16 +621,87 @@ HTML_PAGE = """<!DOCTYPE html>
   .eaten-bar { height: 6px; background: #2a2a4a; border-radius: 3px; margin: 8px 0; overflow: hidden; }
   .eaten-fill { height: 100%; border-radius: 3px; background: #6ee7b7; }
 
+  /* 로그인 화면 */
+  .login-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:#0f0f1a; z-index:500; display:flex; align-items:center; justify-content:center; }
+  .login-box { text-align:center; max-width:340px; width:90%; }
+  .login-box h1 { font-size:2.2em; background:linear-gradient(135deg,#6ee7b7,#3b82f6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:8px; }
+  .login-box .sub { color:#888; margin-bottom:28px; font-size:0.95em; }
+  .login-box input { width:100%; padding:14px 16px; background:#1a1a2e; border:1px solid #3a3a5a; border-radius:12px; color:#fff; font-size:1.05em; text-align:center; outline:none; margin-bottom:14px; }
+  .login-box input:focus { border-color:#3b82f6; }
+  .login-box .login-btn { width:100%; padding:14px; background:linear-gradient(135deg,#3b82f6,#6366f1); color:#fff; border:none; border-radius:12px; font-size:1.05em; font-weight:600; cursor:pointer; }
+  .login-box .login-btn:hover { transform:translateY(-1px); }
+
+  /* 탭 네비게이션 */
+  .tab-nav { display:flex; gap:4px; background:#1a1a2e; border-radius:12px; padding:4px; margin-bottom:20px; }
+  .tab-btn { flex:1; padding:10px; border:none; border-radius:10px; background:transparent; color:#888; font-size:0.92em; font-weight:600; cursor:pointer; transition:all 0.2s; }
+  .tab-btn.active { background:linear-gradient(135deg,#3b82f6,#6366f1); color:#fff; }
+  .tab-btn:hover:not(.active) { color:#ccc; }
+
+  /* 대시보드 */
+  .dash-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+  .dash-header h2 { font-size:1.3em; color:#6ee7b7; }
+  .period-btns { display:flex; gap:6px; }
+  .period-btn { padding:6px 14px; border-radius:16px; border:1px solid #3a3a5a; background:transparent; color:#888; font-size:0.8em; cursor:pointer; }
+  .period-btn.active { border-color:#3b82f6; color:#3b82f6; background:rgba(59,130,246,0.1); }
+  .dash-empty { text-align:center; padding:60px 20px; color:#666; }
+  .dash-empty .icon { font-size:3em; margin-bottom:12px; }
+
+  /* 주간 리포트 카드 */
+  .weekly-card { background:linear-gradient(135deg,#1a1a2e,#1e1e3a); border:1px solid #3b82f6; border-radius:14px; padding:18px 20px; margin-bottom:16px; }
+  .weekly-card .title { color:#60a5fa; font-size:0.85em; font-weight:600; margin-bottom:6px; }
+  .weekly-card .report { color:#e0e0e0; font-size:0.95em; line-height:1.5; }
+  .weekly-card .meta { color:#666; font-size:0.78em; margin-top:8px; }
+
+  /* 경고 카드 */
+  .warning-list { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+  .warning-item { display:flex; align-items:center; gap:12px; padding:12px 16px; border-radius:10px; }
+  .warning-item.danger { background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); }
+  .warning-item.warning { background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.2); }
+  .warning-icon { font-size:1.4em; }
+  .warning-text .wmsg { font-size:0.88em; color:#e0e0e0; font-weight:600; }
+  .warning-text .wdetail { font-size:0.78em; color:#888; }
+
+  /* 차트 카드 */
+  .chart-card { background:#1a1a2e; border:1px solid #2a2a4a; border-radius:14px; padding:18px; margin-bottom:16px; }
+  .chart-card .chart-title { font-size:0.95em; color:#e0e0e0; font-weight:600; margin-bottom:14px; }
+  .chart-card canvas { max-height:260px; }
+
+  /* 일평균 요약 */
+  .avg-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:16px; }
+  .avg-item { text-align:center; background:#1a1a2e; border:1px solid #2a2a4a; border-radius:10px; padding:14px 6px; }
+  .avg-val { font-size:1.3em; font-weight:700; color:#fff; }
+  .avg-label { font-size:0.72em; color:#888; margin-top:2px; }
+
+  /* TOP 음식 리스트 */
+  .top-food-item { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #1a1a2e; }
+  .top-food-item:last-child { border-bottom:none; }
+  .tf-rank { width:24px; height:24px; border-radius:50%; background:#2a2a4a; color:#888; font-size:0.75em; font-weight:700; display:flex; align-items:center; justify-content:center; margin-right:10px; }
+  .tf-rank.top3 { background:rgba(59,130,246,0.2); color:#60a5fa; }
+  .tf-name { flex:1; font-size:0.9em; color:#e0e0e0; }
+  .tf-count { font-size:0.82em; color:#888; margin-right:10px; }
+  .tf-cal { font-size:0.82em; color:#6ee7b7; }
+
   /* 반응형 */
   @media (max-width: 600px) {
     .nutrition-grid { grid-template-columns: repeat(2, 1fr); }
     .summary-stats { grid-template-columns: repeat(2, 1fr); }
     .header h1 { font-size: 1.5em; }
     .after-meal-actions { flex-direction: column; }
+    .avg-grid { grid-template-columns: repeat(2, 1fr); }
   }
 </style>
 </head>
 <body>
+<!-- 로그인 화면 -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h1>NutriLens</h1>
+    <div class="sub">AI 음식 영양 분석기</div>
+    <input type="text" id="nicknameInput" placeholder="닉네임을 입력하세요" maxlength="20" />
+    <button class="login-btn" onclick="doLogin()">시작하기</button>
+  </div>
+</div>
+
 <div class="container">
 
   <div class="header">
@@ -474,6 +711,15 @@ HTML_PAGE = """<!DOCTYPE html>
       <button class="btn btn-green" id="sessionToggleBtn" onclick="toggleSession()" style="padding:8px 18px; font-size:0.85em; border-radius:20px">🍽️ 정찬 모드 시작</button>
     </div>
   </div>
+
+  <!-- 탭 네비게이션 -->
+  <div class="tab-nav">
+    <button class="tab-btn active" id="tabAnalyze" onclick="switchTab('analyze')">📸 분석</button>
+    <button class="tab-btn" id="tabDashboard" onclick="switchTab('dashboard')">📊 내 기록</button>
+  </div>
+
+  <!-- 탭: 분석 -->
+  <div id="tab-analyze">
 
   <!-- 식사 세션 바 -->
   <div class="session-bar" id="sessionBar">
@@ -617,6 +863,76 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
+  </div><!-- /tab-analyze -->
+
+  <!-- 탭: 대시보드 -->
+  <div id="tab-dashboard" style="display:none">
+
+    <div class="dash-header">
+      <h2>내 영양 기록</h2>
+      <div class="period-btns">
+        <button class="period-btn" onclick="loadDashboard(7)">7일</button>
+        <button class="period-btn active" onclick="loadDashboard(30)">30일</button>
+        <button class="period-btn" onclick="loadDashboard(90)">90일</button>
+      </div>
+    </div>
+
+    <!-- 데이터 없을 때 -->
+    <div class="dash-empty" id="dashEmpty">
+      <div class="icon">📊</div>
+      <div>아직 식사 기록이 없습니다.</div>
+      <div style="font-size:0.85em; color:#555; margin-top:8px">음식 사진을 분석하면 자동으로 기록됩니다.</div>
+    </div>
+
+    <!-- 대시보드 콘텐츠 -->
+    <div id="dashContent" style="display:none">
+
+      <!-- 주간 리포트 -->
+      <div class="weekly-card">
+        <div class="title">📋 주간 리포트</div>
+        <div class="report" id="weeklyReport"></div>
+        <div class="meta" id="dashMeta"></div>
+      </div>
+
+      <!-- 경고 -->
+      <div class="warning-list" id="warningList"></div>
+
+      <!-- 일평균 요약 -->
+      <div class="avg-grid" id="avgGrid"></div>
+
+      <!-- 칼로리 추이 -->
+      <div class="chart-card">
+        <div class="chart-title">칼로리 추이</div>
+        <canvas id="calChart"></canvas>
+      </div>
+
+      <!-- 영양소 추이 -->
+      <div class="chart-card">
+        <div class="chart-title">영양소 추이 (단백질·탄수화물·지방)</div>
+        <canvas id="macroChart"></canvas>
+      </div>
+
+      <!-- 탄단지 비율 -->
+      <div class="chart-card" style="max-width:360px; margin:0 auto 16px;">
+        <div class="chart-title">탄단지 비율 (일평균)</div>
+        <canvas id="balanceChart"></canvas>
+      </div>
+
+      <!-- 식사 패턴 -->
+      <div class="chart-card">
+        <div class="chart-title">식사 시간대 패턴</div>
+        <canvas id="patternChart"></canvas>
+      </div>
+
+      <!-- 자주 먹는 음식 TOP 10 -->
+      <div class="chart-card">
+        <div class="chart-title">자주 먹는 음식 TOP 10</div>
+        <div id="topFoodsList"></div>
+      </div>
+
+    </div><!-- /dashContent -->
+  </div><!-- /tab-dashboard -->
+
 </div>
 
 <script>
@@ -627,6 +943,224 @@ let currentAnalysis = null;
 let originalAnalysis = null; // 원본 분석 (100% 기준)
 // 나눠먹기는 sharingPcts / sharingPeople / sharingMode로 관리
 let isAfterMealDone = false;
+
+// ── 로그인 상태 ──
+let currentUser = localStorage.getItem('nutrilens_user') || '';
+
+// 로그인 확인
+if (currentUser) {
+  document.getElementById('loginOverlay').style.display = 'none';
+}
+
+async function doLogin() {
+  const nickname = document.getElementById('nicknameInput').value.trim();
+  if (!nickname) return alert('닉네임을 입력하세요.');
+  try {
+    const resp = await fetch('/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ nickname: nickname })
+    });
+    const data = await resp.json();
+    if (data.error) return alert(data.error);
+    currentUser = data.nickname;
+    localStorage.setItem('nutrilens_user', currentUser);
+    document.getElementById('loginOverlay').style.display = 'none';
+  } catch(e) { alert('로그인 실패: ' + e.message); }
+}
+document.getElementById('nicknameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+// ── 탭 전환 ──
+function switchTab(tab) {
+  document.getElementById('tab-analyze').style.display = tab === 'analyze' ? 'block' : 'none';
+  document.getElementById('tab-dashboard').style.display = tab === 'dashboard' ? 'block' : 'none';
+  document.getElementById('tabAnalyze').classList.toggle('active', tab === 'analyze');
+  document.getElementById('tabDashboard').classList.toggle('active', tab === 'dashboard');
+  if (tab === 'dashboard') loadDashboard(30);
+}
+
+// ── 식사 기록 자동 저장 ──
+async function saveMealRecord(analysisData) {
+  if (!currentUser || !analysisData || !analysisData.foods || analysisData.foods.length === 0) return;
+  try {
+    await fetch('/save-meal', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ nickname: currentUser, meal_data: analysisData })
+    });
+  } catch(e) { console.error('식사 기록 저장 실패:', e); }
+}
+
+// ── 대시보드 ──
+let dashCharts = {};
+async function loadDashboard(days) {
+  if (!currentUser) return;
+  // 기간 버튼 활성화
+  document.querySelectorAll('.period-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent === days+'일');
+  });
+  try {
+    const resp = await fetch('/dashboard-data?user=' + encodeURIComponent(currentUser) + '&days=' + days);
+    const data = await resp.json();
+    if (!data.daily || data.daily.length === 0) {
+      document.getElementById('dashEmpty').style.display = 'block';
+      document.getElementById('dashContent').style.display = 'none';
+      return;
+    }
+    document.getElementById('dashEmpty').style.display = 'none';
+    document.getElementById('dashContent').style.display = 'block';
+    renderDashboard(data);
+  } catch(e) { console.error('대시보드 로드 실패:', e); }
+}
+
+function renderDashboard(data) {
+  // 주간 리포트
+  document.getElementById('weeklyReport').textContent = data.weekly_report;
+  document.getElementById('dashMeta').textContent = '총 ' + data.total_days + '일, ' + data.total_meals + '끼 기록';
+
+  // 경고
+  let warnHtml = '';
+  (data.warnings || []).forEach(w => {
+    warnHtml += '<div class="warning-item ' + w.type + '"><span class="warning-icon">' + w.icon + '</span><div class="warning-text"><div class="wmsg">' + w.msg + '</div><div class="wdetail">' + w.detail + '</div></div></div>';
+  });
+  document.getElementById('warningList').innerHTML = warnHtml;
+
+  // 일평균 요약
+  const b = data.balance || {};
+  document.getElementById('avgGrid').innerHTML =
+    '<div class="avg-item"><div class="avg-val">' + (b.avg_calories||0) + '</div><div class="avg-label">일평균 kcal</div></div>'
+    + '<div class="avg-item"><div class="avg-val" style="color:#60a5fa">' + (b.avg_protein||0) + 'g</div><div class="avg-label">단백질</div></div>'
+    + '<div class="avg-item"><div class="avg-val" style="color:#fbbf24">' + (b.avg_carbs||0) + 'g</div><div class="avg-label">탄수화물</div></div>'
+    + '<div class="avg-item"><div class="avg-val" style="color:#f87171">' + (b.avg_fat||0) + 'g</div><div class="avg-label">지방</div></div>';
+
+  // 차트 그리기
+  renderCalChart(data.daily);
+  renderMacroChart(data.daily);
+  renderBalanceChart(b);
+  renderPatternChart(data.meal_pattern);
+  renderTopFoods(data.top_foods);
+}
+
+function destroyChart(key) {
+  if (dashCharts[key]) { dashCharts[key].destroy(); dashCharts[key] = null; }
+}
+
+function renderCalChart(daily) {
+  destroyChart('cal');
+  const ctx = document.getElementById('calChart').getContext('2d');
+  dashCharts.cal = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: daily.map(d => d.date.slice(5)),
+      datasets: [{
+        label: '칼로리 (kcal)',
+        data: daily.map(d => d.calories),
+        borderColor: '#6ee7b7', backgroundColor: 'rgba(110,231,183,0.1)',
+        fill: true, tension: 0.3, pointRadius: 3
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: '#888' } } },
+      scales: {
+        x: { ticks: { color: '#666', maxTicksLimit: 10 }, grid: { color: '#1a1a2e' } },
+        y: { ticks: { color: '#666' }, grid: { color: '#1a1a2e' } }
+      }
+    }
+  });
+}
+
+function renderMacroChart(daily) {
+  destroyChart('macro');
+  const ctx = document.getElementById('macroChart').getContext('2d');
+  dashCharts.macro = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: daily.map(d => d.date.slice(5)),
+      datasets: [
+        { label: '단백질 (g)', data: daily.map(d => d.protein), borderColor: '#60a5fa', tension: 0.3, pointRadius: 2 },
+        { label: '탄수화물 (g)', data: daily.map(d => d.carbs), borderColor: '#fbbf24', tension: 0.3, pointRadius: 2 },
+        { label: '지방 (g)', data: daily.map(d => d.fat), borderColor: '#f87171', tension: 0.3, pointRadius: 2 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { labels: { color: '#888' } } },
+      scales: {
+        x: { ticks: { color: '#666', maxTicksLimit: 10 }, grid: { color: '#1a1a2e' } },
+        y: { ticks: { color: '#666' }, grid: { color: '#1a1a2e' } }
+      }
+    }
+  });
+}
+
+function renderBalanceChart(balance) {
+  destroyChart('balance');
+  if (!balance.carb_pct) return;
+  const ctx = document.getElementById('balanceChart').getContext('2d');
+  dashCharts.balance = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['탄수화물 ' + balance.carb_pct + '%', '단백질 ' + balance.prot_pct + '%', '지방 ' + balance.fat_pct + '%'],
+      datasets: [{
+        data: [balance.carb_pct, balance.prot_pct, balance.fat_pct],
+        backgroundColor: ['#fbbf24', '#60a5fa', '#f87171'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#ccc', padding: 16, font: { size: 13 } } }
+      }
+    }
+  });
+}
+
+function renderPatternChart(pattern) {
+  destroyChart('pattern');
+  if (!pattern) return;
+  const labels = Object.keys(pattern);
+  const values = Object.values(pattern);
+  const ctx = document.getElementById('patternChart').getContext('2d');
+  dashCharts.pattern = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: '식사 횟수',
+        data: values,
+        backgroundColor: ['#fbbf24', '#6ee7b7', '#60a5fa', '#a78bfa', '#f87171'],
+        borderRadius: 6
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#888' }, grid: { display: false } },
+        y: { ticks: { color: '#666', stepSize: 1 }, grid: { color: '#1a1a2e' } }
+      }
+    }
+  });
+}
+
+function renderTopFoods(foods) {
+  if (!foods || foods.length === 0) {
+    document.getElementById('topFoodsList').innerHTML = '<div style="text-align:center;color:#666;padding:20px">데이터 없음</div>';
+    return;
+  }
+  let html = '';
+  foods.forEach((f, i) => {
+    html += '<div class="top-food-item">'
+      + '<span class="tf-rank ' + (i < 3 ? 'top3' : '') + '">' + (i + 1) + '</span>'
+      + '<span class="tf-name">' + f.name + '</span>'
+      + '<span class="tf-count">' + f.count + '회</span>'
+      + '<span class="tf-cal">평균 ' + f.avg_cal + 'kcal</span>'
+      + '</div>';
+  });
+  document.getElementById('topFoodsList').innerHTML = html;
+}
 
 // ── 식사 세션 상태 ──
 let sessionId = null;
@@ -669,10 +1203,11 @@ async function endSession() {
     document.getElementById('sessionToggleBtn').textContent = '🍽️ 정찬 모드 시작';
     document.getElementById('sessionToggleBtn').className = 'btn btn-green';
     document.getElementById('sessionToggleBtn').style.cssText += 'padding:8px 18px;font-size:0.85em;border-radius:20px';
-    // 최종 결과 표시
+    // 최종 결과 표시 + 저장
     if (data.foods && data.foods.length > 0) {
       currentAnalysis = data;
       originalAnalysis = JSON.parse(JSON.stringify(data));
+      saveMealRecord(data);
       renderResult(data, false);
     }
     sessionId = null;
@@ -853,6 +1388,9 @@ async function analyzeFood() {
       updateSessionBar();
     }
 
+    // 자동 저장 (세션 모드가 아닐 때만 — 세션은 종료 시 저장)
+    if (!sessionActive) saveMealRecord(data);
+
     renderResult(data, false);
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
@@ -914,6 +1452,7 @@ async function analyzeLeftover() {
     }
     currentAnalysis = data;
     isAfterMealDone = true;
+    saveMealRecord(data);  // 식후 분석 결과 저장
     renderResult(data, true);
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
@@ -1193,7 +1732,9 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.end_headers()
-            self.wfile.write(json.dumps({"version": "3.0", "json_mode": True, "db_count": len(FOODS_DB)}, ensure_ascii=False).encode('utf-8'))
+            self.wfile.write(json.dumps({"version": "4.0", "json_mode": True, "db_count": len(FOODS_DB)}, ensure_ascii=False).encode('utf-8'))
+        elif path.startswith('/dashboard-data'):
+            self._handle_dashboard_data()
         else:
             self.send_response(404)
             self.end_headers()
@@ -1274,6 +1815,10 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_session_end()
         elif path == '/correct':
             self._handle_correct()
+        elif path == '/save-meal':
+            self._handle_save_meal()
+        elif path == '/login':
+            self._handle_login()
         else:
             self.send_response(404)
             self.end_headers()
@@ -1596,6 +2141,63 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self._json_response(500, {"error": f"수정 에러: {str(e)}"})
+
+    # ── 로그인 API ──
+    def _handle_login(self):
+        """닉네임 로그인 — 사용자 등록/확인"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            req = json.loads(body)
+            nickname = req.get('nickname', '').strip()
+            if not nickname or len(nickname) < 1:
+                self._json_response(400, {"error": "닉네임을 입력하세요."})
+                return
+            log = _load_meal_log()
+            is_new = nickname not in log.get("users", {})
+            if is_new:
+                log.setdefault("users", {})[nickname] = {"created": time.strftime("%Y-%m-%d"), "meals": []}
+                _save_meal_log(log)
+            meal_count = len(log["users"][nickname].get("meals", []))
+            print(f"[로그인] {nickname} ({'신규' if is_new else '기존'}, 기록 {meal_count}건)")
+            self._json_response(200, {"nickname": nickname, "is_new": is_new, "meal_count": meal_count})
+        except Exception as e:
+            self._json_response(500, {"error": f"로그인 에러: {str(e)}"})
+
+    # ── 식사 기록 저장 API ──
+    def _handle_save_meal(self):
+        """분석 결과를 식사 기록으로 저장"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            req = json.loads(body)
+            nickname = req.get('nickname', '').strip()
+            meal_data = req.get('meal_data', {})
+            if not nickname:
+                self._json_response(400, {"error": "닉네임이 필요합니다."})
+                return
+            if not meal_data.get('foods'):
+                self._json_response(400, {"error": "저장할 음식 데이터가 없습니다."})
+                return
+            record_id = _save_meal_record(nickname, meal_data)
+            self._json_response(200, {"saved": True, "record_id": record_id})
+        except Exception as e:
+            self._json_response(500, {"error": f"저장 에러: {str(e)}"})
+
+    # ── 대시보드 데이터 API ──
+    def _handle_dashboard_data(self):
+        """대시보드용 집계 데이터 반환"""
+        try:
+            qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
+            nickname = qs.get('user', [''])[0]
+            days = int(qs.get('days', ['30'])[0])
+            if not nickname:
+                self._json_response(400, {"error": "사용자명이 필요합니다."})
+                return
+            data = _get_dashboard_data(nickname, days)
+            self._json_response(200, data)
+        except Exception as e:
+            self._json_response(500, {"error": f"대시보드 에러: {str(e)}"})
 
     def _json_response(self, code, data):
         self.send_response(code)
