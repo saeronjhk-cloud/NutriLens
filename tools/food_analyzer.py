@@ -537,18 +537,34 @@ CORE_FOODS = {
     "초콜릿": {"cal":546,"prot":5.0,"carbs":60.0,"fat":31.0,"fiber":3.4,"sodium":24,"sugar":48.0,"serving":40,"category":"snack_drink"},
 
     # ── 음료 ──
+    "물": {"cal":0,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":0,"sugar":0,"serving":250,"category":"snack_drink"},
+    "생수": {"cal":0,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":0,"sugar":0,"serving":500,"category":"snack_drink"},
+    "탄산수": {"cal":0,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":5,"sugar":0,"serving":350,"category":"snack_drink"},
+    "얼음물": {"cal":0,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":0,"sugar":0,"serving":250,"category":"snack_drink"},
+    "보리차": {"cal":1,"prot":0.0,"carbs":0.2,"fat":0.0,"fiber":0,"sodium":2,"sugar":0,"serving":200,"category":"snack_drink"},
     "우유": {"cal":65,"prot":3.2,"carbs":4.7,"fat":3.5,"fiber":0,"sodium":40,"sugar":4.7,"serving":200,"category":"snack_drink"},
+    "저지방우유": {"cal":42,"prot":3.4,"carbs":5.0,"fat":1.5,"fiber":0,"sodium":45,"sugar":5.0,"serving":200,"category":"snack_drink"},
     "두유": {"cal":50,"prot":3.5,"carbs":5.0,"fat":1.8,"fiber":0.5,"sodium":40,"sugar":3.5,"serving":200,"category":"snack_drink"},
     "콜라": {"cal":39,"prot":0.0,"carbs":10.6,"fat":0.0,"fiber":0,"sodium":5,"sugar":10.6,"serving":250,"category":"snack_drink"},
+    "제로콜라": {"cal":0,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":5,"sugar":0,"serving":250,"category":"snack_drink"},
     "사이다": {"cal":40,"prot":0.0,"carbs":10.0,"fat":0.0,"fiber":0,"sodium":10,"sugar":10.0,"serving":250,"category":"snack_drink"},
     "커피": {"cal":2,"prot":0.3,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":2,"sugar":0,"serving":200,"category":"snack_drink"},
     "아메리카노": {"cal":5,"prot":0.3,"carbs":0.5,"fat":0.0,"fiber":0,"sodium":2,"sugar":0,"serving":350,"category":"snack_drink"},
     "카페라떼": {"cal":50,"prot":3.0,"carbs":4.5,"fat":2.5,"fiber":0,"sodium":50,"sugar":4.5,"serving":350,"category":"snack_drink"},
+    "카푸치노": {"cal":45,"prot":2.5,"carbs":4.0,"fat":2.0,"fiber":0,"sodium":45,"sugar":4.0,"serving":300,"category":"snack_drink"},
+    "카페모카": {"cal":120,"prot":3.0,"carbs":18.0,"fat":4.5,"fiber":0.5,"sodium":55,"sugar":15.0,"serving":350,"category":"snack_drink"},
+    "바닐라라떼": {"cal":100,"prot":3.0,"carbs":16.0,"fat":3.0,"fiber":0,"sodium":50,"sugar":14.0,"serving":350,"category":"snack_drink"},
     "녹차": {"cal":1,"prot":0.2,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":1,"sugar":0,"serving":200,"category":"snack_drink"},
+    "녹차라떼": {"cal":80,"prot":2.5,"carbs":12.0,"fat":2.5,"fiber":0.3,"sodium":40,"sugar":10.0,"serving":350,"category":"snack_drink"},
+    "홍차": {"cal":1,"prot":0.0,"carbs":0.3,"fat":0.0,"fiber":0,"sodium":3,"sugar":0,"serving":200,"category":"snack_drink"},
+    "밀크티": {"cal":80,"prot":2.0,"carbs":14.0,"fat":2.0,"fiber":0,"sodium":40,"sugar":12.0,"serving":350,"category":"snack_drink"},
+    "스무디": {"cal":60,"prot":1.0,"carbs":14.0,"fat":0.3,"fiber":1.0,"sodium":5,"sugar":12.0,"serving":350,"category":"snack_drink"},
     "오렌지주스": {"cal":45,"prot":0.7,"carbs":10.5,"fat":0.2,"fiber":0.2,"sodium":2,"sugar":8.5,"serving":200,"category":"snack_drink"},
     "맥주": {"cal":43,"prot":0.5,"carbs":3.6,"fat":0.0,"fiber":0,"sodium":4,"sugar":0,"serving":500,"category":"snack_drink"},
+    "와인": {"cal":83,"prot":0.1,"carbs":2.6,"fat":0.0,"fiber":0,"sodium":5,"sugar":0.6,"serving":150,"category":"snack_drink"},
     "소주": {"cal":87,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":0,"sugar":0,"serving":360,"category":"snack_drink"},
     "막걸리": {"cal":56,"prot":0.8,"carbs":5.0,"fat":0.1,"fiber":0,"sodium":5,"sugar":3.5,"serving":300,"category":"snack_drink"},
+    "하이볼": {"cal":70,"prot":0.0,"carbs":5.0,"fat":0.0,"fiber":0,"sodium":5,"sugar":4.0,"serving":350,"category":"snack_drink"},
 
     # ── 간식 ──
     "라면땅": {"cal":450,"prot":8.0,"carbs":55.0,"fat":22.0,"fiber":1.0,"sodium":500,"sugar":5.0,"serving":90,"category":"snack_drink"},
@@ -589,37 +605,325 @@ CORE_FOODS = {
     "닭갈비": {"cal":128,"prot":10.0,"carbs":8.0,"fat":6.0,"fiber":0.5,"sodium":400,"sugar":4.0,"serving":250,"category":"korean"},
     "비빔냉면": {"cal":130,"prot":4.5,"carbs":25.0,"fat":1.5,"fiber":1.5,"sodium":450,"sugar":5.0,"serving":500,"category":"korean"},
     "스테이크": {"cal":271,"prot":26.0,"carbs":0.0,"fat":18.0,"fiber":0,"sodium":65,"sugar":0,"serving":200,"category":"foreign_popular"},
+
+    # ── 양식/브런치 (자주 인식되는 항목 보강) ──
+    "까르보나라": {"cal":180,"prot":8.0,"carbs":22.0,"fat":7.0,"fiber":1.0,"sodium":400,"sugar":1.0,"serving":300,"category":"foreign_popular"},
+    "까르보나라 파스타": {"cal":180,"prot":8.0,"carbs":22.0,"fat":7.0,"fiber":1.0,"sodium":400,"sugar":1.0,"serving":300,"category":"foreign_popular"},
+    "크림 파스타": {"cal":170,"prot":6.5,"carbs":22.0,"fat":6.5,"fiber":1.0,"sodium":380,"sugar":1.5,"serving":300,"category":"foreign_popular"},
+    "토마토 파스타": {"cal":130,"prot":5.0,"carbs":22.0,"fat":3.0,"fiber":2.0,"sodium":400,"sugar":4.0,"serving":300,"category":"foreign_popular"},
+    "토마토 소스 파스타": {"cal":130,"prot":5.0,"carbs":22.0,"fat":3.0,"fiber":2.0,"sodium":400,"sugar":4.0,"serving":300,"category":"foreign_popular"},
+    "알리오올리오": {"cal":160,"prot":5.5,"carbs":24.0,"fat":5.0,"fiber":1.2,"sodium":350,"sugar":1.0,"serving":300,"category":"foreign_popular"},
+    "봉골레 파스타": {"cal":140,"prot":7.0,"carbs":21.0,"fat":3.5,"fiber":1.0,"sodium":420,"sugar":1.0,"serving":300,"category":"foreign_popular"},
+    "리조또": {"cal":140,"prot":4.5,"carbs":20.0,"fat":5.0,"fiber":0.5,"sodium":350,"sugar":1.0,"serving":300,"category":"foreign_popular"},
+    "리코타 치즈 샐러드": {"cal":75,"prot":5.0,"carbs":6.0,"fat":4.0,"fiber":2.0,"sodium":150,"sugar":3.0,"serving":250,"category":"foreign_popular"},
+    "시저 샐러드": {"cal":80,"prot":4.0,"carbs":5.0,"fat":5.5,"fiber":1.5,"sodium":300,"sugar":1.5,"serving":200,"category":"foreign_popular"},
+    "닭가슴살 샐러드": {"cal":60,"prot":7.0,"carbs":4.0,"fat":2.0,"fiber":2.0,"sodium":200,"sugar":2.0,"serving":250,"category":"diet_fitness"},
+    "연어 샐러드": {"cal":70,"prot":6.5,"carbs":4.0,"fat":3.5,"fiber":1.5,"sodium":180,"sugar":2.0,"serving":250,"category":"foreign_popular"},
+    "에그 베네딕트": {"cal":180,"prot":10.0,"carbs":15.0,"fat":9.0,"fiber":0.5,"sodium":500,"sugar":1.5,"serving":250,"category":"foreign_popular"},
+    "팬케이크": {"cal":227,"prot":6.0,"carbs":35.0,"fat":7.0,"fiber":1.0,"sodium":350,"sugar":10.0,"serving":150,"category":"foreign_popular"},
+    "프렌치토스트": {"cal":220,"prot":7.0,"carbs":28.0,"fat":9.0,"fiber":1.0,"sodium":300,"sugar":8.0,"serving":150,"category":"foreign_popular"},
+    "오므라이스": {"cal":140,"prot":5.5,"carbs":18.0,"fat":5.0,"fiber":0.5,"sodium":400,"sugar":3.0,"serving":350,"category":"foreign_popular"},
+    "그라탕": {"cal":140,"prot":6.0,"carbs":12.0,"fat":7.5,"fiber":0.5,"sodium":400,"sugar":2.0,"serving":250,"category":"foreign_popular"},
+    "빵": {"cal":265,"prot":9.0,"carbs":49.0,"fat":3.2,"fiber":2.7,"sodium":500,"sugar":5.0,"serving":60,"category":"snack_drink"},
+    "바게트": {"cal":274,"prot":9.0,"carbs":56.0,"fat":1.0,"fiber":2.4,"sodium":600,"sugar":3.0,"serving":60,"category":"snack_drink"},
+    "치아바타": {"cal":271,"prot":9.0,"carbs":50.0,"fat":3.5,"fiber":2.0,"sodium":500,"sugar":2.0,"serving":80,"category":"snack_drink"},
+    "마카롱": {"cal":400,"prot":5.0,"carbs":60.0,"fat":16.0,"fiber":1.0,"sodium":50,"sugar":50.0,"serving":30,"category":"snack_drink"},
+    "타르트": {"cal":320,"prot":4.0,"carbs":40.0,"fat":16.0,"fiber":1.0,"sodium":200,"sugar":20.0,"serving":100,"category":"snack_drink"},
+    "머핀": {"cal":340,"prot":5.0,"carbs":48.0,"fat":14.0,"fiber":1.5,"sodium":350,"sugar":22.0,"serving":100,"category":"snack_drink"},
+    "브라우니": {"cal":400,"prot":5.0,"carbs":50.0,"fat":20.0,"fiber":2.0,"sodium":200,"sugar":30.0,"serving":60,"category":"snack_drink"},
+    "수프": {"cal":40,"prot":1.5,"carbs":5.0,"fat":1.5,"fiber":0.5,"sodium":400,"sugar":1.5,"serving":250,"category":"foreign_popular"},
+    "클램차우더": {"cal":60,"prot":2.5,"carbs":7.0,"fat":2.5,"fiber":0.5,"sodium":450,"sugar":1.0,"serving":250,"category":"foreign_popular"},
+
+    # ── 추가: 한식 밥류/덮밥 ──
+    "누드김밥": {"cal":180,"prot":5.0,"carbs":25.0,"fat":6.0,"fiber":1.5,"sodium":400,"sugar":2.0,"serving":230,"category":"korean"},
+    "제육덮밥": {"cal":150,"prot":8.0,"carbs":20.0,"fat":5.0,"fiber":0.5,"sodium":450,"sugar":3.0,"serving":400,"category":"korean"},
+
+    # ── 추가: 국/찌개/탕 ──
+    "시래기국": {"cal":20,"prot":1.5,"carbs":2.5,"fat":0.8,"fiber":1.5,"sodium":400,"sugar":0.5,"serving":300,"category":"korean"},
+    "선지국": {"cal":35,"prot":4.0,"carbs":1.5,"fat":1.5,"fiber":0,"sodium":400,"sugar":0,"serving":500,"category":"korean"},
+    "떡만둣국": {"cal":60,"prot":3.5,"carbs":9.0,"fat":1.5,"fiber":0.3,"sodium":400,"sugar":0.5,"serving":500,"category":"korean"},
+    "오뎅탕": {"cal":25,"prot":2.5,"carbs":2.0,"fat":0.8,"fiber":0,"sodium":400,"sugar":1.0,"serving":400,"category":"korean"},
+
+    # ── 추가: 고기/구이 ──
+    "항정살": {"cal":290,"prot":15.0,"carbs":0.0,"fat":25.0,"fiber":0,"sodium":55,"sugar":0,"serving":150,"category":"korean"},
+    "가브리살": {"cal":260,"prot":16.0,"carbs":0.0,"fat":22.0,"fiber":0,"sodium":55,"sugar":0,"serving":150,"category":"korean"},
+    "LA갈비": {"cal":280,"prot":17.0,"carbs":6.0,"fat":21.0,"fiber":0,"sodium":350,"sugar":4.0,"serving":200,"category":"korean"},
+    "오리훈제": {"cal":190,"prot":16.0,"carbs":2.0,"fat":13.0,"fiber":0,"sodium":350,"sugar":1.0,"serving":150,"category":"korean"},
+    "양고기": {"cal":230,"prot":18.0,"carbs":0.0,"fat":17.0,"fiber":0,"sodium":60,"sugar":0,"serving":150,"category":"foreign_popular"},
+
+    # ── 추가: 반찬 ──
+    "진미채볶음": {"cal":280,"prot":12.0,"carbs":35.0,"fat":10.0,"fiber":0.5,"sodium":600,"sugar":15.0,"serving":30,"category":"korean"},
+
+    # ── 추가: 분식 ──
+    "떡꼬치": {"cal":200,"prot":3.0,"carbs":40.0,"fat":3.0,"fiber":0.5,"sodium":350,"sugar":8.0,"serving":100,"category":"korean"},
+    "핫바": {"cal":180,"prot":7.0,"carbs":18.0,"fat":8.0,"fiber":0.5,"sodium":500,"sugar":3.0,"serving":100,"category":"korean"},
+    "소떡소떡": {"cal":200,"prot":5.0,"carbs":35.0,"fat":4.0,"fiber":0.5,"sodium":400,"sugar":5.0,"serving":120,"category":"korean"},
+    "왕만두": {"cal":200,"prot":8.0,"carbs":25.0,"fat":7.0,"fiber":1.0,"sodium":400,"sugar":2.0,"serving":150,"category":"korean"},
+
+    # ── 추가: 면류/라면 ──
+    "컵라면": {"cal":300,"prot":6.0,"carbs":42.0,"fat":12.0,"fiber":1.5,"sodium":1300,"sugar":3.0,"serving":65,"category":"korean"},
+    "진라면": {"cal":375,"prot":8.5,"carbs":52.0,"fat":13.5,"fiber":2.0,"sodium":1500,"sugar":3.0,"serving":120,"category":"franchise"},
+    "불닭볶음면": {"cal":530,"prot":9.0,"carbs":73.0,"fat":22.0,"fiber":2.0,"sodium":1800,"sugar":6.0,"serving":140,"category":"franchise"},
+    "밀면": {"cal":100,"prot":3.5,"carbs":20.0,"fat":0.5,"fiber":0.8,"sodium":400,"sugar":2.0,"serving":500,"category":"korean"},
+    "볶음우동": {"cal":130,"prot":4.0,"carbs":22.0,"fat":3.0,"fiber":1.0,"sodium":500,"sugar":3.0,"serving":350,"category":"foreign_popular"},
+    "소바": {"cal":110,"prot":5.0,"carbs":20.0,"fat":1.0,"fiber":1.5,"sodium":400,"sugar":2.0,"serving":350,"category":"foreign_popular"},
+    "냉소바": {"cal":95,"prot":5.0,"carbs":18.0,"fat":0.5,"fiber":1.5,"sodium":350,"sugar":3.0,"serving":350,"category":"foreign_popular"},
+    "잔뽕": {"cal":80,"prot":5.0,"carbs":10.0,"fat":2.5,"fiber":1.0,"sodium":550,"sugar":2.0,"serving":500,"category":"korean"},
+
+    # ── 추가: 양식 파스타 ──
+    "뇨끼": {"cal":130,"prot":4.0,"carbs":22.0,"fat":3.0,"fiber":1.0,"sodium":300,"sugar":1.0,"serving":300,"category":"foreign_popular"},
+    "라자냐": {"cal":135,"prot":7.0,"carbs":14.0,"fat":6.0,"fiber":1.0,"sodium":400,"sugar":2.0,"serving":350,"category":"foreign_popular"},
+    "라비올리": {"cal":120,"prot":5.5,"carbs":18.0,"fat":3.0,"fiber":1.0,"sodium":350,"sugar":1.0,"serving":300,"category":"foreign_popular"},
+    "펜네": {"cal":155,"prot":5.5,"carbs":27.0,"fat":2.5,"fiber":1.5,"sodium":350,"sugar":2.0,"serving":300,"category":"foreign_popular"},
+    "링귀네": {"cal":155,"prot":5.5,"carbs":27.0,"fat":2.5,"fiber":1.5,"sodium":350,"sugar":2.0,"serving":300,"category":"foreign_popular"},
+    "오레키에떼": {"cal":145,"prot":5.0,"carbs":25.0,"fat":3.0,"fiber":1.0,"sodium":350,"sugar":1.5,"serving":300,"category":"foreign_popular"},
+    "카넬로니": {"cal":120,"prot":5.5,"carbs":14.0,"fat":4.5,"fiber":1.0,"sodium":380,"sugar":2.0,"serving":300,"category":"foreign_popular"},
+    "스파게티": {"cal":155,"prot":5.5,"carbs":27.0,"fat":2.5,"fiber":1.5,"sodium":350,"sugar":2.0,"serving":300,"category":"foreign_popular"},
+
+    # ── 추가: 양식 메인 ──
+    "치즈돈까스": {"cal":260,"prot":15.0,"carbs":20.0,"fat":14.0,"fiber":1.0,"sodium":550,"sugar":2.0,"serving":220,"category":"foreign_popular"},
+    "필렛미뇽": {"cal":200,"prot":26.0,"carbs":0.0,"fat":10.0,"fiber":0,"sodium":55,"sugar":0,"serving":200,"category":"foreign_popular"},
+    "비프스튜": {"cal":80,"prot":5.5,"carbs":6.0,"fat":3.5,"fiber":1.0,"sodium":350,"sugar":2.0,"serving":400,"category":"foreign_popular"},
+    "피쉬앤칩스": {"cal":220,"prot":10.0,"carbs":22.0,"fat":10.0,"fiber":1.5,"sodium":400,"sugar":1.0,"serving":250,"category":"foreign_popular"},
+    "미트로프": {"cal":160,"prot":10.0,"carbs":8.0,"fat":10.0,"fiber":0.5,"sodium":400,"sugar":2.0,"serving":250,"category":"foreign_popular"},
+    "미트파이": {"cal":240,"prot":8.0,"carbs":22.0,"fat":13.0,"fiber":1.0,"sodium":450,"sugar":2.0,"serving":200,"category":"foreign_popular"},
+    "바비큐립": {"cal":250,"prot":18.0,"carbs":8.0,"fat":16.0,"fiber":0,"sodium":400,"sugar":5.0,"serving":200,"category":"foreign_popular"},
+    "비프부르기뇽": {"cal":90,"prot":6.0,"carbs":5.0,"fat":5.0,"fiber":1.0,"sodium":350,"sugar":2.0,"serving":400,"category":"foreign_popular"},
+
+    # ── 추가: 샐러드/수프 ──
+    "카프레제": {"cal":70,"prot":4.0,"carbs":3.0,"fat":5.0,"fiber":0.5,"sodium":150,"sugar":2.0,"serving":250,"category":"foreign_popular"},
+    "양송이수프": {"cal":40,"prot":1.5,"carbs":4.0,"fat":2.0,"fiber":0.5,"sodium":380,"sugar":1.0,"serving":250,"category":"foreign_popular"},
+    "크림수프": {"cal":55,"prot":1.5,"carbs":6.0,"fat":3.0,"fiber":0.5,"sodium":400,"sugar":1.5,"serving":250,"category":"foreign_popular"},
+    "미네스트로네": {"cal":35,"prot":1.5,"carbs":5.5,"fat":0.8,"fiber":1.5,"sodium":350,"sugar":2.0,"serving":300,"category":"foreign_popular"},
+    "호박수프": {"cal":35,"prot":1.0,"carbs":6.0,"fat":1.0,"fiber":1.0,"sodium":350,"sugar":2.5,"serving":300,"category":"foreign_popular"},
+    "비시수아즈": {"cal":50,"prot":1.5,"carbs":6.0,"fat":2.5,"fiber":0.5,"sodium":350,"sugar":1.5,"serving":250,"category":"foreign_popular"},
+    "토마토수프": {"cal":35,"prot":1.0,"carbs":5.5,"fat":1.0,"fiber":1.0,"sodium":400,"sugar":3.0,"serving":300,"category":"foreign_popular"},
+    "옥수수수프": {"cal":50,"prot":1.5,"carbs":8.0,"fat":1.5,"fiber":0.5,"sodium":380,"sugar":2.0,"serving":250,"category":"foreign_popular"},
+    "감자수프": {"cal":45,"prot":1.0,"carbs":7.0,"fat":1.5,"fiber":0.5,"sodium":380,"sugar":1.0,"serving":300,"category":"foreign_popular"},
+    "그릭 샐러드": {"cal":60,"prot":3.0,"carbs":5.0,"fat":3.5,"fiber":1.5,"sodium":250,"sugar":2.5,"serving":250,"category":"foreign_popular"},
+    "코브 샐러드": {"cal":80,"prot":6.0,"carbs":4.0,"fat":5.0,"fiber":2.0,"sodium":300,"sugar":2.0,"serving":300,"category":"foreign_popular"},
+    "월도프 샐러드": {"cal":70,"prot":1.5,"carbs":8.0,"fat":4.0,"fiber":1.5,"sodium":150,"sugar":5.0,"serving":250,"category":"foreign_popular"},
+
+    # ── 추가: 패스트푸드/치킨 ──
+    "간장치킨": {"cal":250,"prot":16.0,"carbs":12.0,"fat":16.0,"fiber":0.5,"sodium":550,"sugar":6.0,"serving":100,"category":"franchise"},
+    "허니버터치킨": {"cal":280,"prot":15.0,"carbs":16.0,"fat":17.0,"fiber":0.5,"sodium":500,"sugar":10.0,"serving":100,"category":"franchise"},
+    "마늘치킨": {"cal":260,"prot":16.0,"carbs":12.0,"fat":17.0,"fiber":0.5,"sodium":500,"sugar":4.0,"serving":100,"category":"franchise"},
+    "하와이안피자": {"cal":250,"prot":10.0,"carbs":32.0,"fat":9.0,"fiber":2.0,"sodium":580,"sugar":5.0,"serving":107,"category":"franchise"},
+    "불고기피자": {"cal":260,"prot":11.0,"carbs":31.0,"fat":10.0,"fiber":2.0,"sodium":600,"sugar":4.0,"serving":107,"category":"franchise"},
+    "너겟": {"cal":280,"prot":14.0,"carbs":18.0,"fat":16.0,"fiber":1.0,"sodium":500,"sugar":1.0,"serving":100,"category":"franchise"},
+    "치킨너겟": {"cal":280,"prot":14.0,"carbs":18.0,"fat":16.0,"fiber":1.0,"sodium":500,"sugar":1.0,"serving":100,"category":"franchise"},
+    "타코": {"cal":170,"prot":8.0,"carbs":15.0,"fat":8.0,"fiber":2.0,"sodium":400,"sugar":2.0,"serving":150,"category":"foreign_popular"},
+    "부리토": {"cal":150,"prot":7.0,"carbs":18.0,"fat":5.5,"fiber":2.5,"sodium":450,"sugar":2.0,"serving":350,"category":"foreign_popular"},
+    "퀘사디아": {"cal":220,"prot":10.0,"carbs":20.0,"fat":11.0,"fiber":1.5,"sodium":450,"sugar":1.5,"serving":200,"category":"foreign_popular"},
+    "나초": {"cal":350,"prot":5.0,"carbs":40.0,"fat":19.0,"fiber":3.0,"sodium":400,"sugar":2.0,"serving":100,"category":"foreign_popular"},
+    "오니언링": {"cal":280,"prot":3.5,"carbs":30.0,"fat":16.0,"fiber":1.5,"sodium":350,"sugar":3.0,"serving":100,"category":"foreign_popular"},
+    "콘도그": {"cal":260,"prot":8.0,"carbs":28.0,"fat":13.0,"fiber":1.0,"sodium":500,"sugar":5.0,"serving":100,"category":"franchise"},
+    "피시버거": {"cal":240,"prot":12.0,"carbs":28.0,"fat":10.0,"fiber":1.5,"sodium":550,"sugar":4.0,"serving":200,"category":"franchise"},
+
+    # ── 추가: 일식 ──
+    "사시미": {"cal":100,"prot":20.0,"carbs":0.5,"fat":1.5,"fiber":0,"sodium":50,"sugar":0,"serving":150,"category":"foreign_popular"},
+    "규동": {"cal":130,"prot":6.0,"carbs":18.0,"fat":3.5,"fiber":0.5,"sodium":400,"sugar":4.0,"serving":400,"category":"foreign_popular"},
+    "텐동": {"cal":150,"prot":6.0,"carbs":20.0,"fat":5.0,"fiber":1.0,"sodium":450,"sugar":3.0,"serving":400,"category":"foreign_popular"},
+    "오야코동": {"cal":120,"prot":7.0,"carbs":16.0,"fat":3.0,"fiber":0.3,"sodium":400,"sugar":3.0,"serving":400,"category":"foreign_popular"},
+    "미소시루": {"cal":20,"prot":1.5,"carbs":2.0,"fat":0.5,"fiber":0.3,"sodium":350,"sugar":0.5,"serving":200,"category":"foreign_popular"},
+    "야키소바": {"cal":140,"prot":4.5,"carbs":22.0,"fat":4.0,"fiber":1.0,"sodium":500,"sugar":3.0,"serving":350,"category":"foreign_popular"},
+    "야키토리": {"cal":180,"prot":16.0,"carbs":5.0,"fat":10.0,"fiber":0,"sodium":400,"sugar":3.0,"serving":120,"category":"foreign_popular"},
+    "돈부리": {"cal":130,"prot":6.0,"carbs":18.0,"fat":3.5,"fiber":0.5,"sodium":400,"sugar":3.0,"serving":400,"category":"foreign_popular"},
+    "라멘": {"cal":105,"prot":5.0,"carbs":15.0,"fat":3.0,"fiber":0.5,"sodium":600,"sugar":2.0,"serving":500,"category":"foreign_popular"},
+    "츠케멘": {"cal":120,"prot":5.5,"carbs":18.0,"fat":3.0,"fiber":0.5,"sodium":550,"sugar":2.0,"serving":450,"category":"foreign_popular"},
+    "규카츠": {"cal":230,"prot":18.0,"carbs":12.0,"fat":12.0,"fiber":0.5,"sodium":350,"sugar":1.0,"serving":200,"category":"foreign_popular"},
+    "샤부샤부": {"cal":50,"prot":4.0,"carbs":3.0,"fat":2.5,"fiber":0.5,"sodium":300,"sugar":1.0,"serving":500,"category":"foreign_popular"},
+    "스키야키": {"cal":80,"prot":5.0,"carbs":8.0,"fat":3.0,"fiber":0.5,"sodium":450,"sugar":5.0,"serving":500,"category":"foreign_popular"},
+    "냉모밀": {"cal":95,"prot":5.0,"carbs":18.0,"fat":0.5,"fiber":1.5,"sodium":350,"sugar":3.0,"serving":350,"category":"foreign_popular"},
+    "가라아게": {"cal":250,"prot":15.0,"carbs":12.0,"fat":16.0,"fiber":0.5,"sodium":400,"sugar":1.0,"serving":120,"category":"foreign_popular"},
+    "모찌": {"cal":230,"prot":4.0,"carbs":52.0,"fat":0.5,"fiber":0.5,"sodium":50,"sugar":15.0,"serving":50,"category":"foreign_popular"},
+
+    # ── 추가: 중식 ──
+    "유린기": {"cal":200,"prot":14.0,"carbs":10.0,"fat":12.0,"fiber":0.5,"sodium":450,"sugar":4.0,"serving":200,"category":"korean"},
+    "샤오롱바오": {"cal":200,"prot":8.0,"carbs":22.0,"fat":8.0,"fiber":0.5,"sodium":400,"sugar":1.0,"serving":120,"category":"foreign_popular"},
+    "딤섬": {"cal":180,"prot":7.0,"carbs":20.0,"fat":7.0,"fiber":0.5,"sodium":400,"sugar":1.5,"serving":120,"category":"foreign_popular"},
+    "차슈": {"cal":200,"prot":18.0,"carbs":5.0,"fat":12.0,"fiber":0,"sodium":400,"sugar":3.0,"serving":120,"category":"foreign_popular"},
+    "훠궈": {"cal":60,"prot":4.0,"carbs":4.0,"fat":3.0,"fiber":0.5,"sodium":500,"sugar":2.0,"serving":600,"category":"foreign_popular"},
+    "고량주": {"cal":220,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":0,"sugar":0,"serving":100,"category":"snack_drink"},
+
+    # ── 추가: 음료/차 ──
+    "둥굴레차": {"cal":1,"prot":0.0,"carbs":0.2,"fat":0.0,"fiber":0,"sodium":2,"sugar":0,"serving":200,"category":"snack_drink"},
+    "현미차": {"cal":1,"prot":0.0,"carbs":0.2,"fat":0.0,"fiber":0,"sodium":2,"sugar":0,"serving":200,"category":"snack_drink"},
+    "옥수수차": {"cal":1,"prot":0.0,"carbs":0.2,"fat":0.0,"fiber":0,"sodium":2,"sugar":0,"serving":200,"category":"snack_drink"},
+    "캐모마일차": {"cal":1,"prot":0.0,"carbs":0.1,"fat":0.0,"fiber":0,"sodium":1,"sugar":0,"serving":200,"category":"snack_drink"},
+    "카라멜마키아또": {"cal":100,"prot":3.0,"carbs":16.0,"fat":3.5,"fiber":0,"sodium":55,"sugar":14.0,"serving":350,"category":"snack_drink"},
+    "아이스티": {"cal":30,"prot":0.0,"carbs":8.0,"fat":0.0,"fiber":0,"sodium":5,"sugar":7.0,"serving":350,"category":"snack_drink"},
+    "딸기라떼": {"cal":85,"prot":2.5,"carbs":14.0,"fat":2.5,"fiber":0.3,"sodium":40,"sugar":12.0,"serving":350,"category":"snack_drink"},
+    "환타": {"cal":42,"prot":0.0,"carbs":11.0,"fat":0.0,"fiber":0,"sodium":10,"sugar":11.0,"serving":250,"category":"snack_drink"},
+    "모히또": {"cal":45,"prot":0.0,"carbs":8.0,"fat":0.0,"fiber":0,"sodium":5,"sugar":7.0,"serving":350,"category":"snack_drink"},
+    "상그리아": {"cal":50,"prot":0.1,"carbs":8.0,"fat":0.0,"fiber":0.2,"sodium":5,"sugar":7.0,"serving":300,"category":"snack_drink"},
+    "그릭요거트": {"cal":60,"prot":5.0,"carbs":4.0,"fat":2.5,"fiber":0,"sodium":30,"sugar":3.5,"serving":200,"category":"snack_drink"},
+
+    # ── 추가: 빵/디저트 ──
+    "에클레어": {"cal":260,"prot":5.0,"carbs":25.0,"fat":16.0,"fiber":0.5,"sodium":200,"sugar":12.0,"serving":100,"category":"snack_drink"},
+    "스콘": {"cal":350,"prot":7.0,"carbs":45.0,"fat":16.0,"fiber":1.5,"sodium":400,"sugar":8.0,"serving":60,"category":"snack_drink"},
+    "시나몬롤": {"cal":350,"prot":5.0,"carbs":48.0,"fat":15.0,"fiber":1.0,"sodium":350,"sugar":22.0,"serving":100,"category":"snack_drink"},
+    "팥빵": {"cal":260,"prot":7.0,"carbs":48.0,"fat":4.0,"fiber":2.0,"sodium":200,"sugar":20.0,"serving":90,"category":"snack_drink"},
+    "단팥빵": {"cal":270,"prot":7.0,"carbs":50.0,"fat":4.5,"fiber":2.0,"sodium":200,"sugar":22.0,"serving":90,"category":"snack_drink"},
+    "젤리": {"cal":330,"prot":6.0,"carbs":78.0,"fat":0.0,"fiber":0,"sodium":15,"sugar":50.0,"serving":30,"category":"snack_drink"},
+    "양갱": {"cal":250,"prot":3.0,"carbs":55.0,"fat":0.5,"fiber":2.0,"sodium":10,"sugar":35.0,"serving":50,"category":"snack_drink"},
+    "송편": {"cal":200,"prot":3.5,"carbs":40.0,"fat":3.0,"fiber":1.0,"sodium":100,"sugar":10.0,"serving":100,"category":"korean"},
+    "찰떡아이스": {"cal":250,"prot":3.0,"carbs":35.0,"fat":10.0,"fiber":0.5,"sodium":60,"sugar":18.0,"serving":70,"category":"snack_drink"},
+    "녹차빙수": {"cal":150,"prot":3.0,"carbs":28.0,"fat":3.0,"fiber":0.5,"sodium":30,"sugar":18.0,"serving":250,"category":"snack_drink"},
+    "망고빙수": {"cal":160,"prot":2.5,"carbs":32.0,"fat":3.0,"fiber":1.0,"sodium":25,"sugar":22.0,"serving":250,"category":"snack_drink"},
+    "팥빙수": {"cal":140,"prot":3.0,"carbs":28.0,"fat":2.0,"fiber":1.5,"sodium":30,"sugar":18.0,"serving":250,"category":"snack_drink"},
+
+    # ── 추가: 과일 ──
+    "자몽": {"cal":32,"prot":0.6,"carbs":8.1,"fat":0.1,"fiber":1.1,"sodium":0,"sugar":7.0,"serving":200,"category":"fruit"},
+    "레몬": {"cal":29,"prot":1.1,"carbs":9.3,"fat":0.3,"fiber":2.8,"sodium":2,"sugar":2.5,"serving":60,"category":"fruit"},
+    "라임": {"cal":30,"prot":0.7,"carbs":10.5,"fat":0.2,"fiber":2.8,"sodium":2,"sugar":1.7,"serving":60,"category":"fruit"},
+    "라즈베리": {"cal":52,"prot":1.2,"carbs":12.0,"fat":0.7,"fiber":6.5,"sodium":1,"sugar":4.4,"serving":80,"category":"fruit"},
+    "곶감": {"cal":270,"prot":2.0,"carbs":65.0,"fat":0.5,"fiber":8.0,"sodium":10,"sugar":45.0,"serving":40,"category":"fruit"},
+
+    # ── 추가: 해산물 ──
+    "전복": {"cal":80,"prot":15.0,"carbs":4.0,"fat":0.5,"fiber":0,"sodium":250,"sugar":0,"serving":100,"category":"korean"},
+    "꽃게": {"cal":63,"prot":13.0,"carbs":0.5,"fat":0.8,"fiber":0,"sodium":350,"sugar":0,"serving":150,"category":"korean"},
+    "대하": {"cal":85,"prot":18.0,"carbs":0.8,"fat":0.7,"fiber":0,"sodium":200,"sugar":0,"serving":100,"category":"korean"},
+    "가리비": {"cal":70,"prot":12.0,"carbs":3.5,"fat":0.5,"fiber":0,"sodium":250,"sugar":0,"serving":100,"category":"korean"},
+    "멍게": {"cal":40,"prot":7.0,"carbs":2.5,"fat":0.5,"fiber":0,"sodium":300,"sugar":0,"serving":100,"category":"korean"},
+    "낙지": {"cal":55,"prot":10.5,"carbs":1.0,"fat":0.8,"fiber":0,"sodium":200,"sugar":0,"serving":100,"category":"korean"},
+    "문어": {"cal":73,"prot":15.0,"carbs":2.0,"fat":0.6,"fiber":0,"sodium":230,"sugar":0,"serving":100,"category":"korean"},
+    "장어": {"cal":230,"prot":17.0,"carbs":0.0,"fat":18.0,"fiber":0,"sodium":60,"sugar":0,"serving":120,"category":"korean"},
+    "꼬막": {"cal":70,"prot":12.0,"carbs":3.0,"fat":1.0,"fiber":0,"sodium":250,"sugar":0,"serving":100,"category":"korean"},
+    "홍합": {"cal":73,"prot":10.0,"carbs":3.5,"fat":2.0,"fiber":0,"sodium":280,"sugar":0,"serving":100,"category":"korean"},
+
+    # ── 추가: 간식/야식/견과 ──
+    "호두": {"cal":654,"prot":15.0,"carbs":14.0,"fat":65.0,"fiber":7.0,"sodium":2,"sugar":2.6,"serving":28,"category":"snack_drink"},
+    "땅콩": {"cal":567,"prot":26.0,"carbs":16.0,"fat":49.0,"fiber":9.0,"sodium":5,"sugar":4.0,"serving":30,"category":"snack_drink"},
+    "군고구마": {"cal":130,"prot":1.5,"carbs":30.0,"fat":0.1,"fiber":3.5,"sodium":15,"sugar":10.0,"serving":150,"category":"korean"},
+    "그래놀라바": {"cal":450,"prot":8.0,"carbs":60.0,"fat":20.0,"fiber":3.0,"sodium":150,"sugar":20.0,"serving":40,"category":"snack_drink"},
+    "핫윙": {"cal":250,"prot":16.0,"carbs":8.0,"fat":17.0,"fiber":0.5,"sodium":500,"sugar":2.0,"serving":100,"category":"franchise"},
+    "닭발": {"cal":180,"prot":15.0,"carbs":5.0,"fat":11.0,"fiber":0,"sodium":500,"sugar":3.0,"serving":120,"category":"korean"},
+    "츄러스": {"cal":350,"prot":4.0,"carbs":40.0,"fat":19.0,"fiber":1.0,"sodium":250,"sugar":15.0,"serving":80,"category":"snack_drink"},
+
+    # ── 추가: 미매칭 보완 ──
+    "만둣국": {"cal":55,"prot":3.0,"carbs":8.0,"fat":1.5,"fiber":0.3,"sodium":400,"sugar":0.5,"serving":450,"category":"korean"},
+    "소세지볶음": {"cal":240,"prot":10.0,"carbs":5.0,"fat":20.0,"fiber":0.5,"sodium":600,"sugar":2.0,"serving":100,"category":"korean"},
+    "김전": {"cal":180,"prot":5.0,"carbs":15.0,"fat":11.0,"fiber":1.0,"sodium":300,"sugar":1.0,"serving":80,"category":"korean"},
+    "쭈꾸미볶음": {"cal":90,"prot":10.0,"carbs":5.0,"fat":3.5,"fiber":0.5,"sodium":450,"sugar":3.0,"serving":250,"category":"korean"},
+    "폭립": {"cal":250,"prot":18.0,"carbs":8.0,"fat":16.0,"fiber":0,"sodium":400,"sugar":5.0,"serving":200,"category":"foreign_popular"},
+    "양념반후라이드반": {"cal":270,"prot":16.0,"carbs":12.0,"fat":17.0,"fiber":0.5,"sodium":520,"sugar":4.0,"serving":100,"category":"franchise"},
+    "가츠동": {"cal":140,"prot":7.0,"carbs":18.0,"fat":4.5,"fiber":0.5,"sodium":400,"sugar":3.0,"serving":400,"category":"foreign_popular"},
+    "텐푸라": {"cal":200,"prot":5.0,"carbs":20.0,"fat":11.0,"fiber":1.0,"sodium":300,"sugar":1.0,"serving":150,"category":"foreign_popular"},
+    "스시": {"cal":150,"prot":6.0,"carbs":25.0,"fat":3.0,"fiber":0.3,"sodium":350,"sugar":4.0,"serving":200,"category":"foreign_popular"},
+    "꿔바로우": {"cal":230,"prot":10.0,"carbs":25.0,"fat":10.0,"fiber":0.5,"sodium":400,"sugar":10.0,"serving":200,"category":"korean"},
+    "경장육사": {"cal":180,"prot":12.0,"carbs":10.0,"fat":10.0,"fiber":1.0,"sodium":400,"sugar":4.0,"serving":200,"category":"korean"},
+    "위스키": {"cal":250,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":0,"sugar":0,"serving":45,"category":"snack_drink"},
+    "보드카": {"cal":231,"prot":0.0,"carbs":0.0,"fat":0.0,"fiber":0,"sodium":0,"sugar":0,"serving":45,"category":"snack_drink"},
+    "진토닉": {"cal":70,"prot":0.0,"carbs":7.0,"fat":0.0,"fiber":0,"sodium":5,"sugar":6.0,"serving":250,"category":"snack_drink"},
+    "매실차": {"cal":20,"prot":0.0,"carbs":5.0,"fat":0.0,"fiber":0,"sodium":2,"sugar":4.0,"serving":200,"category":"snack_drink"},
+    "생강차": {"cal":15,"prot":0.1,"carbs":3.5,"fat":0.0,"fiber":0,"sodium":2,"sugar":2.5,"serving":200,"category":"snack_drink"},
+    "대추차": {"cal":25,"prot":0.2,"carbs":6.0,"fat":0.0,"fiber":0.3,"sodium":2,"sugar":4.5,"serving":200,"category":"snack_drink"},
+    "인삼차": {"cal":15,"prot":0.3,"carbs":3.0,"fat":0.0,"fiber":0,"sodium":3,"sugar":2.0,"serving":200,"category":"snack_drink"},
+    "허브차": {"cal":1,"prot":0.0,"carbs":0.1,"fat":0.0,"fiber":0,"sodium":1,"sugar":0,"serving":200,"category":"snack_drink"},
+    "크레페": {"cal":200,"prot":5.0,"carbs":25.0,"fat":9.0,"fiber":0.5,"sodium":200,"sugar":8.0,"serving":120,"category":"foreign_popular"},
+    "수플레": {"cal":180,"prot":5.0,"carbs":20.0,"fat":9.0,"fiber":0.3,"sodium":150,"sugar":12.0,"serving":120,"category":"snack_drink"},
+    "푸딩": {"cal":130,"prot":3.0,"carbs":20.0,"fat":4.0,"fiber":0,"sodium":80,"sugar":15.0,"serving":120,"category":"snack_drink"},
+    "판나코타": {"cal":200,"prot":3.0,"carbs":22.0,"fat":11.0,"fiber":0,"sodium":40,"sugar":18.0,"serving":120,"category":"snack_drink"},
+    "크림브륄레": {"cal":280,"prot":4.0,"carbs":25.0,"fat":18.0,"fiber":0,"sodium":50,"sugar":20.0,"serving":120,"category":"snack_drink"},
 }
 
 
+# ── 접미사 기반 음식 카테고리 매핑 ──
+# "옥수수차" → "차", "녹차빙수" → "빙수" 등 접미사로 카테고리 판별
+# 긴 접미사 우선 매칭 (순서 중요)
+FOOD_SUFFIXES = [
+    # 음료/차 (4자 이상 우선)
+    ("마키아또", None),  # CORE_FOODS에 직접 있으면 그걸 사용
+    ("라떼", None),
+    ("스무디", "스무디"),
+    ("밀크티", "밀크티"),
+    # 수프/찌개
+    ("차우더", "클램차우더"),
+    ("수프", "수프"),
+    ("찌개", None),
+    ("전골", None),
+    # 빙수/디저트
+    ("빙수", None),  # 녹차빙수, 망고빙수 등은 CORE_FOODS에 직접 등록
+    ("케이크", "케이크"),
+    # 밥/면류
+    ("덮밥", "덮밥"),
+    ("볶음밥", "볶음밥"),
+    ("파스타", "파스타"),
+    ("리조또", "리조또"),
+    # 고기/요리
+    ("치킨", "치킨"),
+    ("돈까스", "돈까스"),
+    ("피자", "피자"),
+    # 기타
+    ("샐러드", "샐러드"),
+    ("샌드위치", "샌드위치"),
+    ("버거", "햄버거"),
+    # 짧은 접미사 (마지막에)
+    ("차", None),  # "옥수수차" → 차 (0~2kcal)
+]
+
+
 def _search_core_foods(name):
-    """핵심 음식 참조 테이블에서 검색 (정확 → 관련성 높은 부분 매칭)"""
+    """핵심 음식 참조 테이블에서 검색 (정확 → 접미사 → 복합이름 뒤에서부터 → 부분 매칭)
+
+    핵심: "토마토 소스 파스타"는 "토마토"가 아니라 "파스타"에 매칭되어야 함.
+    핵심: "옥수수차"는 "옥수수"가 아니라 "차" 계열로 매칭되어야 함.
+    """
     # 1) 정확 매칭
     if name in CORE_FOODS:
         return name, CORE_FOODS[name]
 
-    # 2) 부분 매칭: name이 CORE_FOODS 키로 시작하는 경우 (가장 긴 매칭 우선)
-    #    예: "김치찌개" → "김치찌개" (O), "김치볶음밥" → "김치" (O)
-    #    예: "레귤러피자" → "귤" (X — 시작이 아님)
+    # 2) 접미사 기반 매칭 — 붙어있는 복합어 처리
+    #    "옥수수차" → suffix "차", "녹차빙수" → suffix "빙수"
+    #    단, 접미사만으로 된 이름은 건너뜀 (name == suffix)
+    for suffix, fallback_key in FOOD_SUFFIXES:
+        if name.endswith(suffix) and len(name) > len(suffix):
+            # 전체 이름이 CORE_FOODS에 있으면 우선 (이미 1단계에서 체크됨)
+            # 접미사 조합이 CORE_FOODS에 있는지 체크
+            if name in CORE_FOODS:
+                return name, CORE_FOODS[name]
+            # fallback 키 사용
+            if fallback_key and fallback_key in CORE_FOODS:
+                return fallback_key, CORE_FOODS[fallback_key]
+            # suffix 자체가 CORE_FOODS에 있으면 사용
+            if suffix in CORE_FOODS:
+                return suffix, CORE_FOODS[suffix]
+
+    # 3) 복합 이름 (공백 구분): 뒤에서부터 핵심어 매칭 (긴 조합 우선)
+    #    "리코타 치즈 샐러드" → "리코타 치즈 샐러드" 정확 매칭 시도
+    #    없으면 → "치즈 샐러드" → "샐러드" (뒤에서부터)
+    words = name.split()
+    if len(words) > 1:
+        # 뒤에서부터 단어를 늘려가며 시도 (긴 조합 우선)
+        for start in range(len(words)):
+            combo = ' '.join(words[start:])
+            if combo in CORE_FOODS:
+                return combo, CORE_FOODS[combo]
+        # 뒤에서부터 단일 단어 매칭 (최소 2자)
+        for word in reversed(words):
+            if len(word) >= 2 and word in CORE_FOODS:
+                return word, CORE_FOODS[word]
+
+    # 4) 부분 매칭: name이 CORE_FOODS 키로 시작 (가장 긴 매칭 우선)
+    #    예: "김치볶음밥" → "김치볶음밥" (정확 먼저, 없으면 "김치")
+    #    단, 매칭 키 길이가 원본의 40% 이상이어야 관련성 인정
     best_key = None
     best_len = 0
     for key in CORE_FOODS:
-        # name이 key로 시작: "김치볶음밥".startswith("김치") → True
         if name.startswith(key) and len(key) > best_len:
             best_key = key
             best_len = len(key)
-        # key가 name으로 시작: "삼겹살구이".startswith("삼겹살") — key측에서 시작
-        # → name이 key의 앞부분인 경우만 (최소 2글자)
         elif key.startswith(name) and len(name) >= 2 and len(name) > best_len:
             best_key = key
             best_len = len(name)
 
-    if best_key:
+    if best_key and best_len >= len(name) * 0.4:
         return best_key, CORE_FOODS[best_key]
 
-    # 3) 공백/구분자 뒤에 키가 나오는 경우
+    # 5) 공백/구분자 뒤에 키가 나오는 경우 (긴 키 우선)
     #    예: "매운 김치찌개" → "김치찌개"
-    for key in sorted(CORE_FOODS.keys(), key=len, reverse=True):  # 긴 키 우선
+    for key in sorted(CORE_FOODS.keys(), key=len, reverse=True):
         if len(key) >= 2:
             idx = name.find(key)
             if idx > 0:
@@ -657,7 +961,13 @@ def _normalize_food_name(name):
     return n
 
 def _search_gold(name):
-    """골드 테이블에서 음식 검색 — 정확→CORE→시작→부분→키워드 순"""
+    """골드 테이블에서 음식 검색 — 정확→CORE→관련성 검증 매칭
+
+    핵심 원칙:
+    - 짧은 이름(1~2자)은 정확 매칭만 허용 (부분매칭 금지)
+    - 복합 이름은 뒤에서부터 핵심어 매칭 (한식: "토마토 소스 파스타" → "파스타" 우선)
+    - 매칭된 이름과 원본의 관련성이 낮으면 기각
+    """
     import re
     gold = _load_gold_db()
     if gold is None:
@@ -665,11 +975,11 @@ def _search_gold(name):
 
     clean = _normalize_food_name(name)
 
-    # 1) 정확 매칭
+    # 1) 정확 매칭 (최우선)
     if clean in gold:
         return clean, gold[clean]
 
-    # 2) CORE_FOODS 스타일 매칭 (startsWith 우선, 가장 긴 것)
+    # 2) CORE_FOODS 매칭 (수동 검증된 데이터)
     core_key, core_data = _search_core_foods(clean)
     if core_data:
         return core_key, {
@@ -680,36 +990,62 @@ def _search_gold(name):
             'category': core_data['category'], 'source': 'core',
         }
 
-    # 3) 골드 키가 clean으로 시작하는 경우 (가장 짧은 것 = 가장 일반적)
-    starts_with = [(k, v) for k, v in gold.items() if k.startswith(clean) and len(clean) >= 2]
+    # ── 짧은 이름(1~2자)은 여기서 중단 — 부분매칭 위험 너무 높음 ──
+    if len(clean) <= 2:
+        return None, None
+
+    # 3) 골드 키가 clean으로 시작 (최소 3자, 가장 짧은 것)
+    starts_with = [(k, v) for k, v in gold.items() if k.startswith(clean) and len(clean) >= 3]
     if starts_with:
         starts_with.sort(key=lambda x: len(x[0]))
         return starts_with[0][0], starts_with[0][1]
 
-    # 4) clean이 골드 키로 시작하는 경우 (가장 긴 매칭 우선, 최소 3자)
+    # 4) clean이 골드 키로 시작 (가장 긴 매칭 우선, 최소 3자, 관련성 체크)
     contained = [(k, v) for k, v in gold.items() if clean.startswith(k) and len(k) >= 3]
     if contained:
         contained.sort(key=lambda x: len(x[0]), reverse=True)
-        return contained[0][0], contained[0][1]
+        best_k, best_v = contained[0]
+        # 관련성 체크: 매칭된 키 길이가 원본의 40% 이상이어야 함
+        if len(best_k) >= len(clean) * 0.4:
+            return best_k, best_v
 
-    # 5) 공백 구분자 뒤 매칭: "매운 김치찌개" → "김치찌개"
+    # 5) 복합 이름: 뒤에서부터 핵심어 매칭
+    #    "토마토 소스 파스타" → "파스타" 먼저, "소스" 다음, "토마토" 마지막
+    #    "매운 김치찌개" → "김치찌개" 먼저, "매운" 다음
     words = clean.split()
     if len(words) > 1:
-        for word in sorted(words, key=len, reverse=True):
+        # 뒤에서부터 (핵심어가 보통 뒤에 옴)
+        for word in reversed(words):
             if len(word) >= 2 and word in gold:
                 return word, gold[word]
+        # 뒤에서 2개씩 묶어서 시도: "소스 파스타" → "크림 파스타" 등
+        for i in range(len(words)-1, 0, -1):
+            combo = ' '.join(words[i-1:i+1])
+            if combo in gold:
+                return combo, gold[combo]
 
-    # 6) 검색키 기반 퍼지 매칭
+    # 6) 접미사 기반 골드 매칭 (CORE_FOODS에 없을 때 골드 테이블에서도 접미사로 시도)
+    for suffix, fallback_key in FOOD_SUFFIXES:
+        if clean.endswith(suffix) and len(clean) > len(suffix):
+            if clean in gold:
+                return clean, gold[clean]
+            if fallback_key and fallback_key in gold:
+                return fallback_key, gold[fallback_key]
+            if suffix in gold:
+                return suffix, gold[suffix]
+
+    # 7) 검색키 기반 퍼지 매칭 (최소 3자, 관련성 체크)
     search_key = re.sub(r'[^가-힣a-zA-Z0-9]', '', clean).lower()
-    if len(search_key) >= 2:
+    if len(search_key) >= 3:
         # 정확 검색키 매칭
         for k, v in gold.items():
             if v.get('search_key') == search_key:
                 return k, v
 
-        # 검색키 시작 매칭
+        # 검색키 시작 매칭 — 원본 길이의 50% 이상 겹쳐야 함
         matches = [(k, v) for k, v in gold.items()
-                   if v.get('search_key', '').startswith(search_key)]
+                   if v.get('search_key', '').startswith(search_key)
+                   and len(search_key) >= len(v.get('search_key', '')) * 0.5]
         if matches:
             matches.sort(key=lambda x: len(x[0]))
             return matches[0][0], matches[0][1]
@@ -754,9 +1090,21 @@ def match_with_db(analysis, foods_db):
             food['source'] = 'GOLD_REF' if gold_data.get('source') == 'core' else 'GOLD_DB'
             continue
 
-        # ── 2순위: 기존 SQLite DB (품질 필터 적용) ──
+        # ── 2순위: 기존 SQLite DB (품질 필터 + 관련성 검증) ──
         exact, partials = search_food_db(ai_name)
         match = exact or (partials[0] if partials else None)
+
+        # 관련성 체크: 부분매칭된 이름이 원본과 너무 다르면 기각
+        if match and not exact:
+            db_name = match.get('name_ko', '')
+            # 원본 이름이 DB 이름에 포함되어 있거나 그 반대여야 함
+            # "물" → "냉면 (물냉면)" 같은 느슨한 매칭 방지
+            name_clean = ai_name.replace(' ', '')
+            db_clean = db_name.replace(' ', '').replace('(', '').replace(')', '')
+            # 최소 3자 이상 겹치거나, 짧은 이름이 긴 이름의 50% 이상이어야 함
+            shorter = min(len(name_clean), len(db_clean))
+            if shorter < 3 or (shorter / max(len(name_clean), len(db_clean)) < 0.3):
+                match = None  # 관련성 부족 → 기각
 
         if match:
             quality = _db_quality_score(match)
