@@ -826,6 +826,19 @@ CORE_FOODS = {
     "푸딩": {"cal":130,"prot":3.0,"carbs":20.0,"fat":4.0,"fiber":0,"sodium":80,"sugar":15.0,"serving":120,"category":"snack_drink"},
     "판나코타": {"cal":200,"prot":3.0,"carbs":22.0,"fat":11.0,"fiber":0,"sodium":40,"sugar":18.0,"serving":120,"category":"snack_drink"},
     "크림브륄레": {"cal":280,"prot":4.0,"carbs":25.0,"fat":18.0,"fiber":0,"sodium":50,"sugar":20.0,"serving":120,"category":"snack_drink"},
+
+    # ── Gold DB 데이터 보정 (비정상 칼로리 덮어쓰기) ──
+    "대창구이": {"cal":360,"prot":10.0,"carbs":1.0,"fat":35.0,"fiber":0,"sodium":250,"sugar":0,"serving":100,"category":"korean"},
+    "막창구이": {"cal":310,"prot":12.0,"carbs":1.0,"fat":29.0,"fiber":0,"sodium":250,"sugar":0,"serving":150,"category":"korean"},
+    "어묵볶음": {"cal":130,"prot":8.0,"carbs":15.0,"fat":4.0,"fiber":0.5,"sodium":500,"sugar":5.0,"serving":80,"category":"korean"},
+    "오징어채볶음": {"cal":200,"prot":12.0,"carbs":25.0,"fat":5.0,"fiber":0.5,"sodium":500,"sugar":10.0,"serving":40,"category":"korean"},
+    "총각김치": {"cal":25,"prot":1.5,"carbs":4.5,"fat":0.3,"fiber":1.5,"sodium":550,"sugar":2.0,"serving":40,"category":"korean"},
+    "파김치": {"cal":20,"prot":1.5,"carbs":3.0,"fat":0.5,"fiber":1.0,"sodium":500,"sugar":1.5,"serving":40,"category":"korean"},
+    "라볶이": {"cal":170,"prot":5.0,"carbs":33.0,"fat":2.5,"fiber":1.0,"sodium":600,"sugar":8.0,"serving":350,"category":"korean"},
+    "연어초밥": {"cal":150,"prot":6.0,"carbs":22.0,"fat":4.0,"fiber":0.2,"sodium":300,"sugar":3.0,"serving":50,"category":"foreign_popular"},
+    "참치초밥": {"cal":140,"prot":6.5,"carbs":22.0,"fat":2.5,"fiber":0.2,"sodium":300,"sugar":3.0,"serving":50,"category":"foreign_popular"},
+    "새우초밥": {"cal":130,"prot":5.0,"carbs":23.0,"fat":1.5,"fiber":0.2,"sodium":300,"sugar":3.5,"serving":50,"category":"foreign_popular"},
+    "유부초밥": {"cal":180,"prot":5.0,"carbs":28.0,"fat":5.0,"fiber":0.5,"sodium":350,"sugar":6.0,"serving":200,"category":"foreign_popular"},
 }
 
 
@@ -975,11 +988,8 @@ def _search_gold(name):
 
     clean = _normalize_food_name(name)
 
-    # 1) 정확 매칭 (최우선)
-    if clean in gold:
-        return clean, gold[clean]
-
-    # 2) CORE_FOODS 매칭 (수동 검증된 데이터)
+    # 1) CORE_FOODS 매칭 (최우선 — 수동 검증 + 보정 데이터)
+    #    Gold DB에 같은 이름이 있어도 CORE_FOODS가 이김
     core_key, core_data = _search_core_foods(clean)
     if core_data:
         return core_key, {
@@ -989,6 +999,10 @@ def _search_gold(name):
             'sugar': core_data.get('sugar', 0), 'serving': core_data['serving'],
             'category': core_data['category'], 'source': 'core',
         }
+
+    # 2) 골드 테이블 정확 매칭
+    if clean in gold:
+        return clean, gold[clean]
 
     # ── 짧은 이름(1~2자)은 여기서 중단 — 부분매칭 위험 너무 높음 ──
     if len(clean) <= 2:
@@ -1053,12 +1067,139 @@ def _search_gold(name):
     return None, None
 
 
+# ── 1인분 서빙 사이즈 추정 (Gold DB 100g 기준 보정용) ──
+# Gold DB의 96.8%가 serving=100g이라 실제 1인분과 맞지 않음
+# 음식 이름 패턴으로 현실적인 1인분 크기를 추정
+#
+# 원칙:
+#   - CORE_FOODS에 수동 설정된 serving은 그대로 사용 (이미 현실적)
+#   - Gold DB에서 serving=100g인 항목만 보정 대상
+#   - 음식 이름의 접미사/키워드로 카테고리 판별 → 해당 카테고리의 표준 1인분 적용
+#   - 어디에도 해당 안 되면 보정하지 않음 (100g 유지)
+
+def _estimate_realistic_serving(food_name, gold_serving):
+    """음식 이름으로 현실적인 1인분 서빙 사이즈(g) 추정
+
+    gold_serving이 이미 100g이 아니면(=수동 설정됨) 그대로 반환.
+    100g인 경우에만 음식 카테고리를 추정하여 보정.
+    """
+    # 이미 현실적 서빙이 설정된 경우 그대로
+    if gold_serving != 100:
+        return gold_serving
+
+    name = food_name.strip()
+
+    # ── 초밥 (최우선: "밥" 패턴보다 먼저 체크) ──
+    # "연어초밥", "참치초밥" → 1개 (30g)
+    # "초밥" 단독 → 1인분 세트 (200g)
+    if '초밥' in name:
+        if name == '초밥' or name == '유부초밥':
+            return 200
+        return 30  # 개별 초밥 1개
+
+    # ── 스시 ──
+    if name == '스시':
+        return 200
+
+    # ── 국/탕 (400~500g, 물 포함 요리) ──
+    if any(name.endswith(s) for s in ['국', '탕', '곰탕', '설렁탕', '해장국']):
+        return 500
+    if any(s in name for s in ['국밥', '곰탕', '설렁탕', '갈비탕', '삼계탕',
+                                 '매운탕', '알탕', '추어탕', '대구탕', '해물탕',
+                                 '선지국', '미역국', '콩나물국', '시래기국',
+                                 '육개장', '어묵탕', '조개탕', '감자탕', '순대국',
+                                 '뼈해장국', '오뎅탕', '닭곰탕', '꽃게탕']):
+        return 500
+
+    # ── 찌개/전골 (350~400g) ──
+    if any(name.endswith(s) for s in ['찌개', '전골']):
+        return 400
+    if any(s in name for s in ['김치찌개', '된장찌개', '순두부찌개', '부대찌개',
+                                 '동태찌개', '참치찌개', '갈치찌개',
+                                 '곱창전골', '김치전골', '버섯전골']):
+        return 400
+
+    # ── 면류 ──
+    if any(s in name for s in ['면', '국수', '우동', '라멘', '소바', '냉면',
+                                 '짬뽕', '짜장', '칼국수', '수제비', '쫄면',
+                                 '울면', '잔뽕', '밀면', '막국수', '쌀국수',
+                                 '콩국수', '잔치국수', '비빔국수']):
+        # 건면/라면은 제외 - CORE_FOODS에서 이미 처리
+        if '건면' in name or '건조' in name:
+            return 100
+        # 국물 없는 비빔류/볶음류는 300g
+        if any(s in name for s in ['비빔', '볶음', '쫄면', '비빔국수']):
+            return 300
+        # 국물면 (칼국수, 짬뽕 등) 450g
+        return 450
+
+    # ── 파스타/리조또 (300g) ──
+    if any(s in name for s in ['파스타', '스파게티', '리조또', '뇨끼',
+                                 '라자냐', '라비올리', '펜네', '링귀네',
+                                 '카넬로니', '페투치네']):
+        return 300
+
+    # ── 밥류/덮밥 (350~400g) ──
+    if any(name.endswith(s) for s in ['밥', '라이스', '덮밥', '비빔밥']):
+        return 400
+    if any(s in name for s in ['오므라이스', '카레라이스', '하이라이스',
+                                 '제육덮밥', '규동', '텐동', '오야코동',
+                                 '돈부리', '가츠동', '잡채밥', '볶음밥']):
+        return 400
+
+    # ── 김밥 (1줄 = 230~250g) ──
+    if '김밥' in name:
+        return 230
+
+    # ── 죽 (300g) ──
+    if '죽' in name:
+        return 300
+
+    # ── 중식 요리 (반찬/공유 요리) ──
+    if any(s in name for s in ['탕수육', '깐풍기', '유린기', '마파두부',
+                                 '팔보채', '유산슬', '양장피', '깐쇼새우',
+                                 '칠리새우', '라조기', '깐풍새우',
+                                 '고추잡채', '해파리냉채', '꿔바로우',
+                                 '경장육사']):
+        return 250
+    # 마라탕, 훠궈는 국물 요리 (이미 국/탕에서 처리되지만 안전장치)
+    if any(s in name for s in ['마라탕', '훠궈']):
+        return 500
+
+    # ── 구이/스테이크 (150~250g) ──
+    if any(s in name for s in ['스테이크', '함박스테이크', '폭찹']):
+        return 250  # 스테이크류는 250g
+    if any(s in name for s in ['구이', '불고기', '갈비',
+                                 '삼겹살', '목살', '항정살', '가브리살']):
+        return 200
+
+    # ── 찜 (250g) ──
+    if name.endswith('찜') or '찜' in name:
+        return 250
+
+    # ── 볶음 ──
+    if name.endswith('볶음'):
+        # 메인 요리급 볶음 (200~250g)
+        if any(s in name for s in ['낙지볶음', '쭈꾸미볶음', '오징어볶음', '해물볶음',
+                                     '제육볶음', '곱창볶음']):
+            return 250
+        # 반찬 볶음 (어묵볶음, 오징어채볶음, 멸치볶음 등) — 소량
+        return 100  # 반찬 1인분은 50~70g이지만 Gold DB가 이미 100g 기준
+
+    # ── 전/부침 (150~200g) ──
+    if any(name.endswith(s) for s in ['전', '부침', '파전', '빈대떡']):
+        return 200
+
+    # ── 기본값: 보정하지 않음 ──
+    return 100
+
+
 def match_with_db(analysis, foods_db):
     """
     AI 분석 결과를 DB와 매칭하여 보정
     우선순위: 골드 테이블(1,771건 검증) → 기존 DB(품질 통과만) → AI 추정값 유지
 
-    골드 테이블 = CORE_FOODS(146건 수동 검증) + DB 고품질(1,625건, 5대 영양소+서빙 완비)
+    골드 테이블 = CORE_FOODS(355건 수동 검증) + DB 고품질(1,625건, 5대 영양소+서빙 완비)
     모두 100g당 기준으로 통일되어 있음
     """
     if "error" in analysis or "foods" not in analysis:
@@ -1075,8 +1216,14 @@ def match_with_db(analysis, foods_db):
         gold_key, gold_data = _search_gold(ai_name)
         if gold_data:
             gold_serving = gold_data.get('serving') or 100
-            ai_serving = food.get('estimated_serving_g') or gold_serving
-            ratio = ai_serving / 100  # 골드 테이블은 100g 기준
+            # AI가 서빙 사이즈를 추정했으면 그걸 사용
+            ai_serving = food.get('estimated_serving_g')
+            if ai_serving:
+                effective_serving = ai_serving
+            else:
+                # AI 추정 없으면 → 현실적 서빙 사이즈로 보정
+                effective_serving = _estimate_realistic_serving(ai_name, gold_serving)
+            ratio = effective_serving / 100  # 골드 테이블은 100g 기준
 
             food['db_matched'] = True
             food['db_name'] = gold_key
