@@ -663,7 +663,7 @@ CORE_FOODS = {
     # ── 추가: 면류/라면 ──
     "컵라면": {"cal":300,"prot":6.0,"carbs":42.0,"fat":12.0,"fiber":1.5,"sodium":1300,"sugar":3.0,"serving":65,"category":"korean"},
     "진라면": {"cal":375,"prot":8.5,"carbs":52.0,"fat":13.5,"fiber":2.0,"sodium":1500,"sugar":3.0,"serving":120,"category":"franchise"},
-    "불닭볶음면": {"cal":530,"prot":9.0,"carbs":73.0,"fat":22.0,"fiber":2.0,"sodium":1800,"sugar":6.0,"serving":140,"category":"franchise"},
+    "불닭볶음면": {"cal":378,"prot":6.4,"carbs":57.1,"fat":11.4,"fiber":1.4,"sodium":1286,"sugar":4.3,"serving":140,"category":"franchise"},
     "밀면": {"cal":100,"prot":3.5,"carbs":20.0,"fat":0.5,"fiber":0.8,"sodium":400,"sugar":2.0,"serving":500,"category":"korean"},
     "볶음우동": {"cal":130,"prot":4.0,"carbs":22.0,"fat":3.0,"fiber":1.0,"sodium":500,"sugar":3.0,"serving":350,"category":"foreign_popular"},
     "소바": {"cal":110,"prot":5.0,"carbs":20.0,"fat":1.0,"fiber":1.5,"sodium":400,"sugar":2.0,"serving":350,"category":"foreign_popular"},
