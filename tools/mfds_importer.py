@@ -279,7 +279,9 @@ def fetch_total_count(api_key, api_key_datagokr=None):
     # 2. 식품안전나라 API 시도
     if api_key:
         print("\n  [식품안전나라] 시도 중...")
-        for sid in ["I2790", "I0750", "I2710"]:
+        # ⚠️ I0750, I2710은 NUTR_CONT2가 '수분'이라 탄수화물과 혼동됨
+        # 반드시 I2790만 사용 (NUTR_CONT2 = 탄수화물)
+        for sid in ["I2790"]:
             print(f"    서비스: {sid}...")
             rows, total, err, fmt = fetch_api(api_key, sid, 1, 1, verbose=True)
             if err:
@@ -403,17 +405,48 @@ def convert_row(row, idx_offset=0):
                 return val
         return 0
 
+    cal = safe_float(get_nutr(["NUTR_CONT1", "enerc", "ENERC", "AMT_NUM1", "calorie"]))
+    prot = safe_float(get_nutr(["NUTR_CONT3", "prot", "PROT", "AMT_NUM3", "protein"]))
+    carbs = safe_float(get_nutr(["NUTR_CONT2", "chocdf", "CHOCDF", "AMT_NUM2", "carbohydrate"]))
+    fat = safe_float(get_nutr(["NUTR_CONT4", "fatce", "FATCE", "AMT_NUM4", "fat"]))
+    serving = safe_float(get_nutr(["SERVING_SIZE", "serving_size", "SERVING_WT", "servingWt", "NUTRI_AMOUNT_SERVING"]))
+
+    # ── 안전장치 1: 수분→탄수화물 오염 차단 ──
+    # carbs*4 > cal*2 이면 수분 데이터가 탄수화물로 잘못 들어온 것
+    if cal > 0 and carbs > 30 and carbs * 4 > cal * 2:
+        carbs = max(0, round((cal - prot * 4 - fat * 9) / 4, 1))
+
+    # ── 안전장치 2: 탄수화물 누락 복원 ──
+    # carbs=0인데 칼로리가 단백질+지방만으로 설명 안 되면 역산
+    if carbs == 0 and cal > 0:
+        remaining_cal = cal - prot * 4 - fat * 9
+        if remaining_cal > 8:  # 최소 2g 이상의 탄수화물
+            carbs = max(0, round(remaining_cal / 4, 1))
+
+    # ── 안전장치 3: 제공량 0g이면 서브카테고리 기반 기본값 ──
+    if serving == 0:
+        SERVING_DEFAULTS = {
+            '과자류·빵류 또는 떡류': 30, '빵 및 과자류': 60, '빙과류': 100,
+            '즉석식품류': 200, '면류': 120, '음료류': 200, '음료 및 차류': 200,
+            '식육가공품 및 포장육': 100, '수산가공식품류': 100, '조미식품': 15,
+            '잼류': 20, '장류': 15, '당류': 15, '식용유지류': 10,
+            '코코아가공품류 또는 초콜릿류': 30, '농산가공식품류': 100,
+            '절임류 또는 조림류': 50, '유가공품류': 200, '찌개 및 전골류': 400,
+            '국 및 탕류': 400, '밥류': 400, '면 및 만두류': 500,
+        }
+        serving = SERVING_DEFAULTS.get(group_name, 100)
+
     return {
         "food_id": f"MFDS_{food_cd}",
         "name_ko": name_ko,
         "name_en": "",
         "category": category,
         "subcategory": group_name or "",
-        "serving_size_g": safe_float(get_nutr(["SERVING_SIZE", "serving_size", "SERVING_WT", "servingWt", "NUTRI_AMOUNT_SERVING"])),
-        "calories_kcal": safe_float(get_nutr(["NUTR_CONT1", "enerc", "ENERC", "AMT_NUM1", "calorie"])),
-        "protein_g": safe_float(get_nutr(["NUTR_CONT3", "prot", "PROT", "AMT_NUM3", "protein"])),
-        "carbs_g": safe_float(get_nutr(["NUTR_CONT2", "chocdf", "CHOCDF", "AMT_NUM2", "carbohydrate"])),
-        "fat_g": safe_float(get_nutr(["NUTR_CONT4", "fatce", "FATCE", "AMT_NUM4", "fat"])),
+        "serving_size_g": serving,
+        "calories_kcal": cal,
+        "protein_g": prot,
+        "carbs_g": carbs,
+        "fat_g": fat,
         "fiber_g": safe_float(get_nutr(["NUTR_CONT10", "fibtg", "FIBTG", "dietary_fiber"])),
         "sodium_mg": safe_float(get_nutr(["NUTR_CONT6", "na", "NA", "AMT_NUM6", "sodium"])),
         "sugar_g": safe_float(get_nutr(["NUTR_CONT5", "sugar", "SUGAR", "AMT_NUM5"])),

@@ -839,6 +839,17 @@ CORE_FOODS = {
     "참치초밥": {"cal":140,"prot":6.5,"carbs":22.0,"fat":2.5,"fiber":0.2,"sodium":300,"sugar":3.0,"serving":50,"category":"foreign_popular"},
     "새우초밥": {"cal":130,"prot":5.0,"carbs":23.0,"fat":1.5,"fiber":0.2,"sodium":300,"sugar":3.5,"serving":50,"category":"foreign_popular"},
     "유부초밥": {"cal":180,"prot":5.0,"carbs":28.0,"fat":5.0,"fiber":0.5,"sodium":350,"sugar":6.0,"serving":200,"category":"foreign_popular"},
+    # ── 누락 보강 (제미나이 테스트 피드백) ──
+    "대하구이": {"cal":95,"prot":20.0,"carbs":0.5,"fat":1.5,"fiber":0,"sodium":350,"sugar":0,"serving":150,"category":"korean"},
+    "똠얌꿍": {"cal":45,"prot":5.0,"carbs":3.5,"fat":1.5,"fiber":0.5,"sodium":650,"sugar":1.0,"serving":400,"category":"foreign_popular"},
+    "단백질보충제": {"cal":120,"prot":25.0,"carbs":3.0,"fat":1.5,"fiber":0,"sodium":100,"sugar":1.5,"serving":30,"category":"diet_fitness"},
+    "단백질쉐이크": {"cal":120,"prot":25.0,"carbs":3.0,"fat":1.5,"fiber":0,"sodium":100,"sugar":1.5,"serving":30,"category":"diet_fitness"},
+    "프로틴쉐이크": {"cal":120,"prot":25.0,"carbs":3.0,"fat":1.5,"fiber":0,"sodium":100,"sugar":1.5,"serving":30,"category":"diet_fitness"},
+    "마라탕": {"cal":85,"prot":5.0,"carbs":6.0,"fat":4.5,"fiber":1.0,"sodium":800,"sugar":1.0,"serving":500,"category":"foreign_popular"},
+    "마라샹궈": {"cal":150,"prot":8.0,"carbs":10.0,"fat":9.0,"fiber":2.0,"sodium":900,"sugar":2.0,"serving":350,"category":"foreign_popular"},
+    "훠궈": {"cal":70,"prot":6.0,"carbs":4.0,"fat":3.5,"fiber":1.0,"sodium":700,"sugar":1.0,"serving":500,"category":"foreign_popular"},
+    "아사이볼": {"cal":200,"prot":3.0,"carbs":42.0,"fat":5.0,"fiber":4.0,"sodium":10,"sugar":28.0,"serving":300,"category":"diet_fitness"},
+    "포케": {"cal":130,"prot":12.0,"carbs":15.0,"fat":3.0,"fiber":1.5,"sodium":500,"sugar":3.0,"serving":350,"category":"diet_fitness"},
 }
 
 
@@ -1283,6 +1294,16 @@ def match_with_db(analysis, foods_db):
                     db_val = match.get(db_field)
                     if db_val is not None and isinstance(db_val, (int, float)) and db_val > 0:
                         food[ai_field] = round(db_val * ratio, 1)
+
+                # ── 안전장치: 수분→탄수화물 오염 데이터 차단 ──
+                # 탄수화물(g)*4 > 칼로리*2 이면 물리적으로 불가능 (수분이 탄수화물로 잘못 들어간 데이터)
+                db_cal = food.get('calories_kcal', 0) or 0
+                db_carbs = food.get('carbs_g', 0) or 0
+                if db_cal > 0 and db_carbs > 30 and db_carbs * 4 > db_cal * 2:
+                    food['db_matched'] = False
+                    food['source'] = 'AI_ESTIMATED'
+                    # AI 추정값 복원 — DB 값이 오염되었으므로
+                    continue
 
                 food['source'] = 'DB_MATCHED'
                 continue

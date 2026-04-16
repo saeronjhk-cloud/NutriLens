@@ -91,8 +91,44 @@ def _get_correction_hints():
             hints.append(f"- '{original}'으로 보이면 '{corrected}'일 가능성이 높음 (사용자 피드백 {count}회)")
     return hints[:10]  # 최대 10개
 
+# ── 신고 → 구글시트 웹훅 ──
+def _send_report_to_sheets(nickname, food_name, food_data, report_text):
+    """Apps Script 웹훅으로 신고 데이터 전송 (구글시트 기록 + 자동 알림)"""
+    webhook_url = os.environ.get('REPORT_WEBHOOK_URL', '')
+    webhook_secret = os.environ.get('REPORT_WEBHOOK_SECRET', '')
+    if not webhook_url:
+        print("[신고-시트] REPORT_WEBHOOK_URL 미설정 — 로컬 저장만 완료")
+        return
+
+    payload = {
+        "secret": webhook_secret,
+        "data": {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "nickname": nickname,
+            "food_name": food_name,
+            "calories": food_data.get("calories", ""),
+            "protein": food_data.get("protein", ""),
+            "carbs": food_data.get("carbs", ""),
+            "fat": food_data.get("fat", ""),
+            "serving_g": food_data.get("serving_g", ""),
+            "source": food_data.get("source", ""),
+            "report_text": report_text
+        }
+    }
+
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(webhook_url, data=data, method='POST')
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = resp.read().decode('utf-8')
+            print(f"[신고-시트] 전송 성공: {result[:100]}")
+    except Exception as e:
+        print(f"[신고-시트] 전송 실패 (로컬 저장은 완료): {e}")
+
 # ── 식사 기록 저장 시스템 ──
 MEAL_LOG_PATH = None  # 서버 시작 시 설정
+REPORT_LOG_PATH = None  # 서버 시작 시 설정
 
 def _load_meal_log():
     """식사 기록 로드"""
@@ -387,6 +423,7 @@ print(f"DB 로드 완료: {len(FOODS_DB)}종")
 # 피드백 로그 경로 설정
 FEEDBACK_LOG_PATH = PROJECT_DIR / 'feedback_log.json'
 MEAL_LOG_PATH = PROJECT_DIR / 'meal_log.json'
+REPORT_LOG_PATH = PROJECT_DIR / 'report_log.json'
 
 # ── OpenAI API 호출 (urllib 사용, 외부 패키지 불필요) ──
 def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o"):
@@ -689,6 +726,30 @@ HTML_PAGE = """<!DOCTYPE html>
     .after-meal-actions { flex-direction: column; }
     .avg-grid { grid-template-columns: repeat(2, 1fr); }
   }
+
+  /* 수동 저장 버튼 */
+  .save-meal-area { text-align:center; margin:20px 0; padding:20px; background:linear-gradient(135deg,#1a2e1a,#1e3a1e); border:1px solid #059669; border-radius:12px; }
+  .save-meal-btn { background:linear-gradient(135deg,#059669,#10b981); color:#fff; border:none; padding:14px 40px; font-size:1em; font-weight:700; border-radius:30px; cursor:pointer; transition:all 0.3s; }
+  .save-meal-btn:hover { transform:scale(1.05); box-shadow:0 4px 15px rgba(5,150,105,0.4); }
+  .save-meal-btn:disabled { background:#2a2a4a; color:#666; cursor:default; transform:none; box-shadow:none; }
+  .save-meal-btn.saved { background:#2a2a4a; }
+
+  /* 이상해요 신고 버튼 */
+  .report-btn { background:none; border:1px solid #3a3a5a; color:#888; font-size:0.78em; padding:4px 10px; border-radius:14px; cursor:pointer; transition:all 0.2s; margin-left:4px; }
+  .report-btn:hover { border-color:#f87171; color:#f87171; }
+
+  /* 신고 오버레이 */
+  .report-overlay { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:1000; justify-content:center; align-items:center; }
+  .report-overlay.active { display:flex; }
+  .report-box { background:#1e1e2e; border:1px solid #3a3a5a; border-radius:16px; padding:24px; width:90%; max-width:400px; }
+  .report-box h3 { margin:0 0 8px; color:#f87171; font-size:1em; }
+  .report-box .report-food-name { color:#6ee7b7; font-size:0.9em; margin-bottom:12px; }
+  .report-box textarea { width:100%; height:80px; background:#0d0d1a; border:1px solid #3a3a5a; border-radius:8px; color:#fff; padding:10px; font-size:0.9em; resize:none; box-sizing:border-box; }
+  .report-box textarea::placeholder { color:#555; }
+  .report-box .report-actions { display:flex; gap:10px; margin-top:12px; }
+  .report-box .report-actions button { flex:1; padding:10px; border-radius:10px; font-size:0.9em; cursor:pointer; border:none; font-weight:600; }
+  .report-submit-btn { background:#f87171; color:#fff; }
+  .report-cancel-btn { background:#2a2a4a; color:#aaa; }
 </style>
 </head>
 <body>
@@ -809,6 +870,19 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- 이상해요 신고 오버레이 -->
+  <div class="report-overlay" id="reportOverlay">
+    <div class="report-box">
+      <h3>⚠️ 이상해요 신고</h3>
+      <div class="report-food-name" id="reportFoodName"></div>
+      <textarea id="reportText" placeholder="어떤 점이 이상한가요? (예: 음식 이름이 다릅니다, 칼로리가 너무 높아요, 양이 이상해요 등)"></textarea>
+      <div class="report-actions">
+        <button class="report-cancel-btn" onclick="closeReportModal()">취소</button>
+        <button class="report-submit-btn" onclick="submitReport()">신고하기</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 분석 결과 -->
   <div class="result-section" id="resultSection">
     <div class="result-header">
@@ -817,6 +891,7 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
     <div id="foodCards"></div>
     <div id="summaryCard"></div>
+    <div id="saveMealArea"></div>
 
     <!-- 식후 안내 배너 (첫 분석 후에만 보임) -->
     <div class="after-meal-banner" id="afterMealBanner">
@@ -943,6 +1018,46 @@ let currentAnalysis = null;
 let originalAnalysis = null; // 원본 분석 (100% 기준)
 // 나눠먹기는 sharingPcts / sharingPeople / sharingMode로 관리
 let isAfterMealDone = false;
+let mealSaved = false; // 수동 저장 완료 여부
+
+// ── 식사 세션 상태 (상단 선언 — 복원 함수에서 필요) ──
+let sessionId = null;
+let sessionActive = false;
+let sessionPhotoCount = 0;
+let sessionFoodCount = 0;
+let sessionTotalCal = 0;
+
+// ── 세션 복원 함수 ──
+function saveStateToSession() {
+  try {
+    const state = {
+      currentAnalysis, originalAnalysis, isAfterMealDone, mealSaved,
+      sessionId, sessionActive, sessionPhotoCount, sessionFoodCount, sessionTotalCal
+    };
+    sessionStorage.setItem('nutrilens_state', JSON.stringify(state));
+  } catch(e) { console.warn('상태 저장 실패:', e); }
+}
+function restoreStateFromSession() {
+  try {
+    const raw = sessionStorage.getItem('nutrilens_state');
+    if (!raw) return false;
+    const state = JSON.parse(raw);
+    if (!state.currentAnalysis) return false;
+    currentAnalysis = state.currentAnalysis;
+    originalAnalysis = state.originalAnalysis;
+    isAfterMealDone = state.isAfterMealDone || false;
+    mealSaved = state.mealSaved || false;
+    sessionId = state.sessionId || null;
+    sessionActive = state.sessionActive || false;
+    sessionPhotoCount = state.sessionPhotoCount || 0;
+    sessionFoodCount = state.sessionFoodCount || 0;
+    sessionTotalCal = state.sessionTotalCal || 0;
+    return true;
+  } catch(e) { return false; }
+}
+function clearSessionState() {
+  sessionStorage.removeItem('nutrilens_state');
+}
 
 // ── 로그인 상태 ──
 let currentUser = localStorage.getItem('nutrilens_user') || '';
@@ -950,6 +1065,23 @@ let currentUser = localStorage.getItem('nutrilens_user') || '';
 // 로그인 확인
 if (currentUser) {
   document.getElementById('loginOverlay').style.display = 'none';
+}
+
+// ── 이전 분석 결과 복원 ──
+if (currentUser && restoreStateFromSession()) {
+  // 세션 모드 복원
+  if (sessionActive) {
+    document.getElementById('sessionBar').classList.add('active');
+    document.getElementById('sessionToggleBtn').textContent = '🍽️ 정찬 모드 진행중';
+    document.getElementById('sessionToggleBtn').className = 'btn btn-orange';
+    document.getElementById('sessionToggleBtn').style.cssText += 'padding:8px 18px;font-size:0.85em;border-radius:20px';
+    updateSessionBar();
+  }
+  // 분석 결과 복원
+  if (currentAnalysis) {
+    document.getElementById('uploadArea').style.display = 'none';
+    renderResult(currentAnalysis, isAfterMealDone);
+  }
 }
 
 async function doLogin() {
@@ -989,6 +1121,78 @@ async function saveMealRecord(analysisData) {
       body: JSON.stringify({ nickname: currentUser, meal_data: analysisData })
     });
   } catch(e) { console.error('식사 기록 저장 실패:', e); }
+}
+
+// ── 수동 저장 + 자동저장 타이머 (1시간) ──
+let autoSaveTimer = null;
+const AUTO_SAVE_DELAY = 60 * 60 * 1000; // 1시간 (밀리초)
+
+function startAutoSaveTimer() {
+  clearAutoSaveTimer();
+  if (sessionActive) return; // 정찬 모드에서는 타이머 안 씀
+  autoSaveTimer = setTimeout(() => {
+    if (!mealSaved && currentAnalysis) {
+      console.log('[자동저장] 1시간 경과 — 자동 저장 실행');
+      saveManually(true);
+    }
+  }, AUTO_SAVE_DELAY);
+}
+function clearAutoSaveTimer() {
+  if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+}
+
+async function saveManually(isAuto) {
+  if (!currentAnalysis || mealSaved) return;
+  await saveMealRecord(currentAnalysis);
+  mealSaved = true;
+  clearAutoSaveTimer();
+  saveStateToSession();
+  const btn = document.getElementById('saveMealBtn');
+  if (btn) {
+    btn.textContent = isAuto ? '⏰ 자동 저장됨' : '✅ 저장 완료!';
+    btn.disabled = true;
+    btn.classList.add('saved');
+  }
+  const hint = document.getElementById('saveMealHint');
+  if (hint) hint.textContent = isAuto ? '1시간이 지나 자동으로 저장되었습니다' : '이 식사가 기록에 저장되었습니다';
+}
+
+// ── 이상해요 신고 ──
+let reportFoodIndex = -1;
+function openReportModal(idx) {
+  const food = currentAnalysis.foods[idx];
+  reportFoodIndex = idx;
+  document.getElementById('reportFoodName').textContent = (food.name_ko || '음식') + ' — ' + (food.calories_kcal||0) + 'kcal, ' + (food.estimated_serving_g||'?') + 'g';
+  document.getElementById('reportText').value = '';
+  document.getElementById('reportOverlay').classList.add('active');
+}
+function closeReportModal() {
+  document.getElementById('reportOverlay').classList.remove('active');
+  reportFoodIndex = -1;
+}
+async function submitReport() {
+  const text = document.getElementById('reportText').value.trim();
+  if (!text) return alert('어떤 점이 이상한지 입력해주세요.');
+  const food = currentAnalysis.foods[reportFoodIndex];
+  try {
+    const resp = await fetch('/report', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        nickname: currentUser,
+        food_name: food.name_ko || '?',
+        food_index: reportFoodIndex,
+        food_data: { calories: food.calories_kcal, protein: food.protein_g, carbs: food.carbs_g, fat: food.fat_g, serving_g: food.estimated_serving_g, source: food.source || '' },
+        report_text: text
+      })
+    });
+    const data = await resp.json();
+    closeReportModal();
+    // 버튼 상태 변경 — 신고 완료 표시
+    const btn = document.getElementById('report_btn_' + reportFoodIndex);
+    if (btn) { btn.textContent = '✅ 신고됨'; btn.style.color = '#6ee7b7'; btn.style.borderColor = '#6ee7b7'; btn.disabled = true; }
+    alert('신고가 접수되었습니다. 검토 후 개선하겠습니다!');
+  } catch(e) { alert('신고 실패: ' + e.message); }
 }
 
 // ── 대시보드 ──
@@ -1162,13 +1366,6 @@ function renderTopFoods(foods) {
   document.getElementById('topFoodsList').innerHTML = html;
 }
 
-// ── 식사 세션 상태 ──
-let sessionId = null;
-let sessionActive = false;
-let sessionPhotoCount = 0;
-let sessionFoodCount = 0;
-let sessionTotalCal = 0;
-
 // ── 식사 세션 함수 ──
 async function toggleSession() {
   if (sessionActive) {
@@ -1203,12 +1400,14 @@ async function endSession() {
     document.getElementById('sessionToggleBtn').textContent = '🍽️ 정찬 모드 시작';
     document.getElementById('sessionToggleBtn').className = 'btn btn-green';
     document.getElementById('sessionToggleBtn').style.cssText += 'padding:8px 18px;font-size:0.85em;border-radius:20px';
-    // 최종 결과 표시 + 저장
+    // 최종 결과 표시 (저장은 사용자가 수동으로)
     if (data.foods && data.foods.length > 0) {
       currentAnalysis = data;
       originalAnalysis = JSON.parse(JSON.stringify(data));
-      saveMealRecord(data);
+      mealSaved = false;
       renderResult(data, false);
+      saveStateToSession();
+      startAutoSaveTimer();
     }
     sessionId = null;
   } catch(e) { alert('세션 종료 실패: ' + e.message); }
@@ -1285,6 +1484,7 @@ async function submitCorrection() {
 
     closeEditModal();
     renderResult(currentAnalysis, isAfterMealDone);
+    saveStateToSession();
   } catch(e) { alert('수정 실패: ' + e.message); }
 }
 
@@ -1295,6 +1495,7 @@ function deleteFood() {
     if (originalAnalysis && originalAnalysis.foods) originalAnalysis.foods.splice(idx, 1);
     closeEditModal();
     renderResult(currentAnalysis, isAfterMealDone);
+    saveStateToSession();
   }
 }
 
@@ -1340,7 +1541,9 @@ function addNextPhoto() {
 
 function resetAll() {
   selectedFile = null; afterFile = null; currentAnalysis = null; originalAnalysis = null;
-  sharingPcts = {}; sharingMode = false; sharingPeople = 1; isAfterMealDone = false;
+  sharingPcts = {}; sharingMode = false; sharingPeople = 1; isAfterMealDone = false; mealSaved = false;
+  clearAutoSaveTimer();
+  clearSessionState();
   fileInput.value = ''; cameraInput.value = ''; galleryInput.value = '';
   uploadArea.style.display = 'block';
   document.getElementById('previewSection').style.display = 'none';
@@ -1379,6 +1582,7 @@ async function analyzeFood() {
     originalAnalysis = JSON.parse(JSON.stringify(data));
     currentAnalysis = data;
     isAfterMealDone = false;
+    mealSaved = false;
 
     // 세션 모드면 누적 바 업데이트
     if (sessionActive && data.session_summary) {
@@ -1388,10 +1592,9 @@ async function analyzeFood() {
       updateSessionBar();
     }
 
-    // 자동 저장 (세션 모드가 아닐 때만 — 세션은 종료 시 저장)
-    if (!sessionActive) saveMealRecord(data);
-
     renderResult(data, false);
+    saveStateToSession();
+    startAutoSaveTimer();
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('errorBox').innerHTML = '<strong>네트워크 오류:</strong> ' + err.message;
@@ -1452,8 +1655,10 @@ async function analyzeLeftover() {
     }
     currentAnalysis = data;
     isAfterMealDone = true;
-    saveMealRecord(data);  // 식후 분석 결과 저장
+    mealSaved = false;
     renderResult(data, true);
+    saveStateToSession();
+    startAutoSaveTimer();
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('errorBox').innerHTML = '<strong>네트워크 오류:</strong> ' + err.message;
@@ -1511,8 +1716,11 @@ function applyManualEntry() {
   data.meal_summary = s;
   currentAnalysis = data;
   isAfterMealDone = true;
+  mealSaved = false;
   document.getElementById('manualSection').style.display = 'none';
   renderResult(data, true);
+  saveStateToSession();
+  startAutoSaveTimer();
 }
 
 // ── 나눠먹기 시스템 ──
@@ -1651,7 +1859,8 @@ function renderResult(data, isAfterMeal) {
     cardsHtml += '<div class="food-card">'
       + '<div class="food-title"><div><span class="food-name">'+(food.name_ko||'?')+'</span>'
       + '<span class="food-name-en">'+(food.name_en||'')+'</span></div>'
-      + '<div><button class="edit-btn" onclick="openEditModal('+i+')">✏️ 수정</button> '
+      + '<div><button class="edit-btn" onclick="openEditModal('+i+')">✏️ 수정</button>'
+      + '<button class="report-btn" id="report_btn_'+i+'" onclick="openReportModal('+i+')">⚠️ 이상해요</button> '
       + '<span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div></div>'
       + '<div class="confidence-bar"><div class="confidence-fill" style="width:'+confPct+'%;background:'+confColor+'"></div></div>'
       + '<div style="font-size:0.8em;color:#888;margin-bottom:10px;margin-top:-8px">확신도 '+confPct+'% · 약 '+(food.estimated_serving_g||'?')+'g</div>'
@@ -1710,6 +1919,19 @@ function renderResult(data, isAfterMeal) {
   }
   document.getElementById('afterUploadSection').style.display = 'none';
   document.getElementById('manualSection').style.display = 'none';
+
+  // 수동 저장 버튼 (세션 모드가 아닐 때만)
+  const saveArea = document.getElementById('saveMealArea');
+  if (saveArea) {
+    if (sessionActive) {
+      saveArea.innerHTML = '';
+    } else if (mealSaved) {
+      saveArea.innerHTML = '<div class="save-meal-area"><button class="save-meal-btn saved" id="saveMealBtn" disabled>✅ 저장 완료!</button><div id="saveMealHint" style="color:#888;font-size:0.8em;margin-top:8px">이 식사가 기록에 저장되었습니다</div></div>';
+    } else {
+      saveArea.innerHTML = '<div class="save-meal-area"><div style="color:#6ee7b7;font-size:0.85em;margin-bottom:10px">식사를 마쳤으면 저장해주세요</div><button class="save-meal-btn" id="saveMealBtn" onclick="saveManually(false)">💾 식사 기록 저장</button><div id="saveMealHint" style="color:#555;font-size:0.75em;margin-top:8px">저장하지 않으면 1시간 후 자동 저장됩니다</div></div>';
+    }
+  }
+
   document.getElementById('resultSection').style.display = 'block';
 }
 </script>
@@ -1819,6 +2041,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_save_meal()
         elif path == '/login':
             self._handle_login()
+        elif path == '/report':
+            self._handle_report()
         else:
             self.send_response(404)
             self.end_headers()
@@ -2183,6 +2407,53 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"saved": True, "record_id": record_id})
         except Exception as e:
             self._json_response(500, {"error": f"저장 에러: {str(e)}"})
+
+    # ── 대시보드 데이터 API ──
+    def _handle_report(self):
+        """이상해요 신고 접수"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            req = json.loads(body)
+            nickname = req.get('nickname', '').strip()
+            food_name = req.get('food_name', '?')
+            report_text = req.get('report_text', '').strip()
+            food_data = req.get('food_data', {})
+
+            if not report_text:
+                self._json_response(400, {"error": "신고 내용이 필요합니다."})
+                return
+
+            # 신고 로그 저장
+            report_path = REPORT_LOG_PATH
+            reports = []
+            if report_path and report_path.exists():
+                try:
+                    with open(report_path, 'r', encoding='utf-8') as f:
+                        reports = json.load(f)
+                except:
+                    reports = []
+
+            reports.append({
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "nickname": nickname,
+                "food_name": food_name,
+                "food_data": food_data,
+                "report_text": report_text
+            })
+
+            if report_path:
+                with open(report_path, 'w', encoding='utf-8') as f:
+                    json.dump(reports, f, ensure_ascii=False, indent=1)
+
+            print(f"[신고] {nickname}: {food_name} — {report_text}")
+
+            # 구글시트 웹훅 전송 (비동기 — 실패해도 로컬 저장은 유지)
+            _send_report_to_sheets(nickname, food_name, food_data, report_text)
+
+            self._json_response(200, {"reported": True, "total_reports": len(reports)})
+        except Exception as e:
+            self._json_response(500, {"error": f"신고 에러: {str(e)}"})
 
     # ── 대시보드 데이터 API ──
     def _handle_dashboard_data(self):
