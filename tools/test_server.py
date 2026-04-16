@@ -1342,19 +1342,41 @@ if (currentUser) {
 }
 
 // ── 이전 분석 결과 복원 ──
-if (currentUser && restoreStateFromSession()) {
-  // 세션 모드 복원
-  if (sessionActive) {
-    document.getElementById('sessionBar').classList.add('active');
-    document.getElementById('sessionToggleBtn').textContent = '🍽️ 정찬 모드 진행중';
-    document.getElementById('sessionToggleBtn').className = 'btn btn-orange';
-    document.getElementById('sessionToggleBtn').style.cssText += 'padding:8px 18px;font-size:0.85em;border-radius:20px';
-    updateSessionBar();
+try {
+  if (currentUser && restoreStateFromSession()) {
+    // 세션 모드 복원
+    if (sessionActive) {
+      document.getElementById('sessionBar').classList.add('active');
+      document.getElementById('sessionToggleBtn').textContent = '🍽️ 정찬 모드 진행중';
+      document.getElementById('sessionToggleBtn').className = 'btn btn-orange';
+      document.getElementById('sessionToggleBtn').style.cssText += 'padding:8px 18px;font-size:0.85em;border-radius:20px';
+      updateSessionBar();
+    }
+    // 분석 결과 복원
+    if (currentAnalysis) {
+      document.getElementById('uploadArea').style.display = 'none';
+      renderResult(currentAnalysis, isAfterMealDone);
+    }
   }
-  // 분석 결과 복원
-  if (currentAnalysis) {
-    document.getElementById('uploadArea').style.display = 'none';
-    renderResult(currentAnalysis, isAfterMealDone);
+} catch(restoreErr) {
+  // 복원 실패 시 깨끗한 초기 상태로
+  console.warn('상태 복원 실패:', restoreErr);
+  clearSessionState();
+  sessionStorage.removeItem('nutrilens_before_img');
+  document.getElementById('uploadArea').style.display = 'block';
+  document.getElementById('resultSection').style.display = 'none';
+}
+// 안전장치: 업로드 영역과 결과 영역 둘 다 안 보이면 초기 화면으로 복귀
+{
+  const uploadVisible = document.getElementById('uploadArea').style.display !== 'none';
+  const resultVisible = document.getElementById('resultSection').style.display !== 'none';
+  const previewVisible = document.getElementById('previewSection').style.display !== 'none';
+  if (!uploadVisible && !resultVisible && !previewVisible) {
+    console.warn('안전장치 발동: 화면이 비어있어 초기 상태로 복귀');
+    clearSessionState();
+    sessionStorage.removeItem('nutrilens_before_img');
+    currentAnalysis = null;
+    document.getElementById('uploadArea').style.display = 'block';
   }
 }
 
