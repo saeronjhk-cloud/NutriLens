@@ -955,8 +955,8 @@ HTML_PAGE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<!-- 로그인 화면 -->
-<div class="login-overlay" id="loginOverlay">
+<!-- 로그인 화면 (깜빡임 방지: 기본 숨김 → JS에서 필요 시 표시) -->
+<div class="login-overlay" id="loginOverlay" style="display:none">
   <div class="login-box">
     <h1>NutriLens</h1>
     <div class="sub">AI 음식 영양 분석기</div>
@@ -964,6 +964,12 @@ HTML_PAGE = """<!DOCTYPE html>
     <button class="login-btn" onclick="doLogin()">시작하기</button>
   </div>
 </div>
+<script>
+// 로그인 안 된 상태면 즉시 오버레이 표시 (깜빡임 방지)
+if (!localStorage.getItem('nutrilens_user')) {
+  document.getElementById('loginOverlay').style.display = '';
+}
+</script>
 
 <div class="container">
 
@@ -1279,6 +1285,30 @@ function saveStateToSession() {
     sessionStorage.setItem('nutrilens_state', JSON.stringify(state));
   } catch(e) { console.warn('상태 저장 실패:', e); }
 }
+// 식전 사진 base64를 별도 저장 (모바일 카메라 전환 시 페이지 리로드 대비)
+function saveBeforeImageToSession() {
+  try {
+    const img = document.getElementById('previewImg');
+    if (img && img.src && img.src.startsWith('data:')) {
+      sessionStorage.setItem('nutrilens_before_img', img.src);
+    }
+  } catch(e) { console.warn('식전 이미지 저장 실패:', e); }
+}
+function restoreBeforeImageFromSession() {
+  try {
+    const src = sessionStorage.getItem('nutrilens_before_img');
+    if (!src) return false;
+    // base64 → File 객체 복원
+    const arr = src.split(',');
+    const mime = arr[0].match(/:(.*?);/)[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while(n--) u8arr[n] = bstr.charCodeAt(n);
+    selectedFile = new File([u8arr], 'before.jpg', {type: mime});
+    return true;
+  } catch(e) { return false; }
+}
 function restoreStateFromSession() {
   try {
     const raw = sessionStorage.getItem('nutrilens_state');
@@ -1294,6 +1324,8 @@ function restoreStateFromSession() {
     sessionPhotoCount = state.sessionPhotoCount || 0;
     sessionFoodCount = state.sessionFoodCount || 0;
     sessionTotalCal = state.sessionTotalCal || 0;
+    // 식전 사진 복원 (모바일 카메라 전환 후 selectedFile 유실 대비)
+    if (!selectedFile) restoreBeforeImageFromSession();
     return true;
   } catch(e) { return false; }
 }
@@ -1972,6 +2004,7 @@ function resetAll() {
   sharingPcts = {}; sharingMode = false; sharingPeople = 1; isAfterMealDone = false; mealSaved = false;
   clearAutoSaveTimer();
   clearSessionState();
+  sessionStorage.removeItem('nutrilens_before_img');
   fileInput.value = ''; cameraInput.value = ''; galleryInput.value = '';
   uploadArea.style.display = 'block';
   document.getElementById('previewSection').style.display = 'none';
@@ -2022,6 +2055,7 @@ async function analyzeFood() {
 
     renderResult(data, false);
     saveStateToSession();
+    saveBeforeImageToSession();  // 모바일 카메라 전환 시 식전 사진 보존
     startAutoSaveTimer();
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
