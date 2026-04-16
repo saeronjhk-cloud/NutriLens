@@ -959,9 +959,17 @@ HTML_PAGE = """<!DOCTYPE html>
   .report-box .report-actions button { flex:1; padding:10px; border-radius:10px; font-size:0.9em; cursor:pointer; border:none; font-weight:600; }
   .report-submit-btn { background:#f87171; color:#fff; }
   .report-cancel-btn { background:#2a2a4a; color:#aaa; }
+
+  /* Toast notification */
+  .toast-container { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:99999; display:flex; flex-direction:column; align-items:center; gap:8px; pointer-events:none; }
+  .toast { background:#323258; color:#fff; padding:12px 24px; border-radius:12px; font-size:0.95em; box-shadow:0 4px 20px rgba(0,0,0,0.4); opacity:0; transform:translateY(-10px); transition:opacity 0.3s, transform 0.3s; pointer-events:auto; max-width:90vw; text-align:center; }
+  .toast.show { opacity:1; transform:translateY(0); }
+  .toast.error { background:#7f1d1d; border:1px solid #f87171; }
+  .toast.success { background:#14532d; border:1px solid #4ade80; }
 </style>
 </head>
 <body>
+<div class="toast-container" id="toastContainer"></div>
 <!-- 로그인 화면 (깜빡임 방지: 기본 숨김 → JS에서 필요 시 표시) -->
 <div class="login-overlay" id="loginOverlay" style="display:none">
   <div class="login-box">
@@ -1340,6 +1348,17 @@ function clearSessionState() {
   sessionStorage.removeItem('nutrilens_state');
 }
 
+// ── 토스트 알림 ──
+function showToast(msg, type) {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = 'toast' + (type ? ' ' + type : '');
+  t.textContent = msg;
+  c.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2500);
+}
+
 // ── 로그인 상태 ──
 let currentUser = localStorage.getItem('nutrilens_user') || '';
 
@@ -1389,7 +1408,7 @@ try {
 
 async function doLogin() {
   const nickname = document.getElementById('nicknameInput').value.trim();
-  if (!nickname) return alert('닉네임을 입력하세요.');
+  if (!nickname) return showToast('닉네임을 입력하세요.');
   try {
     const resp = await fetch('/login', {
       method: 'POST',
@@ -1397,11 +1416,11 @@ async function doLogin() {
       body: JSON.stringify({ nickname: nickname })
     });
     const data = await resp.json();
-    if (data.error) return alert(data.error);
+    if (data.error) return showToast(data.error, 'error');
     currentUser = data.nickname;
     localStorage.setItem('nutrilens_user', currentUser);
     document.getElementById('loginOverlay').style.display = 'none';
-  } catch(e) { alert('로그인 실패: ' + e.message); }
+  } catch(e) { showToast('로그인 실패: ' + e.message, 'error'); }
 }
 document.getElementById('nicknameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 
@@ -1723,7 +1742,7 @@ function closeReportModal() {
 }
 async function submitReport() {
   const text = document.getElementById('reportText').value.trim();
-  if (!text) return alert('어떤 점이 이상한지 입력해주세요.');
+  if (!text) return showToast('어떤 점이 이상한지 입력해주세요.');
   const food = currentAnalysis.foods[reportFoodIndex];
   try {
     const resp = await fetch('/report', {
@@ -1742,8 +1761,8 @@ async function submitReport() {
     // 버튼 상태 변경 — 신고 완료 표시
     const btn = document.getElementById('report_btn_' + reportFoodIndex);
     if (btn) { btn.textContent = '✅ 신고됨'; btn.style.color = '#6ee7b7'; btn.style.borderColor = '#6ee7b7'; btn.disabled = true; }
-    alert('신고가 접수되었습니다. 검토 후 개선하겠습니다!');
-  } catch(e) { alert('신고 실패: ' + e.message); }
+    showToast('신고가 접수되었습니다. 검토 후 개선하겠습니다!', 'success');
+  } catch(e) { showToast('신고 실패: ' + e.message, 'error'); }
 }
 
 // ── 대시보드 ──
@@ -1932,16 +1951,16 @@ function closeGoalModal() {
   document.getElementById('goalModal').style.display = 'none';
 }
 async function saveGoal() {
-  if (!currentUser) { alert('로그인이 필요합니다.'); return; }
+  if (!currentUser) { showToast('로그인이 필요합니다.'); return; }
   const calories = parseInt(document.getElementById('goalCalories').value);
   const protein = parseInt(document.getElementById('goalProtein').value);
-  if (!calories || !protein) { alert('모든 필드를 입력하세요.'); return; }
+  if (!calories || !protein) { showToast('모든 필드를 입력하세요.'); return; }
   try {
     NutriLocalDB.saveGoals(currentUser, calories, protein);
-    alert('목표가 저장되었습니다.');
+    showToast('목표가 저장되었습니다.', 'success');
     closeGoalModal();
     loadDashboard(30);
-  } catch(e) { alert('목표 저장 실패: ' + e.message); }
+  } catch(e) { showToast('목표 저장 실패: ' + e.message, 'error'); }
 }
 async function loadTodayProgress() {
   if (!currentUser) return;
@@ -2108,7 +2127,7 @@ async function toggleSession() {
     document.getElementById('sessionToggleBtn').className = 'btn btn-orange';
     document.getElementById('sessionToggleBtn').style.cssText += 'padding:8px 18px;font-size:0.85em;border-radius:20px';
     updateSessionBar();
-  } catch(e) { alert('세션 시작 실패: ' + e.message); }
+  } catch(e) { showToast('세션 시작 실패: ' + e.message, 'error'); }
 }
 
 async function endSession() {
@@ -2135,7 +2154,7 @@ async function endSession() {
       startAutoSaveTimer();
     }
     sessionId = null;
-  } catch(e) { alert('세션 종료 실패: ' + e.message); }
+  } catch(e) { showToast('세션 종료 실패: ' + e.message, 'error'); }
 }
 
 function updateSessionBar() {
@@ -2170,7 +2189,7 @@ async function submitCorrection() {
   const correctedName = document.getElementById('editFoodName').value.trim();
   const servingPct = parseInt(document.getElementById('editServingPct').value);
 
-  if (!correctedName) return alert('음식명을 입력하세요.');
+  if (!correctedName) return showToast('음식명을 입력하세요.');
 
   try {
     const resp = await fetch('/correct', {
@@ -2210,7 +2229,7 @@ async function submitCorrection() {
     closeEditModal();
     renderResult(currentAnalysis, isAfterMealDone);
     saveStateToSession();
-  } catch(e) { alert('수정 실패: ' + e.message); }
+  } catch(e) { showToast('수정 실패: ' + e.message, 'error'); }
 }
 
 function deleteFood() {
@@ -2239,8 +2258,8 @@ uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag
 uploadArea.addEventListener('drop', (e) => { e.preventDefault(); uploadArea.classList.remove('dragover'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
 
 function handleFile(file) {
-  if (!file || !file.type.startsWith('image/')) return alert('이미지 파일만 가능합니다.');
-  if (file.size > 10*1024*1024) return alert('10MB 이하만 가능합니다.');
+  if (!file || !file.type.startsWith('image/')) return showToast('이미지 파일만 가능합니다.');
+  if (file.size > 10*1024*1024) return showToast('10MB 이하만 가능합니다.');
   selectedFile = file;
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -2284,7 +2303,7 @@ function resetAll() {
 
 // ── 식전 분석 API ──
 async function analyzeFood() {
-  if (!selectedFile) return alert('사진을 먼저 선택해주세요.');
+  if (!selectedFile) return showToast('사진을 먼저 선택해주세요.');
   document.getElementById('previewSection').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
   document.getElementById('loadingText').textContent = 'AI가 음식을 분석하고 있습니다...';
@@ -2358,7 +2377,7 @@ document.getElementById('afterCameraInput').addEventListener('change', handleAft
 document.getElementById('afterGalleryInput').addEventListener('change', handleAfterFile);
 
 async function analyzeLeftover() {
-  if (!selectedFile || !afterFile) return alert('식후 사진이 필요합니다.');
+  if (!selectedFile || !afterFile) return showToast('식후 사진이 필요합니다.');
   document.getElementById('afterUploadSection').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
   document.getElementById('loadingText').textContent = '식전/식후 사진을 비교하고 있습니다...';
