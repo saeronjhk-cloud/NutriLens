@@ -189,6 +189,208 @@ def _save_meal_record(nickname, meal_data):
     print(f"[기록] {nickname}: {record['date']} {record['time']} - {len(foods_list)}개 음식, {record['summary']['total_calories']}kcal 저장")
     return record["id"]
 
+# ── 목표 설정 및 조회 ──
+def _get_user_goals(nickname):
+    """사용자의 일일 목표 조회"""
+    log = _load_meal_log()
+    user = log.get("users", {}).get(nickname, {})
+    goals = user.get("goals", {})
+    # 기본값: 1800kcal, 120g 단백질
+    return {
+        "calories": goals.get("calories", 1800),
+        "protein": goals.get("protein", 120)
+    }
+
+def _save_user_goals(nickname, calories, protein):
+    """사용자의 일일 목표 저장"""
+    log = _load_meal_log()
+    if nickname not in log["users"]:
+        log["users"][nickname] = {"created": time.strftime("%Y-%m-%d"), "meals": []}
+    log["users"][nickname]["goals"] = {"calories": calories, "protein": protein}
+    _save_meal_log(log)
+    print(f"[목표] {nickname}: {calories}kcal, {protein}g 단백질")
+
+def _get_today_progress(nickname):
+    """오늘의 진행 상황 조회"""
+    from datetime import datetime
+    log = _load_meal_log()
+    user = log.get("users", {}).get(nickname)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 오늘의 식사 데이터
+    today_meals = []
+    if user:
+        today_meals = [m for m in user.get("meals", []) if m.get("date") == today_str]
+
+    # 합계
+    total_calories = sum(m["summary"].get("total_calories", 0) for m in today_meals)
+    total_protein = sum(m["summary"].get("total_protein", 0) for m in today_meals)
+
+    # 목표
+    goals = _get_user_goals(nickname)
+
+    return {
+        "calories": total_calories,
+        "protein": total_protein,
+        "goal_calories": goals["calories"],
+        "goal_protein": goals["protein"],
+        "remaining_calories": max(0, goals["calories"] - total_calories),
+        "remaining_protein": max(0, goals["protein"] - total_protein),
+        "calorie_pct": round(total_calories / goals["calories"] * 100, 1) if goals["calories"] > 0 else 0,
+        "protein_pct": round(total_protein / goals["protein"] * 100, 1) if goals["protein"] > 0 else 0
+    }
+
+def _get_weekly_macro_analysis(nickname):
+    """주간 매크로 분석 (일별 탄단지 비율)"""
+    from datetime import datetime, timedelta
+    log = _load_meal_log()
+    user = log.get("users", {}).get(nickname)
+
+    if not user:
+        return {"days": [], "avg_ratio": {}, "feedback": ""}
+
+    # 지난 7일 데이터
+    meals = user.get("meals", [])
+    cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    recent = [m for m in meals if m.get("date", "") >= cutoff]
+
+    # 일별 집계
+    daily_data = {}
+    for m in recent:
+        d = m["date"]
+        if d not in daily_data:
+            daily_data[d] = {"carbs": 0, "protein": 0, "fat": 0}
+        s = m.get("summary", {})
+        daily_data[d]["carbs"] += s.get("total_carbs", 0)
+        daily_data[d]["protein"] += s.get("total_protein", 0)
+        daily_data[d]["fat"] += s.get("total_fat", 0)
+
+    # 일별 비율 계산
+    days_data = []
+    for date in sorted(daily_data.keys()):
+        d = daily_data[date]
+        total_cal = d["carbs"] * 4 + d["protein"] * 4 + d["fat"] * 9
+        if total_cal > 0:
+            carb_pct = round(d["carbs"] * 4 / total_cal * 100, 1)
+            prot_pct = round(d["protein"] * 4 / total_cal * 100, 1)
+            fat_pct = round(d["fat"] * 9 / total_cal * 100, 1)
+        else:
+            carb_pct = prot_pct = fat_pct = 0
+
+        days_data.append({
+            "date": date,
+            "carb_pct": carb_pct,
+            "protein_pct": prot_pct,
+            "fat_pct": fat_pct
+        })
+
+    # 주간 평균
+    if days_data:
+        avg_carb = sum(d["carb_pct"] for d in days_data) / len(days_data)
+        avg_protein = sum(d["protein_pct"] for d in days_data) / len(days_data)
+        avg_fat = sum(d["fat_pct"] for d in days_data) / len(days_data)
+    else:
+        avg_carb = avg_protein = avg_fat = 0
+
+    # 목표 판단 및 피드백
+    goals = _get_user_goals(nickname)
+    feedback = ""
+    if goals["protein"] > 100:
+        # 고단백 목표: 탄40/단30/지30
+        target_carb, target_protein, target_fat = 40, 30, 30
+        feedback = f"고단백 목표 기준 "
+    else:
+        # 표준 식단: 탄50/단25/지25
+        target_carb, target_protein, target_fat = 50, 25, 25
+        feedback = f"표준 식단 기준 "
+
+    prot_diff = avg_protein - target_protein
+    if prot_diff < -5:
+        feedback += f"단백질 비율이 목표보다 {abs(prot_diff):.0f}%p 부족합니다."
+    elif prot_diff > 5:
+        feedback += f"단백질 비율이 목표보다 {prot_diff:.0f}%p 높습니다."
+    else:
+        feedback += f"단백질 비율이 목표에 가깝습니다."
+
+    return {
+        "days": days_data,
+        "avg_ratio": {
+            "carb_pct": round(avg_carb, 1),
+            "protein_pct": round(avg_protein, 1),
+            "fat_pct": round(avg_fat, 1)
+        },
+        "feedback": feedback
+    }
+
+def _get_protein_timing_analysis(nickname):
+    """단백질 섭취 타이밍 분석"""
+    from datetime import datetime, timedelta
+    log = _load_meal_log()
+    user = log.get("users", {}).get(nickname)
+
+    if not user:
+        return {"timing_slots": {}, "avg_per_slot": {}, "feedback": []}
+
+    # 지난 7일 데이터
+    meals = user.get("meals", [])
+    cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    recent = [m for m in meals if m.get("date", "") >= cutoff]
+
+    # 시간대별 분류
+    timing_data = {
+        "아침": {"count": 0, "total_protein": 0},
+        "점심": {"count": 0, "total_protein": 0},
+        "저녁": {"count": 0, "total_protein": 0},
+        "간식": {"count": 0, "total_protein": 0}
+    }
+
+    for m in recent:
+        t = m.get("time", "12:00")
+        hour = int(t.split(":")[0]) if ":" in t else 12
+        protein = m["summary"].get("total_protein", 0)
+
+        if 6 <= hour < 11:
+            slot = "아침"
+        elif 11 <= hour < 15:
+            slot = "점심"
+        elif 17 <= hour < 21:
+            slot = "저녁"
+        else:
+            slot = "간식"
+
+        timing_data[slot]["count"] += 1
+        timing_data[slot]["total_protein"] += protein
+
+    # 평균 계산
+    avg_per_slot = {}
+    for slot, data in timing_data.items():
+        if data["count"] > 0:
+            avg_per_slot[slot] = round(data["total_protein"] / data["count"], 1)
+        else:
+            avg_per_slot[slot] = 0
+
+    # 피드백 생성
+    feedbacks = []
+    protein_threshold = 30  # 30g 권장
+    recommendations = {
+        "닭가슴살": "lean_protein",
+        "두부": "plant_protein",
+        "계란": "egg",
+        "생선": "fish"
+    }
+
+    for slot in ["아침", "점심", "저녁"]:
+        if avg_per_slot[slot] < protein_threshold:
+            shortage = protein_threshold - avg_per_slot[slot]
+            feedbacks.append(f"{slot}에 단백질이 {avg_per_slot[slot]}g으로 부족합니다. 닭가슴살, 두부, 계란 등으로 보충해보세요.")
+
+    return {
+        "timing_slots": timing_data,
+        "avg_per_slot": avg_per_slot,
+        "threshold": protein_threshold,
+        "feedback": feedbacks
+    }
+
 def _get_dashboard_data(nickname, days=30):
     """대시보드용 데이터 집계"""
     from datetime import datetime, timedelta
@@ -889,6 +1091,10 @@ HTML_PAGE = """<!DOCTYPE html>
       <h2 id="resultTitle">분석 결과</h2>
       <button class="btn btn-secondary" onclick="resetAll()" style="padding:8px 16px; font-size:0.85em">새 사진</button>
     </div>
+
+    <!-- Feature 1: 오늘의 현황 카드 -->
+    <div id="todayProgressCard" style="display:none"></div>
+
     <div id="foodCards"></div>
     <div id="summaryCard"></div>
     <div id="saveMealArea"></div>
@@ -945,10 +1151,32 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <div class="dash-header">
       <h2>내 영양 기록</h2>
-      <div class="period-btns">
-        <button class="period-btn" onclick="loadDashboard(7)">7일</button>
-        <button class="period-btn active" onclick="loadDashboard(30)">30일</button>
-        <button class="period-btn" onclick="loadDashboard(90)">90일</button>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="btn btn-secondary" onclick="openGoalModal()" style="padding:8px 12px; font-size:0.8em">⚙️ 목표 설정</button>
+        <div class="period-btns">
+          <button class="period-btn" onclick="loadDashboard(7)">7일</button>
+          <button class="period-btn active" onclick="loadDashboard(30)">30일</button>
+          <button class="period-btn" onclick="loadDashboard(90)">90일</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 1: 목표 설정 모달 -->
+    <div id="goalModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); z-index:200; align-items:center; justify-content:center;">
+      <div style="background:#1a1a2e; border:1px solid #3b82f6; border-radius:16px; padding:28px; max-width:360px; width:90%;">
+        <h3 style="color:#60a5fa; margin-bottom:20px; font-size:1.1em">일일 목표 설정</h3>
+        <div style="margin-bottom:16px;">
+          <label style="display:block; color:#888; font-size:0.85em; margin-bottom:6px">칼로리 (kcal)</label>
+          <input type="number" id="goalCalories" value="1800" style="width:100%; padding:10px; background:#0f0f1a; border:1px solid #2a2a4a; border-radius:8px; color:#fff; font-size:1em;">
+        </div>
+        <div style="margin-bottom:20px;">
+          <label style="display:block; color:#888; font-size:0.85em; margin-bottom:6px">단백질 (g)</label>
+          <input type="number" id="goalProtein" value="120" style="width:100%; padding:10px; background:#0f0f1a; border:1px solid #2a2a4a; border-radius:8px; color:#fff; font-size:1em;">
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button class="btn btn-secondary" onclick="closeGoalModal()" style="flex:1; padding:10px;">취소</button>
+          <button class="btn btn-primary" onclick="saveGoal()" style="flex:1; padding:10px;">저장</button>
+        </div>
       </div>
     </div>
 
@@ -1003,6 +1231,20 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="chart-card">
         <div class="chart-title">자주 먹는 음식 TOP 10</div>
         <div id="topFoodsList"></div>
+      </div>
+
+      <!-- Feature 2: 주간 매크로 비율 분석 -->
+      <div class="chart-card">
+        <div class="chart-title">주간 매크로 비율</div>
+        <canvas id="weeklyMacroChart"></canvas>
+        <div id="weeklyMacroFeedback" style="color:#888; font-size:0.85em; margin-top:12px; padding-top:12px; border-top:1px solid #2a2a4a;"></div>
+      </div>
+
+      <!-- Feature 3: 단백질 섭취 타이밍 -->
+      <div class="chart-card">
+        <div class="chart-title">단백질 섭취 타이밍</div>
+        <canvas id="proteinTimingChart"></canvas>
+        <div id="proteinTimingFeedback" style="margin-top:12px; padding-top:12px; border-top:1px solid #2a2a4a;"></div>
       </div>
 
     </div><!-- /dashContent -->
@@ -1243,6 +1485,15 @@ function renderDashboard(data) {
   renderBalanceChart(b);
   renderPatternChart(data.meal_pattern);
   renderTopFoods(data.top_foods);
+
+  // Feature 1: 오늘의 현황 로드
+  loadTodayProgress();
+
+  // Feature 2: 주간 매크로 분석
+  loadWeeklyMacro();
+
+  // Feature 3: 단백질 타이밍 분석
+  loadProteinTiming();
 }
 
 function destroyChart(key) {
@@ -1364,6 +1615,183 @@ function renderTopFoods(foods) {
       + '</div>';
   });
   document.getElementById('topFoodsList').innerHTML = html;
+}
+
+// ── Feature 1: 오늘의 현황 + 목표 설정 함수 ──
+function openGoalModal() {
+  document.getElementById('goalModal').style.display = 'flex';
+}
+function closeGoalModal() {
+  document.getElementById('goalModal').style.display = 'none';
+}
+async function saveGoal() {
+  if (!currentUser) { alert('로그인이 필요합니다.'); return; }
+  const calories = parseInt(document.getElementById('goalCalories').value);
+  const protein = parseInt(document.getElementById('goalProtein').value);
+  if (!calories || !protein) { alert('모든 필드를 입력하세요.'); return; }
+  try {
+    const resp = await fetch('/save-goal', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nickname: currentUser, calories: calories, protein: protein})
+    });
+    const data = await resp.json();
+    if (data.saved) {
+      alert('목표가 저장되었습니다.');
+      closeGoalModal();
+      loadDashboard(30); // 대시보드 새로고침
+    }
+  } catch(e) { alert('목표 저장 실패: ' + e.message); }
+}
+async function loadTodayProgress() {
+  if (!currentUser) return;
+  try {
+    const resp = await fetch('/today-progress?user=' + encodeURIComponent(currentUser));
+    const data = await resp.json();
+    renderTodayProgress(data);
+  } catch(e) { console.error('오늘의 현황 로드 실패:', e); }
+}
+function renderTodayProgress(data) {
+  const card = document.getElementById('todayProgressCard');
+  if (!card) return;
+
+  const calorieColor = data.calorie_pct < 100 ? '#6ee7b7' : data.calorie_pct < 110 ? '#fbbf24' : '#f87171';
+  const proteinColor = data.protein_pct < 100 ? '#6ee7b7' : data.protein_pct < 110 ? '#fbbf24' : '#f87171';
+
+  const html = '<div style="background:linear-gradient(135deg,#1a2e2e,#1e3a3e); border:1px solid #059669; border-radius:14px; padding:18px; margin-bottom:16px;">'
+    + '<div style="color:#6ee7b7; font-weight:600; margin-bottom:14px; font-size:0.95em">오늘의 현황</div>'
+    + '<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">'
+    + '<div>'
+    + '<div style="font-size:0.8em; color:#888; margin-bottom:4px">칼로리</div>'
+    + '<div style="height:6px; background:#1a1a2e; border-radius:3px; margin-bottom:4px; overflow:hidden;">'
+    + '<div style="width:' + Math.min(data.calorie_pct, 100) + '%; height:100%; background:' + calorieColor + '; border-radius:3px;"></div>'
+    + '</div>'
+    + '<div style="font-size:0.85em; color:#e0e0e0; font-weight:600;">' + data.calories + ' / ' + data.goal_calories + ' kcal</div>'
+    + '<div style="font-size:0.75em; color:#888; margin-top:2px;">남은 ' + Math.max(0, data.remaining_calories) + ' kcal</div>'
+    + '</div>'
+    + '<div>'
+    + '<div style="font-size:0.8em; color:#888; margin-bottom:4px">단백질</div>'
+    + '<div style="height:6px; background:#1a1a2e; border-radius:3px; margin-bottom:4px; overflow:hidden;">'
+    + '<div style="width:' + Math.min(data.protein_pct, 100) + '%; height:100%; background:' + proteinColor + '; border-radius:3px;"></div>'
+    + '</div>'
+    + '<div style="font-size:0.85em; color:#e0e0e0; font-weight:600;">' + data.protein.toFixed(1) + ' / ' + data.goal_protein + 'g</div>'
+    + '<div style="font-size:0.75em; color:#888; margin-top:2px;">남은 ' + Math.max(0, data.remaining_protein).toFixed(1) + 'g</div>'
+    + '</div>'
+    + '</div>'
+    + '</div>';
+  card.innerHTML = html;
+  card.style.display = 'block';
+}
+
+// ── Feature 2: 주간 매크로 분석 함수 ──
+async function loadWeeklyMacro() {
+  if (!currentUser) return;
+  try {
+    const resp = await fetch('/weekly-macro?user=' + encodeURIComponent(currentUser));
+    const data = await resp.json();
+    renderWeeklyMacro(data);
+  } catch(e) { console.error('주간 매크로 로드 실패:', e); }
+}
+function renderWeeklyMacro(data) {
+  if (!data.days || data.days.length === 0) return;
+
+  destroyChart('weeklyMacro');
+  const ctx = document.getElementById('weeklyMacroChart').getContext('2d');
+
+  const dayLabels = data.days.map((d, i) => {
+    const date = new Date(d.date);
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    return date.getMonth() + 1 + '/' + date.getDate() + ' (' + dayNames[date.getDay()] + ')';
+  });
+
+  dashCharts.weeklyMacro = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: dayLabels,
+      datasets: [
+        {
+          label: '탄수화물',
+          data: data.days.map(d => d.carb_pct),
+          backgroundColor: '#fbbf24',
+          stack: 'macro'
+        },
+        {
+          label: '단백질',
+          data: data.days.map(d => d.protein_pct),
+          backgroundColor: '#60a5fa',
+          stack: 'macro'
+        },
+        {
+          label: '지방',
+          data: data.days.map(d => d.fat_pct),
+          backgroundColor: '#f87171',
+          stack: 'macro'
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      indexAxis: 'x',
+      scales: {
+        x: { stacked: true, ticks: { color: '#888' }, grid: { display: false } },
+        y: { stacked: true, ticks: { color: '#666', max: 100 }, grid: { color: '#1a1a2e' } }
+      },
+      plugins: { legend: { labels: { color: '#888' } } }
+    }
+  });
+
+  document.getElementById('weeklyMacroFeedback').textContent = data.feedback;
+}
+
+// ── Feature 3: 단백질 타이밍 분석 함수 ──
+async function loadProteinTiming() {
+  if (!currentUser) return;
+  try {
+    const resp = await fetch('/protein-timing?user=' + encodeURIComponent(currentUser));
+    const data = await resp.json();
+    renderProteinTiming(data);
+  } catch(e) { console.error('단백질 타이밍 로드 실패:', e); }
+}
+function renderProteinTiming(data) {
+  if (!data.avg_per_slot) return;
+
+  destroyChart('proteinTiming');
+  const ctx = document.getElementById('proteinTimingChart').getContext('2d');
+
+  const slots = ['아침', '점심', '저녁', '간식'];
+  const avgValues = slots.map(s => data.avg_per_slot[s] || 0);
+
+  dashCharts.proteinTiming = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: slots,
+      datasets: [
+        {
+          label: '평균 단백질 (g)',
+          data: avgValues,
+          backgroundColor: '#60a5fa',
+          borderRadius: 6
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#888' }, grid: { display: false } },
+        y: { ticks: { color: '#666' }, grid: { color: '#1a1a2e' } }
+      }
+    }
+  });
+
+  // 선택적: 임계선 그리기 (플러그인 사용 - 간단 버전)
+  let feedbackHtml = '';
+  if (data.feedback && data.feedback.length > 0) {
+    feedbackHtml = data.feedback.map(f => '<div style="font-size:0.85em; color:#f87171; margin-bottom:6px;">⚠️ ' + f + '</div>').join('');
+  } else {
+    feedbackHtml = '<div style="font-size:0.85em; color:#6ee7b7;">✓ 단백질 섭취가 균형잡혀 있습니다.</div>';
+  }
+  document.getElementById('proteinTimingFeedback').innerHTML = feedbackHtml;
 }
 
 // ── 식사 세션 함수 ──
@@ -1933,6 +2361,9 @@ function renderResult(data, isAfterMeal) {
   }
 
   document.getElementById('resultSection').style.display = 'block';
+
+  // Feature 1: 오늘의 현황 로드 (분석 후)
+  loadTodayProgress();
 }
 </script>
 </body>
@@ -2043,6 +2474,14 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_login()
         elif path == '/report':
             self._handle_report()
+        elif path == '/save-goal':
+            self._handle_save_goal()
+        elif path == '/today-progress':
+            self._handle_today_progress()
+        elif path == '/weekly-macro':
+            self._handle_weekly_macro()
+        elif path == '/protein-timing':
+            self._handle_protein_timing()
         else:
             self.send_response(404)
             self.end_headers()
@@ -2454,6 +2893,66 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"reported": True, "total_reports": len(reports)})
         except Exception as e:
             self._json_response(500, {"error": f"신고 에러: {str(e)}"})
+
+    # ── Feature 1: 목표 저장 API ──
+    def _handle_save_goal(self):
+        """일일 목표 저장"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            req = json.loads(body)
+            nickname = req.get('nickname', '').strip()
+            calories = int(req.get('calories', 1800))
+            protein = int(req.get('protein', 120))
+            if not nickname:
+                self._json_response(400, {"error": "닉네임이 필요합니다."})
+                return
+            _save_user_goals(nickname, calories, protein)
+            self._json_response(200, {"saved": True, "calories": calories, "protein": protein})
+        except Exception as e:
+            self._json_response(500, {"error": f"목표 저장 에러: {str(e)}"})
+
+    # ── Feature 1: 오늘 진행 상황 API ──
+    def _handle_today_progress(self):
+        """오늘의 칼로리·단백질 진행 상황"""
+        try:
+            qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
+            nickname = qs.get('user', [''])[0]
+            if not nickname:
+                self._json_response(400, {"error": "사용자명이 필요합니다."})
+                return
+            data = _get_today_progress(nickname)
+            self._json_response(200, data)
+        except Exception as e:
+            self._json_response(500, {"error": f"진행 상황 조회 에러: {str(e)}"})
+
+    # ── Feature 2: 주간 매크로 분석 API ──
+    def _handle_weekly_macro(self):
+        """주간 매크로 비율 분석"""
+        try:
+            qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
+            nickname = qs.get('user', [''])[0]
+            if not nickname:
+                self._json_response(400, {"error": "사용자명이 필요합니다."})
+                return
+            data = _get_weekly_macro_analysis(nickname)
+            self._json_response(200, data)
+        except Exception as e:
+            self._json_response(500, {"error": f"주간 매크로 분석 에러: {str(e)}"})
+
+    # ── Feature 3: 단백질 타이밍 분석 API ──
+    def _handle_protein_timing(self):
+        """단백질 섭취 타이밍 분석"""
+        try:
+            qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
+            nickname = qs.get('user', [''])[0]
+            if not nickname:
+                self._json_response(400, {"error": "사용자명이 필요합니다."})
+                return
+            data = _get_protein_timing_analysis(nickname)
+            self._json_response(200, data)
+        except Exception as e:
+            self._json_response(500, {"error": f"단백질 타이밍 분석 에러: {str(e)}"})
 
     # ── 대시보드 데이터 API ──
     def _handle_dashboard_data(self):
