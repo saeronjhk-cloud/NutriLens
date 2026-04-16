@@ -514,6 +514,13 @@ LEFTOVER_PROMPT = """당신은 NutriLens의 AI 음식 잔량 분석 전문가입
 5. 두 사진이 비슷해 보여도, 그릇의 내용물 높이나 양의 차이를 세심하게 비교하세요
 6. **eaten_pct와 영양소 값은 반드시 일관성이 있어야 합니다**
 
+## 엣지 케이스 처리
+- **빈 접시/테이블만 보이는 경우**: 모든 음식의 eaten_pct = 100 (전부 섭취)
+- **식전과 완전히 다른 사진인 경우**: 식전 음식 목록 기준으로 모두 eaten_pct = 100 처리
+- **식후에 새로운 음식이 추가된 경우**: 식전 음식만 분석하고 새 음식은 무시
+- **국물 요리(국, 찌개, 탕)**: 건더기 감소량 기준으로 eaten_pct 판단 (국물만 줄었으면 70~80%)
+- **음료/물**: 액체 높이 변화로 eaten_pct 추정
+
 ## 중요: 반드시 JSON만 출력하세요. 설명 텍스트 없이 순수 JSON만 응답하세요.
 
 ```json
@@ -2124,6 +2131,10 @@ async function analyzeLeftover() {
   formData.append('before', selectedFile);
   formData.append('after', afterFile);
   formData.append('api_key', '');
+  // 식전 분석 결과를 같이 보내서 AI 정확도 향상
+  if (originalAnalysis && originalAnalysis.foods) {
+    formData.append('before_analysis', JSON.stringify(originalAnalysis));
+  }
 
   try {
     const resp = await fetch('/analyze-leftover', { method: 'POST', body: formData });
@@ -2142,7 +2153,14 @@ async function analyzeLeftover() {
     mealSaved = false;
     renderResult(data, true);
     saveStateToSession();
-    startAutoSaveTimer();
+    // 식후 분석 완료 → 실제 섭취량으로 즉시 자동 저장
+    await saveMealRecord(currentAnalysis);
+    mealSaved = true;
+    saveStateToSession();
+    const btn = document.getElementById('saveMealBtn');
+    if (btn) { btn.textContent = '✅ 저장 완료!'; btn.disabled = true; btn.classList.add('saved'); }
+    const hint = document.getElementById('saveMealHint');
+    if (hint) hint.textContent = '식후 분석 결과가 자동 저장되었습니다';
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('errorBox').innerHTML = '<strong>네트워크 오류:</strong> ' + err.message;
@@ -2204,7 +2222,15 @@ function applyManualEntry() {
   document.getElementById('manualSection').style.display = 'none';
   renderResult(data, true);
   saveStateToSession();
-  startAutoSaveTimer();
+  // 수동 입력 완료 → 실제 섭취량으로 즉시 자동 저장
+  saveMealRecord(currentAnalysis).then(() => {
+    mealSaved = true;
+    saveStateToSession();
+    const btn = document.getElementById('saveMealBtn');
+    if (btn) { btn.textContent = '✅ 저장 완료!'; btn.disabled = true; btn.classList.add('saved'); }
+    const hint = document.getElementById('saveMealHint');
+    if (hint) hint.textContent = '수동 입력 결과가 자동 저장되었습니다';
+  });
 }
 
 // ── 나눠먹기 시스템 ──
@@ -2566,12 +2592,38 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             before_b64, before_mt = self._image_to_base64(before_file)
             after_b64, after_mt = self._image_to_base64(after_file)
 
+            # 식전 분석 결과가 있으면 파싱
+            before_analysis = None
+            raw_before = fields.get('before_analysis', '')
+            if raw_before:
+                try:
+                    before_analysis = json.loads(raw_before)
+                except:
+                    pass
+
             print(f"\n남은 음식 분석 요청")
             print(f"  전: {before_file['filename']} ({len(before_file['data'])/1024:.0f}KB)")
             print(f"  후: {after_file['filename']} ({len(after_file['data'])/1024:.0f}KB)")
+            if before_analysis:
+                print(f"  식전 분석 결과 전달: {len(before_analysis.get('foods', []))}개 음식")
 
-            # 전/후 비교 전용 프롬프트
+            # 전/후 비교 전용 프롬프트 + 식전 분석 결과 힌트
             leftover_prompt = LEFTOVER_PROMPT
+
+            # 식전 분석 결과가 있으면 AI에게 힌트로 제공
+            user_text = "첫 번째 사진은 먹기 전, 두 번째 사진은 먹은 후입니다. 실제로 먹은 양을 분석해주세요."
+            if before_analysis and before_analysis.get("foods"):
+                hint_foods = []
+                for f in before_analysis["foods"]:
+                    name = f.get("name_ko", "?")
+                    cal = f.get("calories_kcal", 0)
+                    serv = f.get("estimated_serving_g", 0)
+                    prot = f.get("protein_g", 0)
+                    carbs = f.get("carbs_g", 0)
+                    fat = f.get("fat_g", 0)
+                    hint_foods.append(f"{name}: {serv}g, {cal}kcal (단{prot}g/탄{carbs}g/지{fat}g)")
+                hint = "\n".join(hint_foods)
+                user_text += f"\n\n[식전 분석 결과 — 이 정보를 기준으로 eaten_pct를 계산하세요]\n{hint}"
 
             url = "https://api.openai.com/v1/chat/completions"
             payload = {
@@ -2581,7 +2633,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": "첫 번째 사진은 먹기 전, 두 번째 사진은 먹은 후입니다. 실제로 먹은 양을 분석해주세요."},
+                            {"type": "text", "text": user_text},
                             {
                                 "type": "image_url",
                                 "image_url": {"url": f"data:{before_mt};base64,{before_b64}", "detail": "high"}
@@ -2627,24 +2679,54 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 self._json_response(200, {"error": "AI 응답 파싱 실패", "raw": content[:500]})
                 return
 
-            # eaten_pct 기반 영양소 강제 재계산 (AI 실수 방지)
+            # ── 식전 원본 영양소 매핑 (식전 분석 결과가 있으면 더 정확한 재계산 가능) ──
+            before_foods_map = {}
+            if before_analysis and before_analysis.get("foods"):
+                for bf in before_analysis["foods"]:
+                    bname = bf.get("name_ko", "")
+                    if bname:
+                        before_foods_map[bname] = bf
+
+            # ── eaten_pct 기반 영양소 강제 재계산 (AI 실수 방지) ──
             if "foods" in analysis:
                 for food in analysis["foods"]:
                     pct = food.get("eaten_pct")
-                    if pct is not None and isinstance(pct, (int, float)):
-                        ratio = pct / 100.0
+
+                    # 엣지 케이스: eaten_pct가 없거나 이상한 값이면 100으로 간주
+                    if pct is None or not isinstance(pct, (int, float)):
+                        pct = 100
+                        food["eaten_pct"] = 100
+                        food["leftover_note"] = "섭취 비율 불명 — 전량 섭취로 처리"
+
+                    # 범위 보정: 0~100 벗어나면 클램핑
+                    pct = max(0, min(100, pct))
+                    food["eaten_pct"] = pct
+                    ratio = pct / 100.0
+
+                    # 식전 원본 데이터가 있으면 그걸 기준으로 재계산 (더 정확)
+                    food_name = food.get("name_ko", "")
+                    orig = before_foods_map.get(food_name)
+
+                    if orig:
+                        # 식전 분석의 원본 영양소를 기준으로 재계산
+                        orig_g = orig.get("estimated_serving_g", 0) or food.get("original_serving_g", 0) or 0
+                        food["original_serving_g"] = orig_g
+                        food["estimated_serving_g"] = round(orig_g * ratio)
+                        for key in ["calories_kcal", "protein_g", "carbs_g", "fat_g", "fiber_g", "sodium_mg", "sugar_g"]:
+                            orig_val = orig.get(key, 0) or 0
+                            food[key] = round(orig_val * ratio, 1) if pct > 0 else 0
+                    else:
+                        # 식전 데이터 없으면 AI 응답값 기준으로 재계산
                         orig_g = food.get("original_serving_g", 0) or 0
                         food["estimated_serving_g"] = round(orig_g * ratio)
-                        # original 값이 있으면 그걸로 재계산, 없으면 현재값을 original로 간주
                         for key in ["calories_kcal", "protein_g", "carbs_g", "fat_g", "fiber_g", "sodium_mg", "sugar_g"]:
                             val = food.get(key, 0) or 0
                             if pct == 0:
                                 food[key] = 0
-                            # pct가 100이 아닌데 값이 원본 그대로인 경우 재계산
                             elif pct < 100 and val > 0:
                                 food[key] = round(val * ratio, 1)
 
-                # meal_summary도 재계산
+                # meal_summary 재계산
                 foods = analysis["foods"]
                 summary = analysis.get("meal_summary", {})
                 summary["total_calories"] = round(sum(f.get("calories_kcal", 0) or 0 for f in foods))
@@ -2652,6 +2734,9 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 summary["total_carbs"] = round(sum(f.get("carbs_g", 0) or 0 for f in foods))
                 summary["total_fat"] = round(sum(f.get("fat_g", 0) or 0 for f in foods))
                 analysis["meal_summary"] = summary
+
+                # 식후 분석임을 표시 (저장 시 구분용)
+                analysis["is_after_meal"] = True
 
             # DB 매칭
             if FOODS_DB and "foods" in analysis:
