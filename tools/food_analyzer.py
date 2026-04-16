@@ -1134,7 +1134,7 @@ def _estimate_realistic_serving(food_name, gold_serving):
     if any(s in name for s in ['면', '국수', '우동', '라멘', '소바', '냉면',
                                  '짬뽕', '짜장', '칼국수', '수제비', '쫄면',
                                  '울면', '잔뽕', '밀면', '막국수', '쌀국수',
-                                 '콩국수', '잔치국수', '비빔국수']):
+                                 '콩국수', '잔치국수', '비빔국수', '파스타']):
         # 건면/라면은 제외 - CORE_FOODS에서 이미 처리
         if '건면' in name or '건조' in name:
             return 100
