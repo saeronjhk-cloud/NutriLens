@@ -81,9 +81,9 @@ def test_core_foods_sanity():
         fat = data.get("fat", 0)
         serving = data.get("serving", 0)
 
-        # 칼로리: 100g당 0~700kcal (물/제로콜라 등 0kcal 허용, 초콜릿이 546)
-        check(0 <= cal <= 700, f"{name} 칼로리",
-              f"{cal}kcal/100g (범위: 0~700)")
+        # 칼로리: 100g당 0~910kcal (물/제로콜라 등 0kcal 허용, 순수 오일류 ~900)
+        check(0 <= cal <= 910, f"{name} 칼로리",
+              f"{cal}kcal/100g (범위: 0~910)")
 
         # 서빙 사이즈: 10~600g
         check(10 <= serving <= 600, f"{name} 서빙 사이즈",
