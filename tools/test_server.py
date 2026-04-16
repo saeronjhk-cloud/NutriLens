@@ -1414,16 +1414,264 @@ function switchTab(tab) {
   if (tab === 'dashboard') loadDashboard(30);
 }
 
-// ── 식사 기록 자동 저장 ──
+// ══════════════════════════════════════════════
+// ── localStorage 기반 데이터 관리 (NutriLocalDB) ──
+// 모든 식단 기록/목표를 사용자 핸드폰에 저장
+// 서버 배포와 무관하게 데이터 유지됨
+// ══════════════════════════════════════════════
+const NutriLocalDB = {
+  _key(user) { return 'nutrilens_data_' + user; },
+
+  // 전체 데이터 로드
+  load(user) {
+    try {
+      const raw = localStorage.getItem(this._key(user));
+      if (raw) return JSON.parse(raw);
+    } catch(e) { console.warn('데이터 로드 실패:', e); }
+    return { created: new Date().toISOString().slice(0,10), meals: [], goals: { calories: 1800, protein: 120 } };
+  },
+
+  // 전체 데이터 저장
+  save(user, data) {
+    try { localStorage.setItem(this._key(user), JSON.stringify(data)); }
+    catch(e) { console.error('데이터 저장 실패:', e); }
+  },
+
+  // 식사 기록 추가
+  addMeal(user, analysisData) {
+    if (!user || !analysisData || !analysisData.foods || analysisData.foods.length === 0) return null;
+    const data = this.load(user);
+    const now = new Date();
+    const foods = analysisData.foods.map(f => ({
+      name: f.name_ko || '?',
+      calories: f.calories_kcal || 0,
+      protein: f.protein_g || 0,
+      carbs: f.carbs_g || 0,
+      fat: f.fat_g || 0,
+      sodium: f.sodium_mg || 0,
+      sugar: f.sugar_g || 0,
+      fiber: f.fiber_g || 0,
+      serving_g: f.estimated_serving_g || 0
+    }));
+    const summary = analysisData.meal_summary || {};
+    const record = {
+      id: Math.random().toString(36).substr(2, 8),
+      date: now.toISOString().slice(0,10),
+      time: now.toTimeString().slice(0,5),
+      meal_type: summary.meal_type || '식사',
+      foods: foods,
+      summary: {
+        total_calories: Math.round(summary.total_calories || 0),
+        total_protein: Math.round((summary.total_protein || 0) * 10) / 10,
+        total_carbs: Math.round((summary.total_carbs || 0) * 10) / 10,
+        total_fat: Math.round((summary.total_fat || 0) * 10) / 10,
+        total_sodium: Math.round(foods.reduce((s,f) => s + f.sodium, 0)),
+        total_sugar: Math.round(foods.reduce((s,f) => s + f.sugar, 0) * 10) / 10,
+        total_fiber: Math.round(foods.reduce((s,f) => s + f.fiber, 0) * 10) / 10
+      }
+    };
+    data.meals.push(record);
+    // 최대 365일치(약 1000끼) 유지 — localStorage 용량 관리
+    if (data.meals.length > 1000) data.meals = data.meals.slice(-1000);
+    this.save(user, data);
+    console.log('[기록] ' + record.date + ' ' + record.time + ' - ' + foods.length + '개 음식, ' + record.summary.total_calories + 'kcal 저장');
+    return record.id;
+  },
+
+  // 목표 저장
+  saveGoals(user, calories, protein) {
+    const data = this.load(user);
+    data.goals = { calories: calories, protein: protein };
+    this.save(user, data);
+  },
+
+  // 목표 조회
+  getGoals(user) {
+    const data = this.load(user);
+    return data.goals || { calories: 1800, protein: 120 };
+  },
+
+  // 오늘 진행상황
+  getTodayProgress(user) {
+    const data = this.load(user);
+    const today = new Date().toISOString().slice(0,10);
+    const todayMeals = data.meals.filter(m => m.date === today);
+    const totalCal = todayMeals.reduce((s,m) => s + (m.summary.total_calories || 0), 0);
+    const totalProt = todayMeals.reduce((s,m) => s + (m.summary.total_protein || 0), 0);
+    const goals = data.goals || { calories: 1800, protein: 120 };
+    return {
+      calories: totalCal,
+      protein: totalProt,
+      goal_calories: goals.calories,
+      goal_protein: goals.protein,
+      remaining_calories: Math.max(0, goals.calories - totalCal),
+      remaining_protein: Math.max(0, goals.protein - totalProt),
+      calorie_pct: goals.calories > 0 ? Math.round(totalCal / goals.calories * 1000) / 10 : 0,
+      protein_pct: goals.protein > 0 ? Math.round(totalProt / goals.protein * 1000) / 10 : 0
+    };
+  },
+
+  // 주간 매크로 분석
+  getWeeklyMacro(user) {
+    const data = this.load(user);
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
+    const cutoffStr = cutoff.toISOString().slice(0,10);
+    const recent = data.meals.filter(m => m.date >= cutoffStr);
+    if (recent.length === 0) return { days: [], avg_ratio: {}, feedback: '' };
+
+    const dailyMap = {};
+    recent.forEach(m => {
+      const d = m.date;
+      if (!dailyMap[d]) dailyMap[d] = { carbs: 0, protein: 0, fat: 0 };
+      const s = m.summary || {};
+      dailyMap[d].carbs += s.total_carbs || 0;
+      dailyMap[d].protein += s.total_protein || 0;
+      dailyMap[d].fat += s.total_fat || 0;
+    });
+
+    const daysData = [];
+    Object.keys(dailyMap).sort().forEach(date => {
+      const d = dailyMap[date];
+      const totalCal = d.carbs * 4 + d.protein * 4 + d.fat * 9;
+      const cp = totalCal > 0 ? Math.round(d.carbs * 4 / totalCal * 1000) / 10 : 0;
+      const pp = totalCal > 0 ? Math.round(d.protein * 4 / totalCal * 1000) / 10 : 0;
+      const fp = totalCal > 0 ? Math.round(d.fat * 9 / totalCal * 1000) / 10 : 0;
+      daysData.push({ date, carb_pct: cp, protein_pct: pp, fat_pct: fp });
+    });
+
+    const n = daysData.length;
+    const avgCarb = n > 0 ? Math.round(daysData.reduce((s,d) => s + d.carb_pct, 0) / n * 10) / 10 : 0;
+    const avgProt = n > 0 ? Math.round(daysData.reduce((s,d) => s + d.protein_pct, 0) / n * 10) / 10 : 0;
+    const avgFat = n > 0 ? Math.round(daysData.reduce((s,d) => s + d.fat_pct, 0) / n * 10) / 10 : 0;
+
+    const goals = data.goals || { calories: 1800, protein: 120 };
+    let feedback = '';
+    const targetProt = goals.protein > 100 ? 30 : 25;
+    const prefix = goals.protein > 100 ? '고단백 목표 기준 ' : '표준 식단 기준 ';
+    const diff = avgProt - targetProt;
+    if (diff < -5) feedback = prefix + '단백질 비율이 목표보다 ' + Math.abs(Math.round(diff)) + '%p 부족합니다.';
+    else if (diff > 5) feedback = prefix + '단백질 비율이 목표보다 ' + Math.round(diff) + '%p 높습니다.';
+    else feedback = prefix + '단백질 비율이 목표에 가깝습니다.';
+
+    return { days: daysData, avg_ratio: { carb_pct: avgCarb, protein_pct: avgProt, fat_pct: avgFat }, feedback };
+  },
+
+  // 단백질 타이밍 분석
+  getProteinTiming(user) {
+    const data = this.load(user);
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
+    const cutoffStr = cutoff.toISOString().slice(0,10);
+    const recent = data.meals.filter(m => m.date >= cutoffStr);
+
+    const timing = { '아침': {count:0,total:0}, '점심': {count:0,total:0}, '저녁': {count:0,total:0}, '간식': {count:0,total:0} };
+    recent.forEach(m => {
+      const hour = parseInt((m.time || '12:00').split(':')[0]) || 12;
+      const prot = m.summary.total_protein || 0;
+      let slot = '간식';
+      if (hour >= 6 && hour < 11) slot = '아침';
+      else if (hour >= 11 && hour < 15) slot = '점심';
+      else if (hour >= 17 && hour < 21) slot = '저녁';
+      timing[slot].count++;
+      timing[slot].total += prot;
+    });
+
+    const avg = {};
+    Object.keys(timing).forEach(s => { avg[s] = timing[s].count > 0 ? Math.round(timing[s].total / timing[s].count * 10) / 10 : 0; });
+    const threshold = 30;
+    const feedback = [];
+    ['아침','점심','저녁'].forEach(slot => {
+      if (avg[slot] < threshold) feedback.push(slot + '에 단백질이 ' + avg[slot] + 'g으로 부족합니다. 닭가슴살, 두부, 계란 등으로 보충해보세요.');
+    });
+    return { timing_slots: timing, avg_per_slot: avg, threshold, feedback };
+  },
+
+  // 대시보드 데이터
+  getDashboard(user, days) {
+    const data = this.load(user);
+    const empty = {daily:[],meal_pattern:{},balance:{},top_foods:[],warnings:[],weekly_report:'기록이 없습니다.',total_meals:0,total_days:0};
+    if (!data.meals || data.meals.length === 0) return empty;
+
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
+    const cutoffStr = cutoff.toISOString().slice(0,10);
+    const recent = data.meals.filter(m => m.date >= cutoffStr);
+    if (recent.length === 0) return empty;
+
+    // 일별 집계
+    const dailyMap = {};
+    recent.forEach(m => {
+      const d = m.date;
+      if (!dailyMap[d]) dailyMap[d] = {calories:0,protein:0,carbs:0,fat:0,sodium:0,sugar:0,fiber:0,meal_count:0};
+      const s = m.summary || {};
+      ['calories','protein','carbs','fat','sodium','sugar','fiber'].forEach(k => { dailyMap[d][k] += s['total_'+k] || 0; });
+      dailyMap[d].meal_count++;
+    });
+    const dailySorted = Object.keys(dailyMap).sort().map(k => ({date:k,...dailyMap[k]}));
+
+    // 식사 패턴
+    const mealTimes = {'아침(6-10시)':0,'점심(11-14시)':0,'저녁(17-21시)':0,'야식(21-6시)':0,'간식(기타)':0};
+    recent.forEach(m => {
+      const hour = parseInt((m.time||'12:00').split(':')[0]) || 12;
+      if (hour>=6&&hour<10) mealTimes['아침(6-10시)']++;
+      else if (hour>=11&&hour<14) mealTimes['점심(11-14시)']++;
+      else if (hour>=17&&hour<21) mealTimes['저녁(17-21시)']++;
+      else if (hour>=21||hour<6) mealTimes['야식(21-6시)']++;
+      else mealTimes['간식(기타)']++;
+    });
+
+    // 영양 균형
+    const n = dailySorted.length;
+    const avg = {};
+    ['calories','protein','carbs','fat','sodium','sugar','fiber'].forEach(k => {
+      avg[k] = Math.round(dailySorted.reduce((s,d)=>s+d[k],0)/n*10)/10;
+    });
+    const tmcal = avg.carbs*4+avg.protein*4+avg.fat*9;
+    const cp = tmcal>0?Math.round(avg.carbs*4/tmcal*1000)/10:0;
+    const pp = tmcal>0?Math.round(avg.protein*4/tmcal*1000)/10:0;
+    const fp = tmcal>0?Math.round(avg.fat*9/tmcal*1000)/10:0;
+    const balance = {
+      avg_calories:Math.round(avg.calories),avg_protein:avg.protein,avg_carbs:avg.carbs,avg_fat:avg.fat,
+      avg_sodium:Math.round(avg.sodium),avg_sugar:avg.sugar,avg_fiber:avg.fiber,
+      carb_pct:cp,prot_pct:pp,fat_pct:fp
+    };
+
+    // TOP 10 음식
+    const fc = {};
+    recent.forEach(m => (m.foods||[]).forEach(f => {
+      const nm = f.name||'?';
+      if(!fc[nm]) fc[nm]={count:0,total_cal:0};
+      fc[nm].count++; fc[nm].total_cal+=f.calories||0;
+    }));
+    const topFoods = Object.entries(fc).sort((a,b)=>b[1].count-a[1].count).slice(0,10).map(([k,v])=>({name:k,count:v.count,avg_cal:v.count>0?Math.round(v.total_cal/v.count):0}));
+
+    // 경고
+    const warnings = [];
+    if (balance.avg_sodium>2000) warnings.push({type:'danger',icon:'🧂',msg:'나트륨 일평균 '+balance.avg_sodium+'mg',detail:'권장 2,000mg 대비 +'+(balance.avg_sodium-2000)+'mg'});
+    if (balance.avg_sugar>50) warnings.push({type:'danger',icon:'🍬',msg:'당류 일평균 '+balance.avg_sugar+'g',detail:'권장 50g 대비 +'+Math.round(balance.avg_sugar-50)+'g'});
+    if (balance.avg_fiber<25) warnings.push({type:'warning',icon:'🥦',msg:'식이섬유 일평균 '+balance.avg_fiber+'g',detail:'권장 25g 대비 -'+Math.round(25-balance.avg_fiber)+'g'});
+    if (balance.avg_protein<50) warnings.push({type:'warning',icon:'🥩',msg:'단백질 일평균 '+balance.avg_protein+'g',detail:'권장 50g 대비 -'+Math.round(50-balance.avg_protein)+'g'});
+    if (cp>65) warnings.push({type:'warning',icon:'🍚',msg:'탄수화물 비율 '+cp+'%',detail:'권장 50-65% 초과'});
+
+    // 주간 리포트
+    const wa = new Date(); wa.setDate(wa.getDate()-7); const waStr=wa.toISOString().slice(0,10);
+    const tw = dailySorted.filter(d=>d.date>=waStr);
+    let weeklyReport = '이번 주 기록이 없습니다.';
+    if (tw.length>0) {
+      const wn=tw.length, wc=Math.round(tw.reduce((s,d)=>s+d.calories,0)/wn), wp=Math.round(tw.reduce((s,d)=>s+d.protein,0)/wn*10)/10, ws=Math.round(tw.reduce((s,d)=>s+d.sodium,0)/wn);
+      const parts=['이번 주 '+wn+'일 기록, 일평균 '+wc+'kcal'];
+      if(wp<50)parts.push('단백질 부족(-'+Math.round(50-wp)+'g)'); else parts.push('단백질 양호('+wp+'g)');
+      if(ws>2000)parts.push('나트륨 주의(+'+(ws-2000)+'mg)');
+      weeklyReport=parts.join(', ');
+    }
+
+    return {daily:dailySorted,meal_pattern:mealTimes,balance,top_foods:topFoods,warnings,weekly_report:weeklyReport,total_meals:recent.length,total_days:n};
+  }
+};
+
+// ── 식사 기록 저장 (localStorage) ──
 async function saveMealRecord(analysisData) {
   if (!currentUser || !analysisData || !analysisData.foods || analysisData.foods.length === 0) return;
-  try {
-    await fetch('/save-meal', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ nickname: currentUser, meal_data: analysisData })
-    });
-  } catch(e) { console.error('식사 기록 저장 실패:', e); }
+  try { NutriLocalDB.addMeal(currentUser, analysisData); }
+  catch(e) { console.error('식사 기록 저장 실패:', e); }
 }
 
 // ── 수동 저장 + 자동저장 타이머 (1시간) ──
@@ -1502,13 +1750,11 @@ async function submitReport() {
 let dashCharts = {};
 async function loadDashboard(days) {
   if (!currentUser) return;
-  // 기간 버튼 활성화
   document.querySelectorAll('.period-btn').forEach(b => {
     b.classList.toggle('active', b.textContent === days+'일');
   });
   try {
-    const resp = await fetch('/dashboard-data?user=' + encodeURIComponent(currentUser) + '&days=' + days);
-    const data = await resp.json();
+    const data = NutriLocalDB.getDashboard(currentUser, days);
     if (!data.daily || data.daily.length === 0) {
       document.getElementById('dashEmpty').style.display = 'block';
       document.getElementById('dashContent').style.display = 'none';
@@ -1691,24 +1937,16 @@ async function saveGoal() {
   const protein = parseInt(document.getElementById('goalProtein').value);
   if (!calories || !protein) { alert('모든 필드를 입력하세요.'); return; }
   try {
-    const resp = await fetch('/save-goal', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({nickname: currentUser, calories: calories, protein: protein})
-    });
-    const data = await resp.json();
-    if (data.saved) {
-      alert('목표가 저장되었습니다.');
-      closeGoalModal();
-      loadDashboard(30); // 대시보드 새로고침
-    }
+    NutriLocalDB.saveGoals(currentUser, calories, protein);
+    alert('목표가 저장되었습니다.');
+    closeGoalModal();
+    loadDashboard(30);
   } catch(e) { alert('목표 저장 실패: ' + e.message); }
 }
 async function loadTodayProgress() {
   if (!currentUser) return;
   try {
-    const resp = await fetch('/today-progress?user=' + encodeURIComponent(currentUser));
-    const data = await resp.json();
+    const data = NutriLocalDB.getTodayProgress(currentUser);
     renderTodayProgress(data);
   } catch(e) { console.error('오늘의 현황 로드 실패:', e); }
 }
@@ -1748,8 +1986,7 @@ function renderTodayProgress(data) {
 async function loadWeeklyMacro() {
   if (!currentUser) return;
   try {
-    const resp = await fetch('/weekly-macro?user=' + encodeURIComponent(currentUser));
-    const data = await resp.json();
+    const data = NutriLocalDB.getWeeklyMacro(currentUser);
     renderWeeklyMacro(data);
   } catch(e) { console.error('주간 매크로 로드 실패:', e); }
 }
@@ -1808,8 +2045,7 @@ function renderWeeklyMacro(data) {
 async function loadProteinTiming() {
   if (!currentUser) return;
   try {
-    const resp = await fetch('/protein-timing?user=' + encodeURIComponent(currentUser));
-    const data = await resp.json();
+    const data = NutriLocalDB.getProteinTiming(currentUser);
     renderProteinTiming(data);
   } catch(e) { console.error('단백질 타이밍 로드 실패:', e); }
 }
@@ -2948,7 +3184,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
     # ── 로그인 API ──
     def _handle_login(self):
-        """닉네임 로그인 — 사용자 등록/확인"""
+        """닉네임 로그인 — 데이터는 클라이언트 localStorage에 저장됨"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')
@@ -2957,36 +3193,21 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             if not nickname or len(nickname) < 1:
                 self._json_response(400, {"error": "닉네임을 입력하세요."})
                 return
-            log = _load_meal_log()
-            is_new = nickname not in log.get("users", {})
-            if is_new:
-                log.setdefault("users", {})[nickname] = {"created": time.strftime("%Y-%m-%d"), "meals": []}
-                _save_meal_log(log)
-            meal_count = len(log["users"][nickname].get("meals", []))
-            print(f"[로그인] {nickname} ({'신규' if is_new else '기존'}, 기록 {meal_count}건)")
-            self._json_response(200, {"nickname": nickname, "is_new": is_new, "meal_count": meal_count})
+            print(f"[로그인] {nickname}")
+            self._json_response(200, {"nickname": nickname, "is_new": False, "meal_count": 0})
         except Exception as e:
             self._json_response(500, {"error": f"로그인 에러: {str(e)}"})
 
-    # ── 식사 기록 저장 API ──
+    # ── 식사 기록 저장 API (레거시 — 클라이언트 localStorage로 이전됨) ──
     def _handle_save_meal(self):
-        """분석 결과를 식사 기록으로 저장"""
+        """호환용 — 실제 저장은 클라이언트 localStorage에서 처리"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            req = json.loads(body)
-            nickname = req.get('nickname', '').strip()
-            meal_data = req.get('meal_data', {})
-            if not nickname:
-                self._json_response(400, {"error": "닉네임이 필요합니다."})
-                return
-            if not meal_data.get('foods'):
-                self._json_response(400, {"error": "저장할 음식 데이터가 없습니다."})
-                return
-            record_id = _save_meal_record(nickname, meal_data)
-            self._json_response(200, {"saved": True, "record_id": record_id})
+            if content_length > 0:
+                self.rfile.read(content_length)  # body 소비
+            self._json_response(200, {"saved": True, "record_id": "local"})
         except Exception as e:
-            self._json_response(500, {"error": f"저장 에러: {str(e)}"})
+            self._json_response(200, {"saved": True, "record_id": "local"})
 
     # ── 대시보드 데이터 API ──
     def _handle_report(self):
@@ -3035,80 +3256,30 @@ class NutriLensHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json_response(500, {"error": f"신고 에러: {str(e)}"})
 
-    # ── Feature 1: 목표 저장 API ──
+    # ── Feature 1: 목표 저장 API (레거시 — localStorage로 이전) ──
     def _handle_save_goal(self):
-        """일일 목표 저장"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            req = json.loads(body)
-            nickname = req.get('nickname', '').strip()
-            calories = int(req.get('calories', 1800))
-            protein = int(req.get('protein', 120))
-            if not nickname:
-                self._json_response(400, {"error": "닉네임이 필요합니다."})
-                return
-            _save_user_goals(nickname, calories, protein)
-            self._json_response(200, {"saved": True, "calories": calories, "protein": protein})
-        except Exception as e:
-            self._json_response(500, {"error": f"목표 저장 에러: {str(e)}"})
+            if content_length > 0: self.rfile.read(content_length)
+            self._json_response(200, {"saved": True})
+        except:
+            self._json_response(200, {"saved": True})
 
-    # ── Feature 1: 오늘 진행 상황 API ──
+    # ── Feature 1: 오늘 진행 상황 API (레거시 — localStorage로 이전) ──
     def _handle_today_progress(self):
-        """오늘의 칼로리·단백질 진행 상황"""
-        try:
-            qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
-            nickname = qs.get('user', [''])[0]
-            if not nickname:
-                self._json_response(400, {"error": "사용자명이 필요합니다."})
-                return
-            data = _get_today_progress(nickname)
-            self._json_response(200, data)
-        except Exception as e:
-            self._json_response(500, {"error": f"진행 상황 조회 에러: {str(e)}"})
+        self._json_response(200, {"calories":0,"protein":0,"goal_calories":1800,"goal_protein":120,"remaining_calories":1800,"remaining_protein":120,"calorie_pct":0,"protein_pct":0})
 
-    # ── Feature 2: 주간 매크로 분석 API ──
+    # ── Feature 2: 주간 매크로 분석 API (레거시 — localStorage로 이전) ──
     def _handle_weekly_macro(self):
-        """주간 매크로 비율 분석"""
-        try:
-            qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
-            nickname = qs.get('user', [''])[0]
-            if not nickname:
-                self._json_response(400, {"error": "사용자명이 필요합니다."})
-                return
-            data = _get_weekly_macro_analysis(nickname)
-            self._json_response(200, data)
-        except Exception as e:
-            self._json_response(500, {"error": f"주간 매크로 분석 에러: {str(e)}"})
+        self._json_response(200, {"days":[],"avg_ratio":{},"feedback":""})
 
-    # ── Feature 3: 단백질 타이밍 분석 API ──
+    # ── Feature 3: 단백질 타이밍 분석 API (레거시 — localStorage로 이전) ──
     def _handle_protein_timing(self):
-        """단백질 섭취 타이밍 분석"""
-        try:
-            qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
-            nickname = qs.get('user', [''])[0]
-            if not nickname:
-                self._json_response(400, {"error": "사용자명이 필요합니다."})
-                return
-            data = _get_protein_timing_analysis(nickname)
-            self._json_response(200, data)
-        except Exception as e:
-            self._json_response(500, {"error": f"단백질 타이밍 분석 에러: {str(e)}"})
+        self._json_response(200, {"timing_slots":{},"avg_per_slot":{},"threshold":30,"feedback":[]})
 
-    # ── 대시보드 데이터 API ──
+    # ── 대시보드 데이터 API (레거시 — localStorage로 이전) ──
     def _handle_dashboard_data(self):
-        """대시보드용 집계 데이터 반환"""
-        try:
-            qs = parse_qs(self.path.split('?', 1)[1]) if '?' in self.path else {}
-            nickname = qs.get('user', [''])[0]
-            days = int(qs.get('days', ['30'])[0])
-            if not nickname:
-                self._json_response(400, {"error": "사용자명이 필요합니다."})
-                return
-            data = _get_dashboard_data(nickname, days)
-            self._json_response(200, data)
-        except Exception as e:
-            self._json_response(500, {"error": f"대시보드 에러: {str(e)}"})
+        self._json_response(200, {"daily":[],"meal_pattern":{},"balance":{},"top_foods":[],"warnings":[],"weekly_report":"","total_meals":0,"total_days":0})
 
     def _json_response(self, code, data):
         self.send_response(code)
