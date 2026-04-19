@@ -966,6 +966,21 @@ HTML_PAGE = """<!DOCTYPE html>
   .toast.show { opacity:1; transform:translateY(0); }
   .toast.error { background:#7f1d1d; border:1px solid #f87171; }
   .toast.success { background:#14532d; border:1px solid #4ade80; }
+
+  /* 식사 기록 */
+  .meal-record { background:#1e1e3a; border-radius:12px; padding:14px; margin-bottom:10px; border:1px solid #2a2a4a; }
+  .meal-record-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .meal-record-date { color:#888; font-size:0.8em; }
+  .meal-record-cal { color:#60a5fa; font-weight:700; font-size:0.95em; }
+  .meal-record-foods { display:flex; flex-wrap:wrap; gap:6px; }
+  .meal-food-tag { background:#2a2a4a; color:#ccc; padding:4px 10px; border-radius:8px; font-size:0.8em; }
+  .meal-record-macros { display:flex; gap:12px; margin-top:8px; font-size:0.78em; color:#888; }
+  .meal-record-detail { display:none; margin-top:10px; padding-top:10px; border-top:1px solid #2a2a4a; }
+  .meal-record-detail table { width:100%; font-size:0.8em; border-collapse:collapse; }
+  .meal-record-detail th { text-align:left; color:#888; padding:4px 8px; border-bottom:1px solid #2a2a4a; }
+  .meal-record-detail td { padding:4px 8px; color:#ddd; border-bottom:1px solid #1a1a35; }
+  .meal-record-toggle { color:#818cf8; font-size:0.78em; cursor:pointer; margin-left:8px; }
+  .meal-history-more { text-align:center; padding:12px; color:#818cf8; cursor:pointer; font-size:0.9em; }
 </style>
 </head>
 <body>
@@ -1266,6 +1281,15 @@ if (!localStorage.getItem('nutrilens_user')) {
         <div class="chart-title">단백질 섭취 타이밍</div>
         <canvas id="proteinTimingChart"></canvas>
         <div id="proteinTimingFeedback" style="margin-top:12px; padding-top:12px; border-top:1px solid #2a2a4a;"></div>
+      </div>
+
+      <!-- 식사 기록 상세 보기 -->
+      <div class="chart-card" id="mealHistoryCard">
+        <div class="chart-title" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>식사 기록</span>
+          <span id="mealHistoryCount" style="font-size:0.8em; color:#888;"></span>
+        </div>
+        <div id="mealHistoryList" style="margin-top:12px;"></div>
       </div>
 
     </div><!-- /dashContent -->
@@ -1820,6 +1844,96 @@ function renderDashboard(data) {
 
   // Feature 3: 단백질 타이밍 분석
   loadProteinTiming();
+
+  // Feature 4: 식사 기록 상세
+  loadMealHistory();
+}
+
+let mealHistoryShowAll = false;
+
+function loadMealHistory() {
+  if (!currentUser) return;
+  const raw = NutriLocalDB.load(currentUser);
+  if (!raw || !raw.meals || raw.meals.length === 0) {
+    document.getElementById('mealHistoryList').innerHTML = '<div style="color:#666; text-align:center; padding:20px;">아직 식사 기록이 없습니다.</div>';
+    document.getElementById('mealHistoryCount').textContent = '';
+    return;
+  }
+  const meals = raw.meals.slice().reverse(); // 최신순
+  const total = meals.length;
+  const showCount = mealHistoryShowAll ? total : Math.min(10, total);
+  document.getElementById('mealHistoryCount').textContent = '총 ' + total + '건';
+
+  let html = '';
+  for (let i = 0; i < showCount; i++) {
+    const m = meals[i];
+    const dt = new Date(m.timestamp || m.date);
+    const dateStr = (dt.getMonth()+1) + '/' + dt.getDate() + ' ' + String(dt.getHours()).padStart(2,'0') + ':' + String(dt.getMinutes()).padStart(2,'0');
+    const foods = m.foods || [];
+    const summary = m.summary || {};
+    const cal = Math.round(summary.calories || foods.reduce((s,f) => s + (f.calories_kcal||0), 0));
+    const prot = Math.round((summary.protein || foods.reduce((s,f) => s + (f.protein_g||0), 0)) * 10) / 10;
+    const carbs = Math.round((summary.carbs || foods.reduce((s,f) => s + (f.carbs_g||0), 0)) * 10) / 10;
+    const fat = Math.round((summary.fat || foods.reduce((s,f) => s + (f.fat_g||0), 0)) * 10) / 10;
+
+    html += '<div class="meal-record">';
+    html += '<div class="meal-record-header">';
+    html += '<span class="meal-record-date">' + dateStr + '</span>';
+    html += '<span><span class="meal-record-cal">' + cal + 'kcal</span>';
+    html += '<span class="meal-record-toggle" onclick="toggleMealDetail(' + i + ')">상세 ▾</span></span>';
+    html += '</div>';
+
+    // 음식 태그
+    html += '<div class="meal-record-foods">';
+    foods.forEach(f => {
+      const sv = f.estimated_serving_g ? ' (' + f.estimated_serving_g + 'g)' : '';
+      html += '<span class="meal-food-tag">' + (f.name_ko || '?') + sv + '</span>';
+    });
+    html += '</div>';
+
+    // 매크로 요약
+    html += '<div class="meal-record-macros">';
+    html += '<span>단백질 ' + prot + 'g</span>';
+    html += '<span>탄수화물 ' + carbs + 'g</span>';
+    html += '<span>지방 ' + fat + 'g</span>';
+    html += '</div>';
+
+    // 상세 테이블 (접혀있음)
+    html += '<div class="meal-record-detail" id="mealDetail_' + i + '">';
+    if (foods.length > 0) {
+      html += '<table><tr><th>음식</th><th>중량</th><th>칼로리</th><th>단백질</th><th>탄수</th><th>지방</th><th>출처</th></tr>';
+      foods.forEach(f => {
+        const src = f.source === 'GOLD_REF' ? '✅검증' : f.source === 'GOLD_DB' ? '📊DB' : f.source === 'DB_MATCHED' ? '📋DB' : '🤖AI';
+        html += '<tr>';
+        html += '<td>' + (f.name_ko || '?') + '</td>';
+        html += '<td>' + (f.estimated_serving_g || '-') + 'g</td>';
+        html += '<td>' + (Math.round(f.calories_kcal||0)) + '</td>';
+        html += '<td>' + (Math.round((f.protein_g||0)*10)/10) + 'g</td>';
+        html += '<td>' + (Math.round((f.carbs_g||0)*10)/10) + 'g</td>';
+        html += '<td>' + (Math.round((f.fat_g||0)*10)/10) + 'g</td>';
+        html += '<td>' + src + '</td>';
+        html += '</tr>';
+      });
+      html += '</table>';
+    }
+    html += '</div>';
+    html += '</div>';
+  }
+
+  if (!mealHistoryShowAll && total > 10) {
+    html += '<div class="meal-history-more" onclick="showAllMealHistory()">이전 기록 모두 보기 (' + (total - 10) + '건 더)</div>';
+  }
+  document.getElementById('mealHistoryList').innerHTML = html;
+}
+
+function toggleMealDetail(idx) {
+  const el = document.getElementById('mealDetail_' + idx);
+  if (el) el.style.display = el.style.display === 'none' || !el.style.display ? 'block' : 'none';
+}
+
+function showAllMealHistory() {
+  mealHistoryShowAll = true;
+  loadMealHistory();
 }
 
 function destroyChart(key) {

@@ -1947,6 +1947,22 @@ def _estimate_realistic_serving(food_name, gold_serving):
     return 100
 
 
+def _cap_nutrients_by_serving(food, serving_g):
+    """영양소(g)가 음식 총 중량(g)을 초과하지 않도록 캡 적용.
+
+    물리적 원칙: 탄수화물+단백질+지방+수분+기타 = 총 중량.
+    따라서 개별 영양소(g)는 절대 총 중량을 넘을 수 없음.
+    예: 30g짜리 빵의 탄수화물이 50g이면 물리적으로 불가능.
+    """
+    if not serving_g or serving_g <= 0:
+        return
+    for field in ('carbs_g', 'protein_g', 'fat_g', 'fiber_g', 'sugar_g'):
+        val = food.get(field, 0) or 0
+        if val > serving_g:
+            food[field] = round(serving_g * 0.85, 1)  # 최대 85% (수분/기타 여유)
+            print(f"[영양소 캡] {food.get('name_ko','?')} {field}: {val}g → {food[field]}g (serving={serving_g}g)")
+
+
 def match_with_db(analysis, foods_db):
     """
     AI 분석 결과를 DB와 매칭하여 보정
@@ -1988,6 +2004,9 @@ def match_with_db(analysis, foods_db):
             food['sodium_mg'] = round(gold_data.get('sodium', 0) * ratio, 1)
             food['sugar_g'] = round(gold_data.get('sugar', 0) * ratio, 1)
             food['source'] = 'GOLD_REF' if gold_data.get('source') == 'core' else 'GOLD_DB'
+
+            # ── 안전장치: 영양소(g)는 음식 총 중량(g)을 초과할 수 없음 ──
+            _cap_nutrients_by_serving(food, effective_serving)
             continue
 
         # ── 2순위: 기존 SQLite DB (품질 필터 + 관련성 검증) ──
@@ -2048,11 +2067,19 @@ def match_with_db(analysis, foods_db):
                     continue
 
                 food['source'] = 'DB_MATCHED'
+
+                # ── 안전장치: 영양소(g)는 음식 총 중량(g)을 초과할 수 없음 ──
+                db_effective_serving = ai_serving if ai_serving > 0 else db_serving
+                _cap_nutrients_by_serving(food, db_effective_serving)
                 continue
 
         # ── 3순위: AI 추정값 그대로 유지 ──
         food['db_matched'] = False
         food['source'] = 'AI_ESTIMATED'
+        # AI 추정값에도 안전장치 적용
+        ai_sv = food.get('estimated_serving_g') or 0
+        if ai_sv > 0:
+            _cap_nutrients_by_serving(food, ai_sv)
 
     # meal_summary 재계산
     if "meal_summary" in analysis:
