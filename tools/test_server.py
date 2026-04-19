@@ -1462,6 +1462,21 @@ function switchTab(tab) {
 // 모든 식단 기록/목표를 사용자 핸드폰에 저장
 // 서버 배포와 무관하게 데이터 유지됨
 // ══════════════════════════════════════════════
+// ── 로컬 시간 유틸리티 (사용자의 현재 시간대 기준) ──
+function _localNow() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  return {
+    date: y + '-' + m + '-' + d,       // "2026-04-19" (로컬)
+    time: hh + ':' + mm,                // "13:05" (로컬)
+  };
+}
+function _localToday() { return _localNow().date; }
+
 const NutriLocalDB = {
   _key(user) { return 'nutrilens_data_' + user; },
 
@@ -1471,7 +1486,7 @@ const NutriLocalDB = {
       const raw = localStorage.getItem(this._key(user));
       if (raw) return JSON.parse(raw);
     } catch(e) { console.warn('데이터 로드 실패:', e); }
-    return { created: new Date().toISOString().slice(0,10), meals: [], goals: { calories: 1800, protein: 120 } };
+    return { created: _localToday(), meals: [], goals: { calories: 1800, protein: 120 } };
   },
 
   // 전체 데이터 저장
@@ -1484,7 +1499,7 @@ const NutriLocalDB = {
   addMeal(user, analysisData) {
     if (!user || !analysisData || !analysisData.foods || analysisData.foods.length === 0) return null;
     const data = this.load(user);
-    const now = new Date();
+    const kr = _localNow();
     const foods = analysisData.foods.map(f => ({
       name: f.name_ko || '?',
       calories: f.calories_kcal || 0,
@@ -1499,8 +1514,8 @@ const NutriLocalDB = {
     const summary = analysisData.meal_summary || {};
     const record = {
       id: Math.random().toString(36).substr(2, 8),
-      date: now.toISOString().slice(0,10),
-      time: now.toTimeString().slice(0,5),
+      date: kr.date,
+      time: kr.time,
       meal_type: summary.meal_type || '식사',
       foods: foods,
       summary: {
@@ -1537,7 +1552,7 @@ const NutriLocalDB = {
   // 오늘 진행상황
   getTodayProgress(user) {
     const data = this.load(user);
-    const today = new Date().toISOString().slice(0,10);
+    const today = _localToday();
     const todayMeals = data.meals.filter(m => m.date === today);
     const totalCal = todayMeals.reduce((s,m) => s + (m.summary.total_calories || 0), 0);
     const totalProt = todayMeals.reduce((s,m) => s + (m.summary.total_protein || 0), 0);
@@ -1558,7 +1573,8 @@ const NutriLocalDB = {
   getWeeklyMacro(user) {
     const data = this.load(user);
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
-    const cutoffStr = cutoff.toISOString().slice(0,10);
+    const cy = cutoff.getFullYear(), cm = String(cutoff.getMonth()+1).padStart(2,'0'), cd = String(cutoff.getDate()).padStart(2,'0');
+    const cutoffStr = cy + '-' + cm + '-' + cd;
     const recent = data.meals.filter(m => m.date >= cutoffStr);
     if (recent.length === 0) return { days: [], avg_ratio: {}, feedback: '' };
 
@@ -1603,7 +1619,8 @@ const NutriLocalDB = {
   getProteinTiming(user) {
     const data = this.load(user);
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
-    const cutoffStr = cutoff.toISOString().slice(0,10);
+    const cy = cutoff.getFullYear(), cm = String(cutoff.getMonth()+1).padStart(2,'0'), cd = String(cutoff.getDate()).padStart(2,'0');
+    const cutoffStr = cy + '-' + cm + '-' + cd;
     const recent = data.meals.filter(m => m.date >= cutoffStr);
 
     const timing = { '아침': {count:0,total:0}, '점심': {count:0,total:0}, '저녁': {count:0,total:0}, '간식': {count:0,total:0} };
@@ -1635,7 +1652,8 @@ const NutriLocalDB = {
     if (!data.meals || data.meals.length === 0) return empty;
 
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
-    const cutoffStr = cutoff.toISOString().slice(0,10);
+    const cy = cutoff.getFullYear(), cm = String(cutoff.getMonth()+1).padStart(2,'0'), cd = String(cutoff.getDate()).padStart(2,'0');
+    const cutoffStr = cy + '-' + cm + '-' + cd;
     const recent = data.meals.filter(m => m.date >= cutoffStr);
     if (recent.length === 0) return empty;
 
@@ -1695,7 +1713,7 @@ const NutriLocalDB = {
     if (cp>65) warnings.push({type:'warning',icon:'🍚',msg:'탄수화물 비율 '+cp+'%',detail:'권장 50-65% 초과'});
 
     // 주간 리포트
-    const wa = new Date(); wa.setDate(wa.getDate()-7); const waStr=wa.toISOString().slice(0,10);
+    const wa = new Date(); wa.setDate(wa.getDate()-7); const waStr=wa.getFullYear()+'-'+String(wa.getMonth()+1).padStart(2,'0')+'-'+String(wa.getDate()).padStart(2,'0');
     const tw = dailySorted.filter(d=>d.date>=waStr);
     let weeklyReport = '이번 주 기록이 없습니다.';
     if (tw.length>0) {
@@ -1868,13 +1886,17 @@ function loadMealHistory() {
   for (let i = 0; i < showCount; i++) {
     const m = meals[i];
     const dt = new Date(m.timestamp || m.date);
-    const dateStr = (dt.getMonth()+1) + '/' + dt.getDate() + ' ' + String(dt.getHours()).padStart(2,'0') + ':' + String(dt.getMinutes()).padStart(2,'0');
+    // 날짜: date+time 분리 저장 또는 timestamp
+    const dateStr = m.date && m.time
+      ? (parseInt(m.date.slice(5,7))) + '/' + (parseInt(m.date.slice(8,10))) + ' ' + m.time
+      : (() => { const d = new Date(m.timestamp || m.date); return (d.getMonth()+1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); })();
     const foods = m.foods || [];
     const summary = m.summary || {};
-    const cal = Math.round(summary.calories || foods.reduce((s,f) => s + (f.calories_kcal||0), 0));
-    const prot = Math.round((summary.protein || foods.reduce((s,f) => s + (f.protein_g||0), 0)) * 10) / 10;
-    const carbs = Math.round((summary.carbs || foods.reduce((s,f) => s + (f.carbs_g||0), 0)) * 10) / 10;
-    const fat = Math.round((summary.fat || foods.reduce((s,f) => s + (f.fat_g||0), 0)) * 10) / 10;
+    // addMeal 저장 구조: summary.total_calories / foods[].calories
+    const cal = Math.round(summary.total_calories || foods.reduce((s,f) => s + (f.calories || f.calories_kcal || 0), 0));
+    const prot = Math.round((summary.total_protein || foods.reduce((s,f) => s + (f.protein || f.protein_g || 0), 0)) * 10) / 10;
+    const carbs = Math.round((summary.total_carbs || foods.reduce((s,f) => s + (f.carbs || f.carbs_g || 0), 0)) * 10) / 10;
+    const fat = Math.round((summary.total_fat || foods.reduce((s,f) => s + (f.fat || f.fat_g || 0), 0)) * 10) / 10;
 
     html += '<div class="meal-record">';
     html += '<div class="meal-record-header">';
@@ -1883,11 +1905,12 @@ function loadMealHistory() {
     html += '<span class="meal-record-toggle" onclick="toggleMealDetail(' + i + ')">상세 ▾</span></span>';
     html += '</div>';
 
-    // 음식 태그
+    // 음식 태그 (addMeal: name, serving_g / 원본: name_ko, estimated_serving_g)
     html += '<div class="meal-record-foods">';
     foods.forEach(f => {
-      const sv = f.estimated_serving_g ? ' (' + f.estimated_serving_g + 'g)' : '';
-      html += '<span class="meal-food-tag">' + (f.name_ko || '?') + sv + '</span>';
+      const fname = f.name || f.name_ko || '?';
+      const sv = f.serving_g || f.estimated_serving_g;
+      html += '<span class="meal-food-tag">' + fname + (sv ? ' (' + sv + 'g)' : '') + '</span>';
     });
     html += '</div>';
 
@@ -1901,17 +1924,17 @@ function loadMealHistory() {
     // 상세 테이블 (접혀있음)
     html += '<div class="meal-record-detail" id="mealDetail_' + i + '">';
     if (foods.length > 0) {
-      html += '<table><tr><th>음식</th><th>중량</th><th>칼로리</th><th>단백질</th><th>탄수</th><th>지방</th><th>출처</th></tr>';
+      html += '<table><tr><th>음식</th><th>중량</th><th>칼로리</th><th>단백질</th><th>탄수</th><th>지방</th></tr>';
       foods.forEach(f => {
-        const src = f.source === 'GOLD_REF' ? '✅검증' : f.source === 'GOLD_DB' ? '📊DB' : f.source === 'DB_MATCHED' ? '📋DB' : '🤖AI';
+        const fname = f.name || f.name_ko || '?';
+        const sv = f.serving_g || f.estimated_serving_g || '-';
         html += '<tr>';
-        html += '<td>' + (f.name_ko || '?') + '</td>';
-        html += '<td>' + (f.estimated_serving_g || '-') + 'g</td>';
-        html += '<td>' + (Math.round(f.calories_kcal||0)) + '</td>';
-        html += '<td>' + (Math.round((f.protein_g||0)*10)/10) + 'g</td>';
-        html += '<td>' + (Math.round((f.carbs_g||0)*10)/10) + 'g</td>';
-        html += '<td>' + (Math.round((f.fat_g||0)*10)/10) + 'g</td>';
-        html += '<td>' + src + '</td>';
+        html += '<td>' + fname + '</td>';
+        html += '<td>' + sv + 'g</td>';
+        html += '<td>' + Math.round(f.calories || f.calories_kcal || 0) + '</td>';
+        html += '<td>' + (Math.round((f.protein || f.protein_g || 0)*10)/10) + 'g</td>';
+        html += '<td>' + (Math.round((f.carbs || f.carbs_g || 0)*10)/10) + 'g</td>';
+        html += '<td>' + (Math.round((f.fat || f.fat_g || 0)*10)/10) + 'g</td>';
         html += '</tr>';
       });
       html += '</table>';
