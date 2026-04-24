@@ -774,7 +774,7 @@ HTML_PAGE = """<!DOCTYPE html>
   .source-ai { background: rgba(251,191,36,0.15); color: #fbbf24; }
   .confidence-bar { height: 4px; background: #2a2a4a; border-radius: 2px; margin-bottom: 14px; overflow: hidden; }
   .confidence-fill { height: 100%; border-radius: 2px; transition: width 0.8s ease; }
-  .nutrition-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .nutrition-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .nutrition-item { text-align: center; padding: 10px 6px; background: #0f0f1a; border-radius: 8px; }
   .nutrition-value { font-size: 1.2em; font-weight: 700; color: #fff; }
   .nutrition-label { font-size: 0.75em; color: #888; margin-top: 2px; }
@@ -782,7 +782,7 @@ HTML_PAGE = """<!DOCTYPE html>
   /* 요약 카드 */
   .summary-card { background: linear-gradient(135deg, #1a1a2e, #1e1e3a); border: 1px solid #3b82f6; border-radius: 16px; padding: 24px; margin-top: 20px; }
   .summary-title { font-size: 1.1em; color: #60a5fa; margin-bottom: 16px; }
-  .summary-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .summary-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
   .stat-item { text-align: center; }
   .stat-value { font-size: 1.5em; font-weight: 700; color: #fff; }
   .stat-label { font-size: 0.8em; color: #888; }
@@ -1731,6 +1731,7 @@ const NutriLocalDB = {
 // ── 식사 기록 저장 (localStorage) ──
 async function saveMealRecord(analysisData) {
   if (!currentUser || !analysisData || !analysisData.foods || analysisData.foods.length === 0) return;
+  if (mealSaved) { console.log('[기록] 이미 저장됨 — 중복 저장 방지'); return; }
   try { NutriLocalDB.addMeal(currentUser, analysisData); }
   catch(e) { console.error('식사 기록 저장 실패:', e); }
 }
@@ -2363,9 +2364,25 @@ async function submitCorrection() {
       }
     }
 
+    // meal_summary 재계산
+    const foods = currentAnalysis.foods || [];
+    if (currentAnalysis.meal_summary) {
+      currentAnalysis.meal_summary.total_calories = Math.round(foods.reduce((a,f) => a + (f.calories_kcal||0), 0));
+      currentAnalysis.meal_summary.total_protein = Math.round(foods.reduce((a,f) => a + (f.protein_g||0), 0) * 10) / 10;
+      currentAnalysis.meal_summary.total_carbs = Math.round(foods.reduce((a,f) => a + (f.carbs_g||0), 0) * 10) / 10;
+      currentAnalysis.meal_summary.total_fat = Math.round(foods.reduce((a,f) => a + (f.fat_g||0), 0) * 10) / 10;
+    }
+
     closeEditModal();
     renderResult(currentAnalysis, isAfterMealDone);
+    recalcTotal();
     saveStateToSession();
+
+    if (data.matched) {
+      showToast(correctedName + ' 영양정보가 업데이트되었습니다.', 'success');
+    } else {
+      showToast(correctedName + '(으)로 변경됨 (DB 미등록 — AI 추정치 유지)', 'success');
+    }
   } catch(e) { showToast('수정 실패: ' + e.message, 'error'); }
 }
 
@@ -2705,19 +2722,23 @@ function updateSharingUI() {
 }
 function recalcTotal() {
   if (!currentAnalysis) return;
-  let tc=0, tp=0, tca=0, tf=0;
+  let tc=0, tp=0, tca=0, tf=0, tsu=0, tso=0;
   (currentAnalysis.foods||[]).forEach((f, i) => {
     const pct = (sharingMode ? (sharingPcts[i] ?? 100) : 100) / 100;
     tc += (f.calories_kcal||0) * pct;
     tp += (f.protein_g||0) * pct;
     tca += (f.carbs_g||0) * pct;
     tf += (f.fat_g||0) * pct;
+    tsu += (f.sugar_g||0) * pct;
+    tso += (f.sodium_mg||0) * pct;
   });
   const el = id => document.getElementById(id);
   if(el('sumCal')) el('sumCal').textContent = Math.round(tc);
   if(el('sumPro')) el('sumPro').textContent = Math.round(tp)+'g';
   if(el('sumCarb')) el('sumCarb').textContent = Math.round(tca)+'g';
   if(el('sumFat')) el('sumFat').textContent = Math.round(tf)+'g';
+  if(el('sumSugar')) el('sumSugar').textContent = Math.round(tsu*10)/10+'g';
+  if(el('sumSodium')) el('sumSodium').textContent = Math.round(tso)+'mg';
 }
 
 // ── 결과 렌더링 ──
@@ -2772,6 +2793,8 @@ function renderResult(data, isAfterMeal) {
       + '<div class="nutrition-item"><div class="nutrition-value" style="color:#60a5fa">'+(food.protein_g||0)+'g</div><div class="nutrition-label">단백질</div></div>'
       + '<div class="nutrition-item"><div class="nutrition-value" style="color:#fbbf24">'+(food.carbs_g||0)+'g</div><div class="nutrition-label">탄수화물</div></div>'
       + '<div class="nutrition-item"><div class="nutrition-value" style="color:#f87171">'+(food.fat_g||0)+'g</div><div class="nutrition-label">지방</div></div>'
+      + '<div class="nutrition-item"><div class="nutrition-value" style="color:#fb923c">'+(food.sugar_g||0)+'g</div><div class="nutrition-label">당류</div></div>'
+      + '<div class="nutrition-item"><div class="nutrition-value" style="color:#a78bfa">'+(food.sodium_mg||0)+'mg</div><div class="nutrition-label">나트륨</div></div>'
       + '</div>'
       + sharingHtml
       + '</div>';
@@ -2792,6 +2815,8 @@ function renderResult(data, isAfterMeal) {
     + '<div class="stat-item"><div class="stat-value" style="color:#60a5fa" id="sumPro">'+(summary.total_protein||0)+'g</div><div class="stat-label">단백질</div></div>'
     + '<div class="stat-item"><div class="stat-value" style="color:#fbbf24" id="sumCarb">'+(summary.total_carbs||0)+'g</div><div class="stat-label">탄수화물</div></div>'
     + '<div class="stat-item"><div class="stat-value" style="color:#f87171" id="sumFat">'+(summary.total_fat||0)+'g</div><div class="stat-label">지방</div></div>'
+    + '<div class="stat-item"><div class="stat-value" style="color:#fb923c" id="sumSugar">'+Math.round(foods.reduce((a,f)=>a+(f.sugar_g||0),0)*10)/10+'g</div><div class="stat-label">당류</div></div>'
+    + '<div class="stat-item"><div class="stat-value" style="color:#a78bfa" id="sumSodium">'+Math.round(foods.reduce((a,f)=>a+(f.sodium_mg||0),0))+'mg</div><div class="stat-label">나트륨</div></div>'
     + '</div>'
     + '<div class="health-score"><div class="score-circle" style="background:'+scoreColor+'33;border:2px solid '+scoreColor+'"><span style="color:'+scoreColor+'">'+score+'</span></div>'
     + '<div><div style="font-weight:600;margin-bottom:4px">건강 점수 '+score+'/10</div>'
@@ -3302,21 +3327,23 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             gold_key, gold_data = _search_gold(corrected_name)
 
             if gold_data:
-                # 골드 테이블 매칭 성공
-                serving_ratio = (serving_pct / 100)
+                # 골드 테이블 매칭 성공 — 100g당 데이터를 1인분 기준으로 변환
+                base_serving = gold_data.get('serving', 100)  # 기본 1인분 (g)
+                # ratio = (1인분 / 100g) × (양 조절 %)
+                ratio = (base_serving / 100) * (serving_pct / 100)
                 result = {
                     "matched": True,
                     "name_ko": corrected_name,
                     "db_name": gold_key,
                     "source": gold_data.get('source', 'GOLD_DB'),
-                    "calories_kcal": round(gold_data['cal'] * serving_ratio, 1),
-                    "protein_g": round(gold_data['prot'] * serving_ratio, 1),
-                    "carbs_g": round(gold_data['carbs'] * serving_ratio, 1),
-                    "fat_g": round(gold_data['fat'] * serving_ratio, 1),
-                    "fiber_g": round(gold_data.get('fiber', 0) * serving_ratio, 1),
-                    "sodium_mg": round(gold_data.get('sodium', 0) * serving_ratio, 1),
-                    "sugar_g": round(gold_data.get('sugar', 0) * serving_ratio, 1),
-                    "estimated_serving_g": round(gold_data.get('serving', 100) * serving_ratio),
+                    "calories_kcal": round(gold_data['cal'] * ratio, 1),
+                    "protein_g": round(gold_data['prot'] * ratio, 1),
+                    "carbs_g": round(gold_data['carbs'] * ratio, 1),
+                    "fat_g": round(gold_data['fat'] * ratio, 1),
+                    "fiber_g": round(gold_data.get('fiber', 0) * ratio, 1),
+                    "sodium_mg": round(gold_data.get('sodium', 0) * ratio, 1),
+                    "sugar_g": round(gold_data.get('sugar', 0) * ratio, 1),
+                    "estimated_serving_g": round(base_serving * (serving_pct / 100)),
                     "serving_pct": serving_pct,
                     "correction_count": correction_count
                 }
