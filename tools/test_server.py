@@ -79,6 +79,7 @@ def _record_correction(original_name, corrected_name, corrected_serving=None):
     """음식 수정 기록 — 패턴 학습용
 
     동시 호출 시 read-modify-write race condition 방지를 위해 _LOG_LOCK으로 직렬화.
+    P0-4 (2026-05-03): 로컬 저장 후 구글시트로 영구 백업 전송 (lock 밖에서).
     """
     with _LOG_LOCK:
         log = _load_feedback_log()
@@ -94,7 +95,14 @@ def _record_correction(original_name, corrected_name, corrected_serving=None):
         if original_name != corrected_name:
             log["patterns"][key] = log["patterns"].get(key, 0) + 1
         _save_feedback_log(log)
-        return log["patterns"].get(key, 1)
+        count = log["patterns"].get(key, 1)
+
+    # 구글시트 영구 백업 — lock 밖에서 (외부 IO 동안 다른 수정 차단되지 않게)
+    # 같은 음식명 수정만 백업 (의미 없는 자기 자신 수정은 제외)
+    if original_name != corrected_name:
+        _send_feedback_to_sheets(original_name, corrected_name, count)
+
+    return count
 
 def _get_correction_hints():
     """자주 틀리는 패턴을 AI 프롬프트 힌트로 변환"""
@@ -108,7 +116,11 @@ def _get_correction_hints():
 
 # ── 신고 → 구글시트 웹훅 ──
 def _send_report_to_sheets(nickname, food_name, food_data, report_text):
-    """Apps Script 웹훅으로 신고 데이터 전송 (구글시트 기록 + 자동 알림)"""
+    """Apps Script 웹훅으로 신고 데이터 전송 (구글시트 기록 + 자동 알림).
+
+    P0-4 (2026-05-03): payload에 type='report' 필드 추가.
+    같은 웹훅이 feedback도 받으므로 Apps Script가 type 보고 분기.
+    """
     webhook_url = os.environ.get('REPORT_WEBHOOK_URL', '')
     webhook_secret = os.environ.get('REPORT_WEBHOOK_SECRET', '')
     if not webhook_url:
@@ -117,6 +129,7 @@ def _send_report_to_sheets(nickname, food_name, food_data, report_text):
 
     payload = {
         "secret": webhook_secret,
+        "type": "report",  # ← Apps Script가 type 보고 Reports 탭에 기록
         "data": {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "nickname": nickname,
@@ -140,6 +153,47 @@ def _send_report_to_sheets(nickname, food_name, food_data, report_text):
             print(f"[신고-시트] 전송 성공: {result[:100]}")
     except Exception as e:
         print(f"[신고-시트] 전송 실패 (로컬 저장은 완료): {e}")
+
+
+# ── 피드백(음식 수정) → 구글시트 웹훅 ──
+# P0-4 (2026-05-03): Railway 휘발 데이터 영구화.
+# feedback_log.json은 컨테이너 내부 파일이라 재배포마다 사라지므로,
+# 같은 Apps Script 웹훅(REPORT_WEBHOOK_URL)에 type='feedback'으로 보내서
+# 구글시트 'Feedback' 탭에 영구 기록.
+#
+# 메모리 휘발 자체는 그대로 유지 (단순성). 시트의 누적 데이터를 보고
+# 자주 나타나는 패턴은 사장이 직접 CORE_FOODS에 수동 반영하는 워크플로.
+def _send_feedback_to_sheets(original_name, corrected_name, count, nickname=""):
+    """음식 수정 피드백을 구글시트로 전송.
+
+    같은 웹훅 URL을 type='feedback'으로 호출. Apps Script가 Feedback 탭에 행 추가.
+    실패해도 호출자 측 로컬 저장(feedback_log.json)은 이미 완료된 상태.
+    """
+    webhook_url = os.environ.get('REPORT_WEBHOOK_URL', '')
+    webhook_secret = os.environ.get('REPORT_WEBHOOK_SECRET', '')
+    if not webhook_url:
+        return  # 로컬 백업만으로 동작 (개발 환경)
+
+    payload = {
+        "secret": webhook_secret,
+        "type": "feedback",  # ← Apps Script가 type 보고 Feedback 탭에 기록
+        "data": {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "original_name": original_name,
+            "corrected_name": corrected_name,
+            "count": count,
+            "nickname": nickname,
+        }
+    }
+
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(webhook_url, data=data, method='POST')
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"[피드백-시트] {original_name}→{corrected_name} (#{count}) 전송 성공")
+    except Exception as e:
+        print(f"[피드백-시트] 전송 실패 (로컬 저장은 완료): {e}")
 
 # ── 식사 기록 저장 시스템 ──
 MEAL_LOG_PATH = None  # 서버 시작 시 설정
