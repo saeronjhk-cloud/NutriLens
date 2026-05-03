@@ -1,0 +1,48 @@
+# NutriLens 줄바꿈 정책 (2026-05-03)
+# ─────────────────────────────────
+# 목적: Windows·Linux·macOS 어디서 작업해도 git 저장소 안에서는
+#       모든 텍스트 파일이 LF로 통일되도록 강제.
+#       유령 변경(LF/CRLF 차이로 인한 가짜 modified)을 영구 차단.
+
+# ── 기본 정책 ──
+# 텍스트 파일은 git이 자동 감지, 저장은 LF로 강제
+* text=auto eol=lf
+
+# ── 텍스트 파일 명시 (안전장치) ──
+*.py        text eol=lf
+*.html      text eol=lf
+*.js        text eol=lf
+*.css       text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.gs        text eol=lf
+*.gitignore text eol=lf
+Procfile    text eol=lf
+
+# ── Windows 전용 스크립트 (CRLF 필수) ──
+# Windows cmd는 CRLF가 아니면 파싱 실패함
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# ── 바이너리 파일 (줄바꿈 변환 금지) ──
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.sqlite    binary
+*.db        binary
+*.xlsx      binary
+*.xls       binary
+*.docx      binary
+*.doc       binary
+*.pdf       binary
+*.zip       binary
+*.tar       binary
+*.gz        binary
+*.7z        binary
