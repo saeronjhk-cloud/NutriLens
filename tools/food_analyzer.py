@@ -17,6 +17,7 @@ import sys
 import json
 import base64
 import argparse
+import threading
 from pathlib import Path
 
 # ── .env 파일 로드 ──
@@ -39,8 +40,11 @@ load_env()
 
 # ── 음식 DB 로드 ──
 # DB 연결을 전역으로 유지 (SQLite 검색용)
+# ThreadingHTTPServer 사용 시 같은 connection을 여러 thread가 공유하므로
+# check_same_thread=False + 명시적 Lock으로 동시성 보호
 _DB_CONN = None
 _DB_PATH = None
+_DB_LOCK = threading.Lock()
 
 def load_food_db(db_path=None):
     """SQLite DB 연결을 열고 아이템 수만 반환 (전체를 메모리에 올리지 않음)"""
@@ -64,13 +68,16 @@ def load_food_db(db_path=None):
         return _load_xlsx(p)
 
     # SQLite: 연결만 열고 전체 로드 안 함
-    _DB_CONN = sqlite3.connect(str(p))
+    # check_same_thread=False — ThreadingHTTPServer 환경에서 공유 connection 사용 가능하게
+    # 단, 모든 cursor 호출은 _DB_LOCK으로 직렬화해야 함 (search_food_db 참조)
+    _DB_CONN = sqlite3.connect(str(p), check_same_thread=False)
     _DB_CONN.row_factory = sqlite3.Row
     _DB_PATH = str(p)
 
-    cur = _DB_CONN.cursor()
-    cur.execute("SELECT COUNT(*) FROM foods")
-    count = cur.fetchone()[0]
+    with _DB_LOCK:
+        cur = _DB_CONN.cursor()
+        cur.execute("SELECT COUNT(*) FROM foods")
+        count = cur.fetchone()[0]
 
     # 호환성: 기존 코드에서 len(FOODS_DB) 쓰므로 count를 가진 리스트처럼 보이는 객체 반환
     return _FoodDBProxy(count)
@@ -119,36 +126,42 @@ def _is_relevant_match(query, db_name):
 
 
 def search_food_db(name):
-    """SQLite에서 음식 이름으로 빠르게 검색 (인덱스 활용)"""
+    """SQLite에서 음식 이름으로 빠르게 검색 (인덱스 활용)
+
+    ThreadingHTTPServer 환경 대응:
+    공유 _DB_CONN을 사용하므로 모든 cursor 호출을 _DB_LOCK으로 직렬화.
+    SQLite는 단일 connection에 대해 한 번에 하나의 transaction만 허용.
+    """
     global _DB_CONN
     if _DB_CONN is None:
         return None, []
 
-    cur = _DB_CONN.cursor()
+    with _DB_LOCK:
+        cur = _DB_CONN.cursor()
 
-    # 1) 정확 매칭 (인덱스 사용 → 즉시)
-    cur.execute("SELECT * FROM foods WHERE name_ko = ? LIMIT 1", (name,))
-    row = cur.fetchone()
-    if row:
-        return dict(row), []
+        # 1) 정확 매칭 (인덱스 사용 → 즉시)
+        cur.execute("SELECT * FROM foods WHERE name_ko = ? LIMIT 1", (name,))
+        row = cur.fetchone()
+        if row:
+            return dict(row), []
 
-    # 2) 부분 매칭 (LIKE) + 관련성 필터
-    cur.execute("SELECT * FROM foods WHERE name_ko LIKE ? LIMIT 20", (f"%{name}%",))
-    raw_partials = [dict(r) for r in cur.fetchall()]
-    # 엉뚱한 매칭 걸러내기 (예: "귤" → "레귤러 피자" 제거)
-    partials = [r for r in raw_partials if _is_relevant_match(name, r.get('name_ko', ''))]
-    if partials:
-        return None, partials[:5]
+        # 2) 부분 매칭 (LIKE) + 관련성 필터
+        cur.execute("SELECT * FROM foods WHERE name_ko LIKE ? LIMIT 20", (f"%{name}%",))
+        raw_partials = [dict(r) for r in cur.fetchall()]
+        # 엉뚱한 매칭 걸러내기 (예: "귤" → "레귤러 피자" 제거)
+        partials = [r for r in raw_partials if _is_relevant_match(name, r.get('name_ko', ''))]
+        if partials:
+            return None, partials[:5]
 
-    # 3) 역방향 부분 매칭: DB 이름이 AI 이름에 포함되는 경우
-    # 예: AI가 "김치찌개" → DB에 "김치" 매칭
-    if len(name) >= 3:  # 최소 3글자 이상일 때만 역방향 매칭
-        cur.execute("SELECT * FROM foods WHERE ? LIKE '%' || name_ko || '%' AND length(name_ko) >= 2 LIMIT 5", (name,))
-        reverse_partials = [dict(r) for r in cur.fetchall()]
-        if reverse_partials:
-            return None, reverse_partials
+        # 3) 역방향 부분 매칭: DB 이름이 AI 이름에 포함되는 경우
+        # 예: AI가 "김치찌개" → DB에 "김치" 매칭
+        if len(name) >= 3:  # 최소 3글자 이상일 때만 역방향 매칭
+            cur.execute("SELECT * FROM foods WHERE ? LIKE '%' || name_ko || '%' AND length(name_ko) >= 2 LIMIT 5", (name,))
+            reverse_partials = [dict(r) for r in cur.fetchall()]
+            if reverse_partials:
+                return None, reverse_partials
 
-    return None, []
+        return None, []
 
 
 def _load_sqlite(db_path):

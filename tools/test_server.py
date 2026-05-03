@@ -20,8 +20,9 @@ import urllib.request
 import urllib.error
 import uuid
 import time
+import threading
 from pathlib import Path
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs
 import io
 import re
@@ -34,12 +35,22 @@ sys.path.insert(0, str(TOOLS_DIR))
 # food_analyzer 모듈 임포트
 from food_analyzer import load_food_db, match_with_db, SYSTEM_PROMPT
 
+# ── 동시성 보호 (ThreadingHTTPServer 대응) ──
+# 글로벌 dict/파일에 동시 접근하는 부분을 직렬화
+_SESSIONS_LOCK = threading.Lock()  # MEAL_SESSIONS 보호
+_LOG_LOCK = threading.Lock()       # feedback/meal/report 로그 파일 read-modify-write 보호
+
+# ── 요청 크기 제한 (DoS 방지) ──
+# 동시 처리가 켜진 환경에서 누군가 100MB 요청을 N개 보내면 메모리 폭발
+# OpenAI Vision도 20MB 한도이므로 10MB로 충분
+MAX_REQUEST_BYTES = 10 * 1024 * 1024  # 10MB
+
 # ── 식사 세션 관리 (메모리 저장, 1시간 TTL) ──
 MEAL_SESSIONS = {}   # { session_id: { foods:[], created: timestamp } }
 SESSION_TTL = 3600   # 1시간
 
 def _cleanup_sessions():
-    """만료된 세션 정리"""
+    """만료된 세션 정리 — 호출자가 _SESSIONS_LOCK을 잡고 있어야 함"""
     now = time.time()
     expired = [sid for sid, s in MEAL_SESSIONS.items() if now - s['created'] > SESSION_TTL]
     for sid in expired:
@@ -65,21 +76,25 @@ def _save_feedback_log(log):
             json.dump(log, f, ensure_ascii=False, indent=1)
 
 def _record_correction(original_name, corrected_name, corrected_serving=None):
-    """음식 수정 기록 — 패턴 학습용"""
-    log = _load_feedback_log()
-    # 수정 기록 추가
-    log["corrections"].append({
-        "original": original_name,
-        "corrected": corrected_name,
-        "serving": corrected_serving,
-        "timestamp": time.time()
-    })
-    # 패턴 집계 (AI가 X라고 했을 때 실제 Y인 횟수)
-    key = f"{original_name}→{corrected_name}"
-    if original_name != corrected_name:
-        log["patterns"][key] = log["patterns"].get(key, 0) + 1
-    _save_feedback_log(log)
-    return log["patterns"].get(key, 1)
+    """음식 수정 기록 — 패턴 학습용
+
+    동시 호출 시 read-modify-write race condition 방지를 위해 _LOG_LOCK으로 직렬화.
+    """
+    with _LOG_LOCK:
+        log = _load_feedback_log()
+        # 수정 기록 추가
+        log["corrections"].append({
+            "original": original_name,
+            "corrected": corrected_name,
+            "serving": corrected_serving,
+            "timestamp": time.time()
+        })
+        # 패턴 집계 (AI가 X라고 했을 때 실제 Y인 횟수)
+        key = f"{original_name}→{corrected_name}"
+        if original_name != corrected_name:
+            log["patterns"][key] = log["patterns"].get(key, 0) + 1
+        _save_feedback_log(log)
+        return log["patterns"].get(key, 1)
 
 def _get_correction_hints():
     """자주 틀리는 패턴을 AI 프롬프트 힌트로 변환"""
@@ -147,11 +162,10 @@ def _save_meal_log(log):
             json.dump(log, f, ensure_ascii=False, indent=1)
 
 def _save_meal_record(nickname, meal_data):
-    """한 끼 식사 기록 저장"""
-    log = _load_meal_log()
-    if nickname not in log["users"]:
-        log["users"][nickname] = {"created": time.strftime("%Y-%m-%d"), "meals": []}
+    """한 끼 식사 기록 저장
 
+    동시 호출 시 read-modify-write race condition 방지를 위해 _LOG_LOCK으로 직렬화.
+    """
     foods_list = []
     for food in meal_data.get("foods", []):
         foods_list.append({
@@ -184,8 +198,12 @@ def _save_meal_record(nickname, meal_data):
         }
     }
 
-    log["users"][nickname]["meals"].append(record)
-    _save_meal_log(log)
+    with _LOG_LOCK:
+        log = _load_meal_log()
+        if nickname not in log["users"]:
+            log["users"][nickname] = {"created": time.strftime("%Y-%m-%d"), "meals": []}
+        log["users"][nickname]["meals"].append(record)
+        _save_meal_log(log)
     print(f"[기록] {nickname}: {record['date']} {record['time']} - {len(foods_list)}개 음식, {record['summary']['total_calories']}kcal 저장")
     return record["id"]
 
@@ -2892,12 +2910,19 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def _parse_multipart(self):
-        """multipart form data 파싱 — 파일 여러개 지원"""
+        """multipart form data 파싱 — 파일 여러개 지원
+
+        DoS 방지: Content-Length가 MAX_REQUEST_BYTES(10MB) 초과면 413 응답.
+        OpenAI Vision도 20MB 한도이므로 10MB 이내에서 충분.
+        """
         content_type = self.headers.get('Content-Type', '')
         if 'multipart/form-data' not in content_type:
             return None, None, "multipart/form-data 필요"
 
         content_length = int(self.headers.get('Content-Length', 0))
+        if content_length > MAX_REQUEST_BYTES:
+            mb = MAX_REQUEST_BYTES // (1024 * 1024)
+            return None, None, f"요청 크기가 너무 큽니다 (최대 {mb}MB). 사진을 줄여서 다시 시도해주세요."
         body = self.rfile.read(content_length)
 
         boundary_match = re.search(r'boundary=([^\s;]+)', content_type)
@@ -3212,22 +3237,31 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 print(f"DB 매칭: {matched}/{total}개 음식 매칭됨")
 
             # 3. 세션 모드: session_id가 있으면 세션에 누적
+            #    (동시 사진 업로드 시 list.extend 도중 다른 thread가 끼어드는 race 방지)
             session_id = (fields or {}).get('session_id', '').strip()
-            if session_id and session_id in MEAL_SESSIONS:
-                session = MEAL_SESSIONS[session_id]
-                new_foods = analysis.get('foods', [])
-                session['foods'].extend(new_foods)
-                session['photo_count'] += 1
+            session_snapshot = None
+            if session_id:
+                with _SESSIONS_LOCK:
+                    if session_id in MEAL_SESSIONS:
+                        session = MEAL_SESSIONS[session_id]
+                        new_foods = analysis.get('foods', [])
+                        session['foods'].extend(new_foods)
+                        session['photo_count'] += 1
+                        # lock 안에서 snapshot 떠두고 lock 밖에서 사용
+                        session_snapshot = {
+                            'foods': list(session['foods']),
+                            'photo_count': session['photo_count'],
+                        }
 
-                # 누적 합산 계산
-                all_foods = session['foods']
+            if session_snapshot:
+                all_foods = session_snapshot['foods']
                 total_cal = sum(f.get('calories_kcal', 0) for f in all_foods)
                 total_prot = sum(f.get('protein_g', 0) for f in all_foods)
                 total_carbs = sum(f.get('carbs_g', 0) for f in all_foods)
                 total_fat = sum(f.get('fat_g', 0) for f in all_foods)
 
                 analysis['session_id'] = session_id
-                analysis['session_photo_count'] = session['photo_count']
+                analysis['session_photo_count'] = session_snapshot['photo_count']
                 analysis['session_total_foods'] = len(all_foods)
                 analysis['session_summary'] = {
                     "total_calories": round(total_cal, 1),
@@ -3235,7 +3269,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                     "total_carbs": round(total_carbs, 1),
                     "total_fat": round(total_fat, 1)
                 }
-                print(f"[세션] {session_id}: 사진 {session['photo_count']}장, 총 {len(all_foods)}개 음식, {total_cal:.0f}kcal")
+                print(f"[세션] {session_id}: 사진 {session_snapshot['photo_count']}장, 총 {len(all_foods)}개 음식, {total_cal:.0f}kcal")
 
             # 4. 결과 반환
             print("분석 완료!")
@@ -3248,33 +3282,43 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
     # ── 식사 세션 API ──
     def _handle_session_start(self):
-        """식사 세션 시작 — 빈 세션 생성"""
-        _cleanup_sessions()
+        """식사 세션 시작 — 빈 세션 생성
+
+        ThreadingHTTPServer 환경: MEAL_SESSIONS 수정과 정리를 _SESSIONS_LOCK으로 직렬화.
+        """
         session_id = str(uuid.uuid4())[:8]
-        MEAL_SESSIONS[session_id] = {
-            'foods': [],
-            'created': time.time(),
-            'photo_count': 0
-        }
+        with _SESSIONS_LOCK:
+            _cleanup_sessions()
+            MEAL_SESSIONS[session_id] = {
+                'foods': [],
+                'created': time.time(),
+                'photo_count': 0
+            }
         print(f"[세션] 새 식사 세션 시작: {session_id}")
         self._json_response(200, {"session_id": session_id})
 
     def _handle_session_end(self):
-        """식사 세션 종료 — 누적 결과 반환 후 세션 삭제"""
+        """식사 세션 종료 — 누적 결과 반환 후 세션 삭제
+
+        세션 조회·삭제를 한 lock 블록 안에서 처리하여 race 방지.
+        """
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
             req = json.loads(body) if body.strip() else {}
             session_id = req.get('session_id', '')
 
-            if session_id not in MEAL_SESSIONS:
-                self._json_response(404, {"error": "세션을 찾을 수 없습니다."})
-                return
+            with _SESSIONS_LOCK:
+                if session_id not in MEAL_SESSIONS:
+                    self._json_response(404, {"error": "세션을 찾을 수 없습니다."})
+                    return
+                session = MEAL_SESSIONS[session_id]
+                # snapshot 떠두고 즉시 삭제
+                foods = list(session['foods'])
+                photo_count = session['photo_count']
+                del MEAL_SESSIONS[session_id]
 
-            session = MEAL_SESSIONS[session_id]
-            foods = session['foods']
-
-            # 합산 계산
+            # 합산 계산 (lock 밖에서 — snapshot 사용)
             total_cal = sum(f.get('calories_kcal', 0) for f in foods)
             total_prot = sum(f.get('protein_g', 0) for f in foods)
             total_carbs = sum(f.get('carbs_g', 0) for f in foods)
@@ -3282,7 +3326,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
             result = {
                 "session_id": session_id,
-                "photo_count": session['photo_count'],
+                "photo_count": photo_count,
                 "foods": foods,
                 "meal_summary": {
                     "total_calories": round(total_cal, 1),
@@ -3291,11 +3335,10 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                     "total_fat": round(total_fat, 1),
                     "meal_type": "정찬",
                     "health_score": 7,
-                    "one_line_comment": f"총 {session['photo_count']}장의 사진에서 {len(foods)}개 음식을 분석했습니다."
+                    "one_line_comment": f"총 {photo_count}장의 사진에서 {len(foods)}개 음식을 분석했습니다."
                 }
             }
 
-            del MEAL_SESSIONS[session_id]
             print(f"[세션] 세션 종료: {session_id} → {len(foods)}개 음식, {total_cal:.0f}kcal")
             self._json_response(200, result)
 
@@ -3408,34 +3451,38 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 self._json_response(400, {"error": "신고 내용이 필요합니다."})
                 return
 
-            # 신고 로그 저장
+            # 신고 로그 저장 — read-modify-write를 _LOG_LOCK으로 직렬화
+            # 동시 신고 시 한쪽이 사라지는 race condition 방지
             report_path = REPORT_LOG_PATH
-            reports = []
-            if report_path and report_path.exists():
-                try:
-                    with open(report_path, 'r', encoding='utf-8') as f:
-                        reports = json.load(f)
-                except:
-                    reports = []
+            with _LOG_LOCK:
+                reports = []
+                if report_path and report_path.exists():
+                    try:
+                        with open(report_path, 'r', encoding='utf-8') as f:
+                            reports = json.load(f)
+                    except:
+                        reports = []
 
-            reports.append({
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "nickname": nickname,
-                "food_name": food_name,
-                "food_data": food_data,
-                "report_text": report_text
-            })
+                reports.append({
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "nickname": nickname,
+                    "food_name": food_name,
+                    "food_data": food_data,
+                    "report_text": report_text
+                })
 
-            if report_path:
-                with open(report_path, 'w', encoding='utf-8') as f:
-                    json.dump(reports, f, ensure_ascii=False, indent=1)
+                if report_path:
+                    with open(report_path, 'w', encoding='utf-8') as f:
+                        json.dump(reports, f, ensure_ascii=False, indent=1)
+
+                total_reports = len(reports)
 
             print(f"[신고] {nickname}: {food_name} — {report_text}")
 
-            # 구글시트 웹훅 전송 (비동기 — 실패해도 로컬 저장은 유지)
+            # 구글시트 웹훅 전송 (lock 밖에서 — 외부 IO 동안 다른 신고 차단되지 않게)
             _send_report_to_sheets(nickname, food_name, food_data, report_text)
 
-            self._json_response(200, {"reported": True, "total_reports": len(reports)})
+            self._json_response(200, {"reported": True, "total_reports": total_reports})
         except Exception as e:
             self._json_response(500, {"error": f"신고 에러: {str(e)}"})
 
@@ -3482,16 +3529,20 @@ if __name__ == '__main__':
     PORT = int(os.environ.get('PORT', 8080))
     print()
     print("=" * 50)
-    print("  NutriLens 테스트 서버")
+    print("  NutriLens 테스트 서버 (Threading)")
     print("=" * 50)
     print(f"  DB: {len(FOODS_DB)}종 음식 로드됨")
     print(f"  주소: http://localhost:{PORT}")
     print(f"  종료: Ctrl+C")
+    print(f"  요청 크기 한도: {MAX_REQUEST_BYTES // (1024*1024)}MB")
     print("=" * 50)
     print()
 
     try:
-        server = HTTPServer(('0.0.0.0', PORT), NutriLensHandler)
+        # ThreadingHTTPServer: 각 요청을 별도 thread로 처리 → 동시 처리 가능
+        # food_analyzer.py의 _DB_LOCK + 본 파일의 _SESSIONS_LOCK/_LOG_LOCK으로
+        # 글로벌 상태 race condition 방지됨
+        server = ThreadingHTTPServer(('0.0.0.0', PORT), NutriLensHandler)
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n서버 종료.")
