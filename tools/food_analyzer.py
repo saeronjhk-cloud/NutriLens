@@ -1976,6 +1976,50 @@ def _cap_nutrients_by_serving(food, serving_g):
             print(f"[영양소 캡] {food.get('name_ko','?')} {field}: {val}g → {food[field]}g (serving={serving_g}g)")
 
 
+# ── DB 오염 검출 + AI 추정값 진짜 복원 ──
+# P0-1 (2026-05-03): 기존 코드는 오염 검출 시 db_matched=False만 설정하고
+# 실제 영양소 값(food['carbs_g'] 등)은 이미 DB의 잘못된 값으로 덮어씌워진 상태였음.
+# 사용자에게 비현실적 값(예: 두부 탄수화물 81g)이 그대로 노출되는 버그.
+#
+# 해결: DB 매칭 진입 직전에 AI 원본 값을 백업해두고, 오염 검출 시 진짜로 복원.
+
+# AI가 추정해주는 영양소 7종 — 백업·복원의 대상
+_AI_NUTRIENT_FIELDS = (
+    'calories_kcal', 'protein_g', 'carbs_g', 'fat_g',
+    'fiber_g', 'sodium_mg', 'sugar_g',
+)
+
+def _backup_ai_estimates(food):
+    """AI가 추정한 영양소 7종을 dict로 사본 떠둠 (오염 검출 시 복원용)"""
+    return {field: food.get(field, 0) for field in _AI_NUTRIENT_FIELDS}
+
+
+def _is_polluted_db_data(cal, carbs):
+    """DB 영양소 값이 오염됐는지 검출.
+
+    탄수화물(g) × 4kcal > 칼로리(kcal) × 2 이면 물리적으로 불가능.
+    예: 100g 두부 칼로리 79kcal인데 탄수화물 81g 같은 경우 → 수분이 탄수로 오인된 데이터.
+    탄수화물 30g 미만은 오차 범위로 보고 통과 (저탄수화물 음식 false positive 방지).
+    """
+    if cal <= 0 or carbs <= 30:
+        return False
+    return carbs * 4 > cal * 2
+
+
+def _restore_ai_estimates(food, ai_original):
+    """DB 매칭 흔적을 모두 지우고 AI 원본 영양소 값으로 복원.
+
+    핵심: db_matched=False만 설정하는 게 아니라 실제 영양소 dict를 되돌림.
+    db_food_id, db_name 같은 매칭 흔적도 함께 정리하여 일관성 유지.
+    """
+    for field, val in ai_original.items():
+        food[field] = val
+    food['db_matched'] = False
+    food.pop('db_food_id', None)
+    food.pop('db_name', None)
+    food['source'] = 'AI_ESTIMATED'
+
+
 def match_with_db(analysis, foods_db):
     """
     AI 분석 결과를 DB와 매칭하여 보정
@@ -2051,6 +2095,10 @@ def match_with_db(analysis, foods_db):
                 else:
                     ratio = 1.0
 
+                # ── P0-1: AI 원본 영양소 백업 (오염 검출 시 진짜 복원용) ──
+                # 아래에서 food[ai_field]를 DB 값으로 덮어쓰기 전에 사본 떠둠
+                ai_original = _backup_ai_estimates(food)
+
                 food['db_matched'] = True
                 food['db_food_id'] = match.get('food_id', '')
                 food['db_name'] = match.get('name_ko', '')
@@ -2071,12 +2119,17 @@ def match_with_db(analysis, foods_db):
 
                 # ── 안전장치: 수분→탄수화물 오염 데이터 차단 ──
                 # 탄수화물(g)*4 > 칼로리*2 이면 물리적으로 불가능 (수분이 탄수화물로 잘못 들어간 데이터)
+                # P0-1 (2026-05-03): db_matched=False만 설정하던 버그 수정 — AI 원본값으로 진짜 복원
                 db_cal = food.get('calories_kcal', 0) or 0
                 db_carbs = food.get('carbs_g', 0) or 0
-                if db_cal > 0 and db_carbs > 30 and db_carbs * 4 > db_cal * 2:
-                    food['db_matched'] = False
-                    food['source'] = 'AI_ESTIMATED'
-                    # AI 추정값 복원 — DB 값이 오염되었으므로
+                if _is_polluted_db_data(db_cal, db_carbs):
+                    print(f"[오염 검출] {ai_name}: DB 탄수={db_carbs}g, 칼로리={db_cal}kcal "
+                          f"→ AI 원본값으로 복원")
+                    _restore_ai_estimates(food, ai_original)
+                    # AI 추정값에도 안전장치 적용 (복원 후)
+                    ai_sv = food.get('estimated_serving_g') or 0
+                    if ai_sv > 0:
+                        _cap_nutrients_by_serving(food, ai_sv)
                     continue
 
                 food['source'] = 'DB_MATCHED'

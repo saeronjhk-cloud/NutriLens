@@ -334,6 +334,97 @@ def test_meal_scenarios():
 
 
 # ══════════════════════════════════════════════════════════
+#  테스트 7-1: P0-1 회귀 — DB 오염 검출 + AI 추정값 진짜 복원
+# ══════════════════════════════════════════════════════════
+def test_db_pollution_restoration():
+    """DB 영양소가 오염됐을 때 AI 원본값으로 진짜 복원되는지 검증.
+
+    회귀 테스트 (P0-1, 2026-05-03):
+    이전엔 "수분→탄수화물 오염" 검출 시 db_matched=False만 설정되고
+    실제 영양소 값은 이미 DB의 잘못된 값으로 덮어씌워진 상태였음.
+    예: 두부 100g의 탄수화물이 81g/100g(현실 1.5g) 같은 비현실적 값이 표시됨.
+
+    수정 후엔 _restore_ai_estimates()가 AI 원본 dict로 진짜 되돌려야 함.
+    """
+    print("\n[테스트 7-1] DB 오염 검출 + AI 추정값 진짜 복원 (P0-1 회귀)")
+    print("-" * 50)
+
+    from food_analyzer import (
+        _is_polluted_db_data, _backup_ai_estimates, _restore_ai_estimates,
+        _AI_NUTRIENT_FIELDS,
+    )
+
+    # ── 검증 1: 오염 감지 함수 ──
+    # 정상 케이스 (오염 아님)
+    check(not _is_polluted_db_data(0, 0), "0 칼로리·0 탄수화물 = 오염 아님",
+          "빈 항목은 오염으로 분류되지 않아야 함")
+    check(not _is_polluted_db_data(150, 33), "정상 밥 (150kcal, 33g) = 오염 아님",
+          "현실적 비율이라 통과해야 함")
+    check(not _is_polluted_db_data(100, 25), "저탄수 음식 (100kcal, 25g) = 오염 아님",
+          "30g 미만은 오차 범위로 통과")
+    check(not _is_polluted_db_data(266, 33), "피자 (266kcal, 33g) = 오염 아님",
+          "탄수×4=132 vs 칼로리×2=532, 정상")
+
+    # 오염 케이스 (반드시 검출되어야 함)
+    check(_is_polluted_db_data(79, 81), "두부 오염 케이스 (79kcal, 81g)",
+          "탄수×4=324 > 칼로리×2=158, 오염으로 검출되어야 함")
+    check(_is_polluted_db_data(38, 90), "콜라 오염 케이스 (38kcal, 90.5g)",
+          "탄수×4=362 > 칼로리×2=76, 오염으로 검출되어야 함")
+    check(_is_polluted_db_data(60, 50), "경계값 (60kcal, 50g)",
+          "탄수×4=200 > 칼로리×2=120, 오염으로 검출되어야 함")
+
+    # ── 검증 2: 백업·복원 함수 라운드트립 ──
+    ai_food = {
+        'name_ko': '두부',
+        'estimated_serving_g': 100,
+        'calories_kcal': 79,    # AI가 추정한 합리적 값
+        'protein_g': 8.0,
+        'carbs_g': 1.5,
+        'fat_g': 4.5,
+        'fiber_g': 0.5,
+        'sodium_mg': 10,
+        'sugar_g': 0.5,
+    }
+    backup = _backup_ai_estimates(ai_food)
+
+    # 백업이 7개 영양소 필드 모두 포함하는지
+    check(set(backup.keys()) == set(_AI_NUTRIENT_FIELDS),
+          "백업에 7개 영양소 필드 포함",
+          f"누락: {set(_AI_NUTRIENT_FIELDS) - set(backup.keys())}")
+
+    # DB가 오염값으로 덮어쓴 시나리오 시뮬레이션
+    polluted_food = dict(ai_food)
+    polluted_food.update({
+        'db_matched': True,
+        'db_food_id': 'fake_id_123',
+        'db_name': '두부 (불량)',
+        'source': 'DB_MATCHED',
+        'calories_kcal': 79,    # 칼로리는 같지만
+        'carbs_g': 81.2,        # 탄수가 비현실적
+        'protein_g': 9.6,
+        'fat_g': 4.6,
+    })
+
+    _restore_ai_estimates(polluted_food, backup)
+
+    # 복원 후 영양소가 AI 원본과 일치하는지
+    check(polluted_food['carbs_g'] == 1.5, "복원 후 탄수화물 = AI 원본",
+          f"실제: {polluted_food['carbs_g']} (기대: 1.5)")
+    check(polluted_food['protein_g'] == 8.0, "복원 후 단백질 = AI 원본",
+          f"실제: {polluted_food['protein_g']} (기대: 8.0)")
+    check(polluted_food['calories_kcal'] == 79, "복원 후 칼로리 = AI 원본",
+          f"실제: {polluted_food['calories_kcal']} (기대: 79)")
+
+    # 복원 후 메타데이터가 정리되는지
+    check(polluted_food['db_matched'] is False, "복원 후 db_matched=False")
+    check(polluted_food['source'] == 'AI_ESTIMATED', "복원 후 source=AI_ESTIMATED")
+    check('db_food_id' not in polluted_food, "복원 후 db_food_id 제거됨",
+          f"여전히 존재: {polluted_food.get('db_food_id')}")
+    check('db_name' not in polluted_food, "복원 후 db_name 제거됨",
+          f"여전히 존재: {polluted_food.get('db_name')}")
+
+
+# ══════════════════════════════════════════════════════════
 #  테스트 7: CORE_FOODS 중복/일관성 검증
 # ══════════════════════════════════════════════════════════
 def test_core_foods_consistency():
@@ -383,6 +474,7 @@ def main():
         test_db_false_positive_prevention()
         test_db_quality_score()
         test_meal_scenarios()
+        test_db_pollution_restoration()  # P0-1 회귀 (2026-05-03)
         test_core_foods_consistency()
     except Exception as e:
         print(f"\n  ✗ 테스트 실행 중 에러: {e}")
