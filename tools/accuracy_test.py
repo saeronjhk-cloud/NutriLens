@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 """
-NutriLens 정확도 테스트 도구 v2
-────────────────────────────────
-두 가지 방식으로 정확도를 측정합니다:
+NutriLens 정확도 테스트 도구 v3 (P0-2, 2026-05-05)
+──────────────────────────────────────────────────
+food_analyzer의 전체 파이프라인(analyze_food_image + match_with_db)을 거쳐
+실제 사용자에게 표시되는 결과의 정확도를 측정.
+
+두 가지 모드:
 
   1. DB 매칭 테스트 (--db)
-     → 흔한 음식 이름 100개로 DB에서 영양정보를 찾을 수 있는지 확인
+     → 흔한 음식 100개로 DB에서 영양정보를 찾을 수 있는지 확인
      → API 비용 없음, 즉시 실행
 
   2. 실제 사진 테스트 (--photo)
-     → .tmp/test_images/ 폴더에 음식 사진을 넣으면 AI 인식 테스트
-     → 파일명이 정답 (예: "김치.jpg", "비빔밥.jpg")
+     → .tmp/test_images/ 폴더의 사진을 GPT-4o + 전체 파이프라인으로 분석
+     → 파일명이 정답 (예: "01_김치.jpg" → 정답: "김치")
+     → 측정 항목:
+        - 음식명 인식 정확도 (정확/부분/실패)
+        - 영양소 정확도 (칼로리 ±20% 이내)
+        - 매칭 소스 분포 (GOLD_REF / GOLD_DB / DB_MATCHED / AI_ESTIMATED)
 
 실행법:
-  python tools/accuracy_test.py --db       # DB 매칭 테스트
-  python tools/accuracy_test.py --photo    # 사진 인식 테스트
+  python tools/accuracy_test.py --db       # DB 매칭 (무료)
+  python tools/accuracy_test.py --photo    # 사진 인식 (~$0.005/장)
   python tools/accuracy_test.py --all      # 둘 다
 """
 
@@ -22,9 +29,6 @@ import os
 import sys
 import json
 import time
-import base64
-import urllib.request
-import urllib.error
 from pathlib import Path
 from datetime import datetime
 
@@ -34,6 +38,7 @@ TOOLS_DIR = Path(__file__).parent
 TEST_DIR = PROJECT_DIR / ".tmp" / "test_images"
 RESULT_DIR = PROJECT_DIR / ".tmp"
 sys.path.insert(0, str(TOOLS_DIR))
+
 
 # ── .env 로드 ──
 def load_env():
@@ -48,14 +53,15 @@ def load_env():
                         os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
             break
 
+
 load_env()
 
 
 # ══════════════════════════════════════════════════════════
-#  1. DB 매칭 테스트
+#  1. DB 매칭 테스트 (Gold Table 우선)
 # ══════════════════════════════════════════════════════════
 
-# 실제 한국인이 자주 먹는 음식 100개 (한식 + 다이어트 + 간식 + 외식)
+# 한국인이 자주 먹는 100개 음식 (한식 50 + 다이어트 20 + 외식 15 + 간식 15)
 COMMON_FOODS = [
     # 한식 (50개)
     "김치", "비빔밥", "불고기", "김밥", "떡볶이",
@@ -85,118 +91,64 @@ COMMON_FOODS = [
 
 
 def run_db_test():
-    """DB 매칭 정확도 테스트 — 흔한 음식이 DB에 있는지 확인"""
-    try:
-        import openpyxl
-    except ImportError:
-        print("  openpyxl 설치 중...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl", "-q"])
-        import openpyxl
+    """DB 매칭 정확도 — Gold Table(_search_gold) 사용.
 
-    db_path = PROJECT_DIR / "NutriLens_음식DB.xlsx"
-    if not db_path.exists():
-        print(f"  DB 파일 없음: {db_path}")
-        return None
+    food_analyzer의 _search_gold가 진짜 사용되는 매칭 함수이므로
+    여기서도 그것을 그대로 사용해야 의미 있는 측정.
+    """
+    from food_analyzer import _search_gold, load_food_db
+
+    # SQLite DB 연결 (gold 테이블만 쓸 거지만 _search_gold가 SQLite도 fallback으로 봄)
+    load_food_db()
 
     print()
     print("=" * 60)
-    print("  NutriLens DB 매칭 테스트")
+    print("  NutriLens DB 매칭 테스트 (Gold Table)")
     print("=" * 60)
-    print(f"  DB 파일: {db_path.name}")
     print(f"  테스트 음식: {len(COMMON_FOODS)}종")
     print()
 
-    # DB 로드 — 음식 이름 목록 추출
-    print("  DB 로딩 중...", end=" ", flush=True)
-    wb = openpyxl.load_workbook(db_path, read_only=True, data_only=True)
-    ws = wb.active
-
-    db_names = set()
-    db_names_lower = {}  # 소문자 → 원본 매핑
-    rows_checked = 0
-    name_col = None
-
-    # 헤더에서 음식명 컬럼 찾기
-    for row in ws.iter_rows(min_row=1, max_row=1, values_only=False):
-        for cell in row:
-            val = str(cell.value or "").strip()
-            if val in ("식품명", "음식명", "food_name", "FOOD_NM_KR", "name"):
-                name_col = cell.column
-                break
-
-    if name_col is None:
-        name_col = 2  # 기본값: B열
-
-    for row in ws.iter_rows(min_row=2, min_col=name_col, max_col=name_col, values_only=True):
-        val = row[0]
-        if val:
-            name = str(val).strip()
-            if name:
-                db_names.add(name)
-                db_names_lower[name.lower().replace(" ", "")] = name
-        rows_checked += 1
-
-    wb.close()
-    print(f"OK ({len(db_names):,}종)")
-    print()
-
-    # 매칭 테스트
     results = []
     found = 0
-    partial = 0
     not_found = 0
+    by_source = {"core": 0, "gold": 0, "mfds": 0, "none": 0}
 
     for food_name in COMMON_FOODS:
-        norm = food_name.lower().replace(" ", "")
-
-        # 1) 정확 매칭
-        if food_name in db_names or norm in db_names_lower:
-            matched = db_names_lower.get(norm, food_name)
-            results.append({"food": food_name, "status": "EXACT", "matched": matched})
+        gold_key, gold_data = _search_gold(food_name)
+        if gold_data:
+            source = gold_data.get('source', 'gold')
+            by_source[source] = by_source.get(source, 0) + 1
             found += 1
-            print(f"  ✓ {food_name} → 정확 일치 ({matched})")
-            continue
-
-        # 2) 부분 매칭 (DB에 포함된 이름)
-        partial_matches = []
-        for db_norm, db_orig in db_names_lower.items():
-            if norm in db_norm or db_norm in norm:
-                partial_matches.append(db_orig)
-            elif len(norm) >= 2 and (db_norm.startswith(norm[:2]) and db_norm.endswith(norm[-1])):
-                partial_matches.append(db_orig)
-
-        if partial_matches:
-            best = partial_matches[0]
-            results.append({"food": food_name, "status": "PARTIAL", "matched": best, "candidates": len(partial_matches)})
-            partial += 1
-            print(f"  △ {food_name} → 부분 일치 ({best}, +{len(partial_matches)-1}개)")
-            continue
-
-        # 3) 매칭 실패
-        results.append({"food": food_name, "status": "MISS", "matched": None})
-        not_found += 1
-        print(f"  ✗ {food_name} → DB에 없음")
+            results.append({
+                "food": food_name, "status": "FOUND",
+                "matched": gold_key, "source": source,
+                "kcal_per_100g": gold_data.get('cal'),
+            })
+            tag = "★" if source == "core" else "○"
+            print(f"  {tag} {food_name} → {gold_key} ({source}, {gold_data.get('cal')}kcal/100g)")
+        else:
+            by_source["none"] += 1
+            not_found += 1
+            results.append({"food": food_name, "status": "MISS"})
+            print(f"  ✗ {food_name} → 매칭 없음")
 
     total = len(COMMON_FOODS)
-    exact_pct = found / total * 100
-    coverage_pct = (found + partial) / total * 100
+    coverage_pct = found / total * 100
 
     print()
     print("=" * 60)
     print(f"  DB 매칭 결과")
     print("=" * 60)
     print(f"  총 테스트: {total}종")
-    print(f"  정확 일치: {found}종 ({exact_pct:.1f}%)")
-    print(f"  부분 일치: {partial}종")
-    print(f"  미발견:    {not_found}종")
-    print(f"  커버리지:  {coverage_pct:.1f}% (정확+부분)")
+    print(f"  매칭 성공: {found}종 ({coverage_pct:.1f}%)")
+    print(f"    ★ CORE_FOODS (수동 검증): {by_source.get('core', 0)}종")
+    print(f"    ○ Gold Table:           {by_source.get('gold', 0)}종")
+    print(f"  매칭 실패: {not_found}종")
     print("=" * 60)
 
-    # 미발견 목록
     missed = [r["food"] for r in results if r["status"] == "MISS"]
     if missed:
-        print(f"\n  DB에 없는 음식:")
+        print(f"\n  매칭 안 된 음식 (CORE_FOODS 추가 후보):")
         for m in missed:
             print(f"    - {m}")
 
@@ -205,13 +157,11 @@ def run_db_test():
     report = {
         "test_type": "db_matching",
         "date": datetime.now().isoformat(),
-        "db_size": len(db_names),
         "test_count": total,
-        "exact_match": found,
-        "partial_match": partial,
+        "matched": found,
         "not_found": not_found,
-        "exact_pct": round(exact_pct, 1),
         "coverage_pct": round(coverage_pct, 1),
+        "by_source": by_source,
         "missed_foods": missed,
         "details": results,
     }
@@ -225,86 +175,87 @@ def run_db_test():
 
 
 # ══════════════════════════════════════════════════════════
-#  2. 실제 사진 AI 인식 테스트
+#  2. 사진 인식 + 영양소 정확도 (전체 파이프라인)
 # ══════════════════════════════════════════════════════════
 
-def call_openai_vision(base64_image, media_type, api_key):
-    """GPT-4o Vision API 호출"""
-    from food_analyzer import SYSTEM_PROMPT
-
-    url = "https://api.openai.com/v1/chat/completions"
-    payload = {
-        "model": "gpt-4o",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "이 사진에 있는 음식을 분석해주세요."},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{media_type};base64,{base64_image}",
-                            "detail": "low"
-                        }
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 1000,
-        "temperature": 0.1,
-    }
-
-    data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(url, data=data, method='POST')
-    req.add_header("Authorization", f"Bearer {api_key}")
-    req.add_header("Content-Type", "application/json")
-
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')[:200]
-        return None, f"API 에러 ({e.code}): {body}"
-    except Exception as e:
-        return None, f"요청 실패: {e}"
-
-    content = result["choices"][0]["message"]["content"]
-
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0]
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0]
-
-    try:
-        parsed = json.loads(content.strip())
-        return parsed, None
-    except json.JSONDecodeError:
-        return None, f"파싱 실패: {content[:200]}"
-
-
 def normalize(name):
-    name = name.strip().lower().replace(" ", "").replace("_", "")
-    return name
+    """공백·언더스코어 제거 + 소문자"""
+    return name.strip().lower().replace(" ", "").replace("_", "")
 
 
-def is_match(expected, ai_foods):
-    expected_norm = normalize(expected)
-    for food in ai_foods:
-        ai_name = normalize(food.get("name_ko", "") or food.get("name", ""))
-        if expected_norm == ai_name:
-            return True, "정확 일치", ai_name
-        if expected_norm in ai_name or ai_name in expected_norm:
-            return True, "부분 일치", ai_name
-        if len(expected_norm) >= 2 and len(ai_name) >= 2:
-            if expected_norm[:2] == ai_name[:2] and expected_norm[-2:] == ai_name[-2:]:
-                return True, "유사 일치", ai_name
-    ai_names = [normalize(f.get("name_ko", "") or f.get("name", "")) for f in ai_foods]
-    return False, "불일치", ", ".join(ai_names) if ai_names else "인식 없음"
+def match_strictness(expected, ai_name):
+    """매칭 엄격도 분류.
+
+    - EXACT: 정확히 같음
+    - CONTAINS: 한쪽이 다른 쪽에 포함 + 짧은 쪽이 긴 쪽의 60% 이상
+              (예: "비빔밥"(3) in "돌솥비빔밥"(5) = 60% -> CONTAINS)
+    - LOOSE: 한쪽이 다른 쪽에 포함되지만 길이 차가 큼 OR 앞 2글자만 같음
+            (예: "김치"(2) in "김치찌개"(4) = 50% -> LOOSE, 별개 음식)
+    - NONE: 매칭 안 됨
+    """
+    e = normalize(expected)
+    a = normalize(ai_name)
+    if not e or not a:
+        return "NONE"
+    if e == a:
+        return "EXACT"
+    if e in a or a in e:
+        shorter, longer = (e, a) if len(e) <= len(a) else (a, e)
+        if len(longer) > 0 and len(shorter) / len(longer) >= 0.6:
+            return "CONTAINS"
+        return "LOOSE"
+    if len(e) >= 2 and len(a) >= 2 and e[:2] == a[:2]:
+        return "LOOSE"
+    return "NONE"
+
+
+def find_best_match(expected, ai_foods):
+    """AI가 인식한 음식 목록에서 정답과 가장 잘 맞는 것 찾기."""
+    best = None
+    best_strictness = "NONE"
+    strictness_rank = {"EXACT": 3, "CONTAINS": 2, "LOOSE": 1, "NONE": 0}
+
+    for f in ai_foods:
+        ai_name = f.get("name_ko", "") or f.get("name", "")
+        s = match_strictness(expected, ai_name)
+        if strictness_rank[s] > strictness_rank[best_strictness]:
+            best = f
+            best_strictness = s
+
+    return best, best_strictness
+
+
+def expected_kcal(food_name):
+    """CORE_FOODS에서 정답 칼로리(1인분 기준) 추출. 없으면 None."""
+    from food_analyzer import CORE_FOODS, _search_core_foods
+    key, data = _search_core_foods(food_name)
+    if not data:
+        # 직접 lookup
+        if food_name in CORE_FOODS:
+            data = CORE_FOODS[food_name]
+        else:
+            return None
+    serving = data.get('serving', 100)
+    cal_per_100g = data.get('cal', 0)
+    return round(cal_per_100g * serving / 100)
+
+
+def kcal_accuracy(expected_kcal_val, actual_kcal):
+    """칼로리 정확도 — ±20% 이내면 OK"""
+    if expected_kcal_val is None or expected_kcal_val == 0:
+        return "UNKNOWN"
+    if actual_kcal == 0:
+        return "BAD"
+    diff_pct = abs(actual_kcal - expected_kcal_val) / expected_kcal_val * 100
+    if diff_pct <= 20:
+        return "GOOD"
+    if diff_pct <= 50:
+        return "OK"
+    return "BAD"
 
 
 def run_photo_test():
-    """로컬 사진으로 AI 인식 정확도 테스트"""
+    """전체 파이프라인으로 사진 정확도 측정."""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         print("  OPENAI_API_KEY가 설정되지 않았습니다.")
@@ -313,7 +264,6 @@ def run_photo_test():
     if not TEST_DIR.exists():
         TEST_DIR.mkdir(parents=True, exist_ok=True)
 
-    # jpg, jpeg, png 모두 지원
     images = sorted(
         [f for f in TEST_DIR.iterdir() if f.suffix.lower() in ('.jpg', '.jpeg', '.png')]
     )
@@ -323,100 +273,147 @@ def run_photo_test():
         print("=" * 60)
         print("  사진 테스트 — 이미지 없음")
         print("=" * 60)
-        print()
-        print("  테스트 방법:")
-        print(f"  1. {TEST_DIR} 폴더에 음식 사진을 넣으세요")
-        print("  2. 파일명 = 정답 음식명 (예: 김치.jpg, 비빔밥.png)")
-        print("  3. 다시 python tools/accuracy_test.py --photo 실행")
-        print()
-        print("  팁: 핸드폰으로 음식 사진 10~20장만 찍으면 충분합니다!")
+        print(f"\n  {TEST_DIR} 폴더에 음식 사진을 넣으세요.")
+        print("  파일명 = 정답 음식명 (예: 01_김치.jpg, 비빔밥.jpg)")
         return None
+
+    # food_analyzer 임포트 (전체 파이프라인 사용)
+    from food_analyzer import analyze_food_image, match_with_db, load_food_db
 
     print()
     print("=" * 60)
-    print("  NutriLens AI 사진 인식 테스트")
+    print("  NutriLens 사진 인식 테스트 (전체 파이프라인)")
     print("=" * 60)
     print(f"  테스트 이미지: {len(images)}장")
     print(f"  모델: GPT-4o Vision")
-    cost_est = len(images) * 0.01
+    print(f"  파이프라인: GPT 인식 → match_with_db (Gold/DB/AI)")
+    cost_est = len(images) * 0.005
     print(f"  예상 비용: ~${cost_est:.2f}")
     print()
 
+    foods_db = load_food_db()
+
     results = []
-    correct = 0
+    correct_exact = 0
+    correct_loose = 0
+    wrong = 0
     errors = 0
+    by_source = {"GOLD_REF": 0, "GOLD_DB": 0, "DB_MATCHED": 0, "AI_ESTIMATED": 0, "?": 0}
+    kcal_dist = {"GOOD": 0, "OK": 0, "BAD": 0, "UNKNOWN": 0}
 
     for i, img_path in enumerate(images, 1):
-        # 파일명에서 정답 추출
+        # 파일명에서 정답 추출 (예: "01_김치" → "김치")
         expected_name = img_path.stem
-        # "01_김치" 형태면 숫자 제거
         if "_" in expected_name and expected_name.split("_")[0].isdigit():
             expected_name = expected_name.split("_", 1)[1]
 
         print(f"  [{i:02d}/{len(images)}] {expected_name}...", end=" ", flush=True)
 
-        # 이미지 → base64
-        with open(img_path, 'rb') as f:
-            image_data = f.read()
-        base64_image = base64.b64encode(image_data).decode('utf-8')
+        # 전체 파이프라인 호출
+        analysis = analyze_food_image(str(img_path), api_key=api_key)
 
-        ext = img_path.suffix.lower()
-        media_type = "image/png" if ext == ".png" else "image/jpeg"
-
-        analysis, err = call_openai_vision(base64_image, media_type, api_key)
-
-        if err:
-            print(f"에러: {err}")
+        if "error" in analysis:
+            print(f"에러: {analysis['error'][:60]}")
             results.append({
                 "expected": expected_name, "result": "ERROR",
-                "match_type": "에러", "ai_answer": str(err),
+                "error": analysis['error'][:200],
             })
             errors += 1
             time.sleep(1)
             continue
 
-        foods = analysis.get("foods", [])
-        matched, match_type, ai_answer = is_match(expected_name, foods)
+        # match_with_db로 후처리 (실제 사용자 화면과 동일)
+        if foods_db:
+            analysis = match_with_db(analysis, foods_db)
 
-        if matched:
-            correct += 1
-            print(f"✓ {match_type} (AI: {ai_answer})")
+        ai_foods = analysis.get("foods", [])
+        best, strictness = find_best_match(expected_name, ai_foods)
+
+        # 정확도 카운트
+        if strictness == "EXACT":
+            correct_exact += 1
+            tag = "✓ EXACT"
+        elif strictness == "CONTAINS":
+            correct_loose += 1
+            tag = "△ CONTAINS"
+        elif strictness == "LOOSE":
+            wrong += 1  # LOOSE는 의심스러우니 오답으로 분류
+            tag = "? LOOSE"
         else:
-            print(f"✗ 불일치 (AI: {ai_answer})")
+            wrong += 1
+            tag = "✗ MISS"
+
+        # 매칭 소스
+        source = best.get("source", "?") if best else "?"
+        by_source[source] = by_source.get(source, 0) + 1
+
+        # 칼로리 정확도
+        exp_kcal = expected_kcal(expected_name)
+        actual_kcal = best.get("calories_kcal", 0) if best else 0
+        kcal_status = kcal_accuracy(exp_kcal, actual_kcal)
+        kcal_dist[kcal_status] = kcal_dist.get(kcal_status, 0) + 1
+
+        ai_name_str = (best.get("name_ko", "?") if best else "인식 없음")
+        print(f"{tag} (AI:{ai_name_str}, src:{source}, {actual_kcal}kcal vs {exp_kcal})")
 
         results.append({
             "expected": expected_name,
-            "result": "CORRECT" if matched else "WRONG",
-            "match_type": match_type,
-            "ai_answer": ai_answer,
-            "confidence": foods[0].get("confidence", 0) if foods else 0,
+            "ai_name": ai_name_str,
+            "match": strictness,
+            "source": source,
+            "kcal_actual": actual_kcal,
+            "kcal_expected": exp_kcal,
+            "kcal_status": kcal_status,
+            "confidence": best.get("confidence", 0) if best else 0,
         })
         time.sleep(1)
 
     total = len(results)
-    accuracy = (correct / total * 100) if total > 0 else 0
+    name_accuracy = (correct_exact + correct_loose) / total * 100 if total > 0 else 0
+    strict_accuracy = correct_exact / total * 100 if total > 0 else 0
+    kcal_accuracy_pct = (kcal_dist.get("GOOD", 0)) / total * 100 if total > 0 else 0
 
     print()
     print("=" * 60)
-    print(f"  사진 인식 테스트 결과")
+    print(f"  사진 인식 결과")
     print("=" * 60)
-    print(f"  총 테스트: {total}장")
-    print(f"  정답: {correct}장")
-    print(f"  오답: {total - correct - errors}장")
-    print(f"  에러: {errors}장")
-    print(f"  정확도: {accuracy:.1f}%")
+    print(f"  총 테스트:        {total}장")
+    print(f"  ✓ EXACT 일치:     {correct_exact}장 ({correct_exact/total*100:.1f}%)")
+    print(f"  △ CONTAINS 일치:  {correct_loose}장")
+    print(f"  ✗ 오답:           {wrong}장")
+    print(f"  ! 에러:           {errors}장")
+    print()
+    print(f"  음식명 정확도 (엄격): {strict_accuracy:.1f}%")
+    print(f"  음식명 정확도 (관대): {name_accuracy:.1f}%")
+    print()
+    print(f"  매칭 소스 분포:")
+    for src, count in by_source.items():
+        if count > 0:
+            print(f"    {src}: {count}장")
+    print()
+    print(f"  칼로리 정확도 (±20% = GOOD):")
+    for status, count in kcal_dist.items():
+        if count > 0:
+            print(f"    {status}: {count}장")
+    print(f"  칼로리 정확도 (GOOD 비율): {kcal_accuracy_pct:.1f}%")
     print("=" * 60)
 
     # 리포트 저장
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     report = {
-        "test_type": "photo_recognition",
+        "test_type": "photo_recognition_full_pipeline",
         "date": datetime.now().isoformat(),
         "model": "gpt-4o",
         "total": total,
-        "correct": correct,
+        "correct_exact": correct_exact,
+        "correct_loose": correct_loose,
+        "wrong": wrong,
         "errors": errors,
-        "accuracy_pct": round(accuracy, 1),
+        "name_accuracy_strict_pct": round(strict_accuracy, 1),
+        "name_accuracy_loose_pct": round(name_accuracy, 1),
+        "kcal_accuracy_pct": round(kcal_accuracy_pct, 1),
+        "by_source": by_source,
+        "kcal_distribution": kcal_dist,
         "details": results,
     }
 
@@ -428,20 +425,28 @@ def run_photo_test():
     # 텍스트 리포트
     report_path = RESULT_DIR / "accuracy_report.txt"
     with open(report_path, 'w', encoding='utf-8') as f:
-        f.write("NutriLens AI 정확도 테스트 리포트\n")
+        f.write("NutriLens 정확도 테스트 리포트 (전체 파이프라인)\n")
         f.write(f"테스트 일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        f.write(f"모델: GPT-4o Vision\n")
+        f.write(f"모델: GPT-4o Vision + match_with_db\n")
         f.write("=" * 60 + "\n\n")
         f.write(f"총 테스트: {total}장\n")
-        f.write(f"정답: {correct}장 / 오답: {total-correct-errors}장 / 에러: {errors}장\n")
-        f.write(f"정확도: {accuracy:.1f}%\n\n")
-        f.write("-" * 60 + "\n")
+        f.write(f"음식명 정확도 (엄격): {strict_accuracy:.1f}%\n")
+        f.write(f"음식명 정확도 (관대): {name_accuracy:.1f}%\n")
+        f.write(f"칼로리 정확도 (±20%): {kcal_accuracy_pct:.1f}%\n\n")
+        f.write("매칭 소스:\n")
+        for src, count in by_source.items():
+            if count > 0:
+                f.write(f"  {src}: {count}장\n")
+        f.write("\n" + "-" * 60 + "\n")
         for r in results:
-            status = "✓" if r["result"] == "CORRECT" else "✗"
-            f.write(f"{status} {r['expected']} → {r['ai_answer']} ({r['match_type']})\n")
+            mark = {"EXACT": "✓", "CONTAINS": "△", "LOOSE": "?", "NONE": "✗"}.get(r.get("match", "NONE"), "?")
+            f.write(f"{mark} {r['expected']} → {r.get('ai_name', '?')} "
+                    f"(src:{r.get('source', '?')}, "
+                    f"{r.get('kcal_actual', 0)}kcal vs 정답 {r.get('kcal_expected', '?')}, "
+                    f"{r.get('kcal_status', '?')})\n")
     print(f"  텍스트 리포트: {report_path}")
 
-    return accuracy
+    return strict_accuracy
 
 
 # ══════════════════════════════════════════════════════════
@@ -450,46 +455,36 @@ def run_photo_test():
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="NutriLens 정확도 테스트 v2")
-    parser.add_argument("--db", action="store_true", help="DB 매칭 테스트 (API 비용 없음)")
-    parser.add_argument("--photo", action="store_true", help="사진 인식 테스트 (GPT-4o)")
-    parser.add_argument("--all", action="store_true", help="DB + 사진 둘 다")
+    parser = argparse.ArgumentParser(description="NutriLens 정확도 테스트 v3 (P0-2)")
+    parser.add_argument("--db", action="store_true", help="DB 매칭 테스트 (무료, 즉시)")
+    parser.add_argument("--photo", action="store_true", help="사진 인식 테스트 (~$0.005/장)")
+    parser.add_argument("--all", action="store_true", help="둘 다")
     args = parser.parse_args()
 
-    if not args.db and not args.photo and not args.all:
+    if not (args.db or args.photo or args.all):
         print()
-        print("NutriLens 정확도 테스트 v2")
+        print("NutriLens 정확도 테스트 v3 (P0-2, 2026-05-05)")
         print()
         print("사용법:")
-        print("  python tools/accuracy_test.py --db      # DB 매칭 (무료, 즉시)")
-        print("  python tools/accuracy_test.py --photo   # 사진 인식 (~$0.01/장)")
+        print("  python tools/accuracy_test.py --db      # DB 매칭 (무료)")
+        print("  python tools/accuracy_test.py --photo   # 사진 인식 (~$0.005/장)")
         print("  python tools/accuracy_test.py --all     # 둘 다")
         print()
-        print("사진 테스트 준비:")
-        print(f"  1. {TEST_DIR} 폴더에 음식 사진 넣기")
-        print("  2. 파일명 = 정답 (예: 김치.jpg, 삼겹살.png)")
-        print("  3. --photo 실행")
+        print(f"사진 위치: {TEST_DIR}")
+        print("파일명 = 정답 (예: 01_김치.jpg → 정답 '김치')")
         sys.exit(0)
 
     if args.db or args.all:
-        db_coverage = run_db_test()
-        if db_coverage is not None:
-            if db_coverage >= 90:
-                print(f"\n  ✓ DB 커버리지 {db_coverage:.1f}% — 우수!")
-            elif db_coverage >= 70:
-                print(f"\n  △ DB 커버리지 {db_coverage:.1f}% — 양호")
-            else:
-                print(f"\n  ✗ DB 커버리지 {db_coverage:.1f}% — 개선 필요")
+        cov = run_db_test()
+        if cov is not None:
+            mark = "✓" if cov >= 90 else "△" if cov >= 70 else "✗"
+            print(f"\n  {mark} DB 매칭 커버리지: {cov:.1f}%")
 
     if args.photo or args.all:
-        accuracy = run_photo_test()
-        if accuracy is not None:
-            if accuracy >= 80:
-                print(f"\n  ✓ 인식 정확도 {accuracy:.1f}% — 양호!")
-            elif accuracy >= 60:
-                print(f"\n  △ 인식 정확도 {accuracy:.1f}% — 개선 필요")
-            else:
-                print(f"\n  ✗ 인식 정확도 {accuracy:.1f}% — 심각한 개선 필요")
+        acc = run_photo_test()
+        if acc is not None:
+            mark = "✓" if acc >= 80 else "△" if acc >= 60 else "✗"
+            print(f"\n  {mark} 음식명 정확도(엄격): {acc:.1f}%")
 
 
 if __name__ == "__main__":
