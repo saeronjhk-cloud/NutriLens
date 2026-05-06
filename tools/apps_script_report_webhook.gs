@@ -1,24 +1,29 @@
 /**
- * NutriLens — 신고 + 피드백 수집 Apps Script 웹앱
- * ──────────────────────────────────────────────────
+ * NutriLens — 신고 + 피드백 + 식사·목표 백업 Apps Script 웹앱
+ * ──────────────────────────────────────────────────────────────
  *
  * 역할:
- *   1) POST 요청의 type 필드를 보고 두 가지로 분기:
+ *   POST 요청의 type 필드를 보고 4가지로 분기:
  *      - type === 'report'   → "이상해요" 신고를 'Reports' 탭에 기록 + 3회 누적 시 이메일 알림
  *      - type === 'feedback' → 음식명 수정 피드백을 'Feedback' 탭에 기록 (P0-4)
- *   2) type이 없으면 'report'로 간주 (이전 버전 호환)
+ *      - type === 'meal'     → 식사 기록을 'Meals' 탭에 영구 백업 (P0-3)
+ *      - type === 'goal'     → 일일 목표 변경을 'Goals' 탭에 영구 백업 (P0-3)
+ *      - type 없음           → 'report'로 간주 (이전 버전 호환)
  *
- * P0-4 (2026-05-03):
- *   feedback_log.json이 Railway 재배포마다 사라지는 문제를 해결하기 위해
- *   같은 웹훅으로 피드백도 받아서 구글시트에 영구 백업.
+ * P0-3 (2026-05-05):
+ *   localStorage 단일 저장소 위험(캐시 삭제·기기 변경 = 영구 손실)을 해소하기 위해
+ *   사용자 식사·목표를 같은 웹훅으로 받아 시트에 영구 백업.
+ *   사용자 식별: 익명 UUID (uid) — 첫 접속 시 클라이언트가 자동 생성.
  */
 
 // ── 설정 ──
-const SECRET = 'nutrilens_report_2026_x9k3m';      // .env의 REPORT_WEBHOOK_SECRET과 동일하게
-const REPORT_SHEET_NAME = 'Reports';                // 신고 시트 탭 이름
-const FEEDBACK_SHEET_NAME = 'Feedback';             // 피드백 시트 탭 이름 (P0-4 신설)
-const ALERT_EMAIL = 'saeronjhk@gmail.com';          // 알림 받을 이메일
-const ALERT_THRESHOLD = 3;                          // 같은 음식 N회 이상이면 알림
+const SECRET = 'nutrilens_report_2026_x9k3m';
+const REPORT_SHEET_NAME = 'Reports';
+const FEEDBACK_SHEET_NAME = 'Feedback';
+const MEAL_SHEET_NAME = 'Meals';      // P0-3 신설
+const GOAL_SHEET_NAME = 'Goals';      // P0-3 신설
+const ALERT_EMAIL = 'saeronjhk@gmail.com';
+const ALERT_THRESHOLD = 3;
 
 // ── 웹앱 엔트리포인트 ──
 function doPost(e) {
@@ -29,12 +34,11 @@ function doPost(e) {
       return jsonResponse({ error: 'unauthorized' });
     }
 
-    // type 필드 분기 (없으면 'report'로 간주 — 이전 버전 호환)
     const type = payload.type || 'report';
 
-    if (type === 'feedback') {
-      return handleFeedback(payload.data || {});
-    }
+    if (type === 'feedback') return handleFeedback(payload.data || {});
+    if (type === 'meal')     return handleMeal(payload.data || {});
+    if (type === 'goal')     return handleGoal(payload.data || {});
     return handleReport(payload.data || {});
 
   } catch (err) {
@@ -72,7 +76,6 @@ function handleReport(data) {
     '미처리'
   ]);
 
-  // 같은 음식 신고 횟수 집계
   const foodName = (data.food_name || '').trim();
   if (foodName) {
     const allData = sheet.getDataRange().getValues();
@@ -88,7 +91,7 @@ function handleReport(data) {
   return jsonResponse({ ok: true, type: 'report' });
 }
 
-// ── 피드백 처리 (Feedback 탭) — P0-4 신설 ──
+// ── 피드백 처리 (Feedback 탭) ──
 function handleFeedback(data) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(FEEDBACK_SHEET_NAME);
@@ -118,6 +121,71 @@ function handleFeedback(data) {
   return jsonResponse({ ok: true, type: 'feedback' });
 }
 
+// ── 식사 기록 백업 (Meals 탭) — P0-3 신설 ──
+function handleMeal(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(MEAL_SHEET_NAME);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(MEAL_SHEET_NAME);
+    sheet.appendRow([
+      '시간', 'UID', '닉네임', '날짜', '식사시간', '식사구분',
+      '음식 요약', '음식수',
+      '총 칼로리', '단백질(g)', '탄수화물(g)', '지방(g)',
+      '나트륨(mg)', '당류(g)', '식이섬유(g)',
+      '레코드 ID'
+    ]);
+    sheet.getRange(1, 1, 1, 16).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+
+  sheet.appendRow([
+    data.timestamp || new Date().toISOString(),
+    data.uid || '',
+    data.nickname || '',
+    data.date || '',
+    data.time || '',
+    data.meal_type || '',
+    data.foods_summary || '',
+    data.food_count || 0,
+    data.total_calories || 0,
+    data.total_protein || 0,
+    data.total_carbs || 0,
+    data.total_fat || 0,
+    data.total_sodium || 0,
+    data.total_sugar || 0,
+    data.total_fiber || 0,
+    data.record_id || ''
+  ]);
+
+  return jsonResponse({ ok: true, type: 'meal' });
+}
+
+// ── 목표 변경 백업 (Goals 탭) — P0-3 신설 ──
+function handleGoal(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(GOAL_SHEET_NAME);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(GOAL_SHEET_NAME);
+    sheet.appendRow([
+      '시간', 'UID', '닉네임', '칼로리 목표', '단백질 목표(g)'
+    ]);
+    sheet.getRange(1, 1, 1, 5).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+
+  sheet.appendRow([
+    data.timestamp || new Date().toISOString(),
+    data.uid || '',
+    data.nickname || '',
+    data.goal_calories || 0,
+    data.goal_protein || 0
+  ]);
+
+  return jsonResponse({ ok: true, type: 'goal' });
+}
+
 // ── 신고 이메일 알림 ──
 function sendReportAlertEmail(foodName, count, latestData) {
   const subject = '[NutriLens] 반복 신고: ' + foodName + ' (' + count + '회)';
@@ -138,7 +206,7 @@ function sendReportAlertEmail(foodName, count, latestData) {
   Logger.log('신고 알림 발송: ' + foodName + ' (' + count + '회)');
 }
 
-// ── 피드백 이메일 알림 (P0-4 신설) ──
+// ── 피드백 이메일 알림 ──
 function sendFeedbackAlertEmail(originalName, correctedName, count) {
   const subject = '[NutriLens] 반복 수정 패턴: ' + originalName + ' -> ' + correctedName + ' (' + count + '회)';
   const body = '같은 음식 수정 패턴이 ' + count + '회 누적되었습니다.\n\n'
@@ -163,22 +231,22 @@ function jsonResponse(obj) {
 function doGet(e) {
   return jsonResponse({
     status: 'ok',
-    service: 'NutriLens Report + Feedback Webhook',
-    handlers: ['report', 'feedback']
+    service: 'NutriLens Webhook (Report+Feedback+Meal+Goal)',
+    handlers: ['report', 'feedback', 'meal', 'goal']
   });
 }
 
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   [P0-4 업데이트 가이드 - 이미 셋업되어 있는 경우]
+   [P0-3 업데이트 가이드]
 
    1. 이 파일을 Apps Script 편집기에 통째로 붙여넣어 기존 코드 교체
-   2. SECRET 값은 기존 값 그대로 유지 (변경하지 말 것)
+   2. SECRET 값(17번 줄)은 기존 값 그대로 유지
    3. 메뉴 → 배포 → 배포 관리
       - 기존 활성 배포의 ✏ 편집 버튼 클릭
       - 버전: "새 버전" 선택
       - 배포 (URL은 자동으로 유지됨)
    4. Railway 환경변수: 기존 그대로 (변경 없음)
-   5. 끝! Reports + Feedback 두 탭이 첫 데이터 들어올 때 자동 생성됨.
+   5. 끝! Reports + Feedback + Meals + Goals 네 탭이 첫 데이터 들어올 때 자동 생성됨.
 
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */

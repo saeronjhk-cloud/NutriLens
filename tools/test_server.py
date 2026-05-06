@@ -195,6 +195,92 @@ def _send_feedback_to_sheets(original_name, corrected_name, count, nickname=""):
     except Exception as e:
         print(f"[피드백-시트] 전송 실패 (로컬 저장은 완료): {e}")
 
+
+# ── 식사 기록 → 구글시트 웹훅 (P0-3, 2026-05-05) ──
+# localStorage 단일 저장소 위험 제거. 사용자가 식사를 저장할 때마다
+# 같은 Apps Script 웹훅에 type='meal'로 전송 → 'Meals' 탭에 영구 기록.
+# 사용자 식별: 익명 UUID (uid) + 닉네임 (참고용).
+def _send_meal_to_sheets(uid, nickname, record):
+    """식사 기록 1건을 구글시트로 전송 (영구 백업).
+
+    record: NutriLocalDB.addMeal()이 만든 객체 — id, date, time, meal_type, foods[], summary{}.
+    """
+    webhook_url = os.environ.get('REPORT_WEBHOOK_URL', '')
+    webhook_secret = os.environ.get('REPORT_WEBHOOK_SECRET', '')
+    if not webhook_url:
+        return
+
+    summary = record.get('summary', {}) or {}
+    foods = record.get('foods', []) or []
+    foods_brief = ", ".join(
+        f"{(f.get('name') or '?')}({(f.get('serving_g') or 0)}g, {(f.get('calories') or 0)}kcal)"
+        for f in foods
+    )
+
+    payload = {
+        "secret": webhook_secret,
+        "type": "meal",
+        "data": {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "uid": uid,
+            "nickname": nickname,
+            "record_id": record.get('id', ''),
+            "date": record.get('date', ''),
+            "time": record.get('time', ''),
+            "meal_type": record.get('meal_type', ''),
+            "foods_summary": foods_brief,
+            "food_count": len(foods),
+            "total_calories": summary.get('total_calories', 0),
+            "total_protein": summary.get('total_protein', 0),
+            "total_carbs": summary.get('total_carbs', 0),
+            "total_fat": summary.get('total_fat', 0),
+            "total_sodium": summary.get('total_sodium', 0),
+            "total_sugar": summary.get('total_sugar', 0),
+            "total_fiber": summary.get('total_fiber', 0),
+        }
+    }
+
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(webhook_url, data=data, method='POST')
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"[식사-시트] {nickname}({uid[:8]}): {record.get('date','?')} {record.get('time','?')} 전송 성공")
+    except Exception as e:
+        print(f"[식사-시트] 전송 실패 (로컬 저장은 완료): {e}")
+
+
+# ── 목표 설정 → 구글시트 웹훅 (P0-3, 2026-05-05) ──
+# 사용자가 일일 목표(칼로리·단백질)를 변경할 때마다 시트에 기록.
+def _send_goal_to_sheets(uid, nickname, calories, protein):
+    """목표 변경을 구글시트로 전송."""
+    webhook_url = os.environ.get('REPORT_WEBHOOK_URL', '')
+    webhook_secret = os.environ.get('REPORT_WEBHOOK_SECRET', '')
+    if not webhook_url:
+        return
+
+    payload = {
+        "secret": webhook_secret,
+        "type": "goal",
+        "data": {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "uid": uid,
+            "nickname": nickname,
+            "goal_calories": calories,
+            "goal_protein": protein,
+        }
+    }
+
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(webhook_url, data=data, method='POST')
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"[목표-시트] {nickname}({uid[:8]}): {calories}kcal/{protein}g 전송 성공")
+    except Exception as e:
+        print(f"[목표-시트] 전송 실패: {e}")
+
+
 # ── 식사 기록 저장 시스템 ──
 MEAL_LOG_PATH = None  # 서버 시작 시 설정
 REPORT_LOG_PATH = None  # 서버 시작 시 설정
@@ -1533,7 +1619,47 @@ function switchTab(tab) {
 // ── localStorage 기반 데이터 관리 (NutriLocalDB) ──
 // 모든 식단 기록/목표를 사용자 핸드폰에 저장
 // 서버 배포와 무관하게 데이터 유지됨
+//
+// P0-3 (2026-05-05): localStorage가 단일 저장소 → 캐시 삭제·기기 변경 시 영구 손실 위험.
+// 대응: 식사·목표 저장 시 서버로 fire-and-forget fetch → 구글시트 영구 백업.
+// 사용자 식별: 익명 UUID (`nutrilens_uid`, 첫 접속 시 자동 생성) — 닉네임과 별도.
 // ══════════════════════════════════════════════
+
+// ── 익명 UUID 생성·조회 (P0-3 신설) ──
+// localStorage 'nutrilens_uid' 키에 UUID 영구 저장. 첫 접속 시 자동 생성.
+function getOrCreateUid() {
+  let uid = localStorage.getItem('nutrilens_uid');
+  if (!uid) {
+    // RFC4122 v4 UUID — crypto.randomUUID 우선, 없으면 폴리필
+    if (window.crypto && window.crypto.randomUUID) {
+      uid = window.crypto.randomUUID();
+    } else {
+      uid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+    localStorage.setItem('nutrilens_uid', uid);
+    console.log('[UID] 새 익명 ID 생성: ' + uid);
+  }
+  return uid;
+}
+// 페이지 로드 즉시 UID 보장
+const NUTRI_UID = getOrCreateUid();
+
+// ── 서버 백업 fetch (fire-and-forget, P0-3 신설) ──
+// localStorage 저장 직후 호출 — 백업 실패해도 사용자 경험엔 영향 없음.
+function _backupToServer(endpoint, payload) {
+  try {
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch(e => console.warn('[백업] ' + endpoint + ' 실패:', e.message));
+  } catch(e) { console.warn('[백업] 호출 실패:', e); }
+}
+
 // ── 로컬 시간 유틸리티 (사용자의 현재 시간대 기준) ──
 function _localNow() {
   const now = new Date();
@@ -1605,6 +1731,14 @@ const NutriLocalDB = {
     if (data.meals.length > 1000) data.meals = data.meals.slice(-1000);
     this.save(user, data);
     console.log('[기록] ' + record.date + ' ' + record.time + ' - ' + foods.length + '개 음식, ' + record.summary.total_calories + 'kcal 저장');
+
+    // P0-3: 서버에 백업 (fire-and-forget — 실패해도 로컬은 이미 저장됨)
+    _backupToServer('/save-meal', {
+      uid: NUTRI_UID,
+      nickname: user,
+      record: record,
+    });
+
     return record.id;
   },
 
@@ -1613,6 +1747,14 @@ const NutriLocalDB = {
     const data = this.load(user);
     data.goals = { calories: calories, protein: protein };
     this.save(user, data);
+
+    // P0-3: 서버에 백업
+    _backupToServer('/save-goal', {
+      uid: NUTRI_UID,
+      nickname: user,
+      calories: calories,
+      protein: protein,
+    });
   },
 
   // 목표 조회
@@ -3478,16 +3620,34 @@ class NutriLensHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json_response(500, {"error": f"로그인 에러: {str(e)}"})
 
-    # ── 식사 기록 저장 API (레거시 — 클라이언트 localStorage로 이전됨) ──
+    # ── 식사 기록 저장 API (P0-3, 2026-05-05) ──
+    # 클라이언트 localStorage 저장과 별개로 구글시트에 영구 백업.
+    # 백업 실패해도 클라이언트는 이미 로컬 저장 완료된 상태 → fire-and-forget.
     def _handle_save_meal(self):
-        """호환용 — 실제 저장은 클라이언트 localStorage에서 처리"""
+        """식사 기록 백업 — 클라이언트가 NutriLocalDB.addMeal 직후 호출."""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
-            if content_length > 0:
-                self.rfile.read(content_length)  # body 소비
-            self._json_response(200, {"saved": True, "record_id": "local"})
+            body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
+            req = json.loads(body) if body.strip() else {}
+
+            uid = (req.get('uid') or '').strip()
+            nickname = (req.get('nickname') or '').strip()
+            record = req.get('record') or {}
+
+            if not uid or not record:
+                # 잘못된 페이로드여도 클라이언트는 200으로 받아서 신경 안 쓰게
+                self._json_response(200, {"saved": False, "reason": "uid 또는 record 누락"})
+                return
+
+            # 시트 백업 (네트워크 IO이므로 응답 후 비동기로 가는 게 이상적이지만,
+            # ThreadingHTTPServer라 핸들러 자체가 별 thread → 그냥 동기로 호출해도 OK)
+            _send_meal_to_sheets(uid, nickname, record)
+
+            self._json_response(200, {"saved": True, "record_id": record.get('id', '')})
         except Exception as e:
-            self._json_response(200, {"saved": True, "record_id": "local"})
+            print(f"[저장] 백업 실패: {e}")
+            # 클라이언트는 이미 로컬 저장 완료 — 200 반환해서 사용자 경험 방해 안 함
+            self._json_response(200, {"saved": False, "error": str(e)})
 
     # ── 대시보드 데이터 API ──
     def _handle_report(self):
@@ -3540,14 +3700,27 @@ class NutriLensHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json_response(500, {"error": f"신고 에러: {str(e)}"})
 
-    # ── Feature 1: 목표 저장 API (레거시 — localStorage로 이전) ──
+    # ── 목표 저장 API (P0-3, 2026-05-05) ──
+    # 클라이언트 localStorage 저장과 별개로 구글시트 'Goals' 탭에 백업.
     def _handle_save_goal(self):
+        """목표(칼로리·단백질) 변경을 시트에 영구 기록."""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
-            if content_length > 0: self.rfile.read(content_length)
+            body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
+            req = json.loads(body) if body.strip() else {}
+
+            uid = (req.get('uid') or '').strip()
+            nickname = (req.get('nickname') or '').strip()
+            calories = req.get('calories', 0) or 0
+            protein = req.get('protein', 0) or 0
+
+            if uid:
+                _send_goal_to_sheets(uid, nickname, calories, protein)
+
             self._json_response(200, {"saved": True})
-        except:
-            self._json_response(200, {"saved": True})
+        except Exception as e:
+            print(f"[목표] 백업 실패: {e}")
+            self._json_response(200, {"saved": False, "error": str(e)})
 
     # ── Feature 1: 오늘 진행 상황 API (레거시 — localStorage로 이전) ──
     def _handle_today_progress(self):
