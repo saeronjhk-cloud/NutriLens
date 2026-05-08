@@ -425,6 +425,140 @@ def test_db_pollution_restoration():
 
 
 # ══════════════════════════════════════════════════════════
+#  테스트 7-2: 칼로리 개선 — _detect_shape 분류 검증 (2026-05-06)
+# ══════════════════════════════════════════════════════════
+def test_shape_detection():
+    """_detect_shape 자동 분류 — Gemini 자문 반영한 차등 보정의 기반.
+
+    piece/volume/drink 분류가 의도대로 작동하는지 검증.
+    분류가 정확해야 다이어터의 1/4 사과를 표준으로 강제하지 않고,
+    찌개·국 같은 무정형 음식만 가중 평균 보정이 적용됨.
+    """
+    print("\n[테스트 7-2] 음식 형태(shape) 자동 분류")
+    print("-" * 50)
+
+    from food_analyzer import _detect_shape
+
+    # (음식명, 기대 shape)
+    cases = [
+        # piece — 개수·조각 음식
+        ("사과", "piece"),
+        ("바나나", "piece"),
+        ("햄버거", "piece"),
+        ("피자", "piece"),
+        ("도넛", "piece"),
+        ("쿠키", "piece"),
+        ("삼겹살", "piece"),
+        ("김밥", "piece"),
+        ("초콜릿", "piece"),
+        # volume — 무정형 / 부피 추정 어려움
+        ("김치찌개", "volume"),
+        ("된장찌개", "volume"),
+        ("미역국", "volume"),
+        ("갈비탕", "volume"),
+        ("죽", "volume"),
+        ("비빔밥", "volume"),
+        ("볶음밥", "volume"),
+        ("라면", "volume"),
+        ("칼국수", "volume"),
+        ("파스타", "volume"),
+        ("제육볶음", "volume"),
+        ("멸치볶음", "volume"),
+        # drink — 음료
+        ("커피", "drink"),
+        ("아메리카노", "drink"),
+        ("카페라떼", "drink"),
+        ("녹차", "drink"),
+        ("콜라", "drink"),
+        ("우유", "drink"),
+        ("두유", "drink"),
+        ("맥주", "drink"),
+        ("물", "drink"),
+    ]
+
+    for name, expected in cases:
+        actual = _detect_shape(name)
+        check(actual == expected, f"shape: {name!r}",
+              f"기대 {expected}, 실제 {actual}")
+
+
+# ══════════════════════════════════════════════════════════
+#  테스트 7-3: 칼로리 개선 — match_with_db 차등 보정 검증 (2026-05-06)
+# ══════════════════════════════════════════════════════════
+def test_serving_correction():
+    """match_with_db 카테고리별 차등 보정 — 핵심 비즈니스 로직.
+
+    검증 시나리오:
+    1. piece 음식(사과)은 AI 양 그대로 신뢰 — 다이어터의 1/4 사과 50g 시나리오
+    2. volume 음식(찌개)이 CORE 표준의 2.5배 초과 → CORE 표준으로 보정
+    3. volume 음식이 1.5~2.5배 → GPT 70% + CORE 30% 가중 평균
+    4. volume 음식이 정상 범위 (0.7~1.5배) → AI 양 그대로
+    """
+    print("\n[테스트 7-3] match_with_db 카테고리별 차등 보정")
+    print("-" * 50)
+
+    from food_analyzer import match_with_db, load_food_db, CORE_FOODS
+
+    # DB 한 번 로드 (lazy connection)
+    load_food_db()
+
+    # ── 시나리오 1: piece(사과) — AI 양 100% 신뢰 ──
+    # 사과는 표준 200g인데 다이어터가 50g 먹은 케이스
+    analysis = {
+        "foods": [{
+            "name_ko": "사과",
+            "estimated_serving_g": 50,  # 1/4쪽
+            "calories_kcal": 28,  # AI가 50g에 맞게 추정
+            "protein_g": 0.1, "carbs_g": 7, "fat_g": 0.1,
+        }]
+    }
+    result = match_with_db(analysis, None)
+    food = result["foods"][0]
+    # 사과 CORE = 57kcal/100g. 50g이면 28.5kcal. 보정 안 되어야 함.
+    expected_cal = round(57 * 50 / 100, 1)
+    check(abs(food.get('calories_kcal', 0) - expected_cal) < 1,
+          "piece(사과 1/4쪽): AI 양 50g 그대로 사용",
+          f"기대 {expected_cal}kcal, 실제 {food.get('calories_kcal')}kcal (shape={food.get('shape')})")
+    check(food.get('shape') == 'piece', "사과 shape='piece'",
+          f"실제 {food.get('shape')}")
+
+    # ── 시나리오 2: volume(김치찌개) — 표준 2.5배 초과 → CORE 보정 ──
+    # 김치찌개 CORE = 50kcal/100g, 표준 400g. AI가 1500g(3.75배)으로 잘못 추정
+    analysis = {
+        "foods": [{
+            "name_ko": "김치찌개",
+            "estimated_serving_g": 1500,  # 비현실적
+            "calories_kcal": 750,
+            "protein_g": 50, "carbs_g": 38, "fat_g": 45,
+        }]
+    }
+    result = match_with_db(analysis, None)
+    food = result["foods"][0]
+    # 보정되어 400g 기준 200kcal로 변경되어야 함
+    check(food.get('calories_kcal', 9999) < 300,
+          "volume(김치찌개) AI 1500g → CORE 표준 400g으로 보정",
+          f"칼로리 {food.get('calories_kcal')} (300 미만 기대, shape={food.get('shape')})")
+
+    # ── 시나리오 3: volume(된장찌개) — 정상 범위 ──
+    # 된장찌개 CORE 38kcal/100g, 표준 400g. AI가 350g(0.875배)로 정상 추정
+    analysis = {
+        "foods": [{
+            "name_ko": "된장찌개",
+            "estimated_serving_g": 350,
+            "calories_kcal": 133,
+            "protein_g": 9, "carbs_g": 11, "fat_g": 6,
+        }]
+    }
+    result = match_with_db(analysis, None)
+    food = result["foods"][0]
+    # 0.875배는 0.7~1.5 범위 → AI 양 그대로
+    expected_cal = round(38 * 350 / 100, 1)
+    check(abs(food.get('calories_kcal', 0) - expected_cal) < 5,
+          "volume(된장찌개) AI 350g 정상 → 그대로 사용",
+          f"기대 {expected_cal}kcal, 실제 {food.get('calories_kcal')}kcal")
+
+
+# ══════════════════════════════════════════════════════════
 #  테스트 7: CORE_FOODS 중복/일관성 검증
 # ══════════════════════════════════════════════════════════
 def test_core_foods_consistency():
@@ -475,6 +609,8 @@ def main():
         test_db_quality_score()
         test_meal_scenarios()
         test_db_pollution_restoration()  # P0-1 회귀 (2026-05-03)
+        test_shape_detection()           # 칼로리 개선 (2026-05-06)
+        test_serving_correction()        # 칼로리 개선 (2026-05-06)
         test_core_foods_consistency()
     except Exception as e:
         print(f"\n  ✗ 테스트 실행 중 에러: {e}")
