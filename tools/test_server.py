@@ -1139,6 +1139,26 @@ HTML_PAGE = """<!DOCTYPE html>
   .meal-record-detail td { padding:4px 8px; color:#ddd; border-bottom:1px solid #1a1a35; }
   .meal-record-toggle { color:#818cf8; font-size:0.78em; cursor:pointer; margin-left:8px; }
   .meal-history-more { text-align:center; padding:12px; color:#818cf8; cursor:pointer; font-size:0.9em; }
+
+  /* 촬영 가이드 모달 */
+  .guide-overlay { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.85); z-index:1500; justify-content:center; align-items:center; padding:16px; box-sizing:border-box; }
+  .guide-overlay.active { display:flex; }
+  .guide-popup { background:#1a1a2e; border:1px solid #3b82f6; border-radius:16px; padding:22px 20px; max-width:420px; width:100%; max-height:90vh; overflow-y:auto; box-sizing:border-box; }
+  .guide-popup h3 { color:#60a5fa; margin:0 0 4px; font-size:1.15em; text-align:center; }
+  .guide-popup .guide-sub { color:#aaa; font-size:0.85em; text-align:center; margin-bottom:18px; }
+  .guide-popup .guide-section { background:#0f0f1a; border:1px solid #2a2a4a; border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+  .guide-popup .guide-section-title { color:#fbbf24; font-size:0.92em; font-weight:700; margin-bottom:6px; }
+  .guide-popup .guide-section-body { color:#ddd; font-size:0.86em; line-height:1.55; }
+  .guide-popup .guide-good { color:#6ee7b7; }
+  .guide-popup .guide-bad { color:#f87171; }
+  .guide-popup .guide-emoji { font-size:1.3em; margin-right:6px; vertical-align:middle; }
+  .guide-popup .guide-tip-list { padding-left:18px; margin:6px 0 0; color:#bbb; font-size:0.82em; line-height:1.6; }
+  .guide-popup .guide-actions { display:flex; gap:8px; margin-top:14px; }
+  .guide-popup .guide-actions button { flex:1; padding:11px; border-radius:10px; font-size:0.92em; font-weight:600; border:none; cursor:pointer; }
+  .guide-popup .guide-confirm-btn { background:#3b82f6; color:#fff; }
+  .guide-popup .guide-close-btn { background:#2a2a4a; color:#aaa; }
+  .guide-help-btn { background:none; border:1px solid #3b82f6; color:#60a5fa; font-size:0.78em; padding:6px 12px; border-radius:14px; cursor:pointer; margin-top:10px; transition:all 0.2s; }
+  .guide-help-btn:hover { background:#1e3a8a; color:#fff; }
 </style>
 </head>
 <body>
@@ -1232,6 +1252,11 @@ if (!localStorage.getItem('nutrilens_user')) {
       <button class="btn btn-primary" onclick="event.stopPropagation(); document.getElementById('cameraInput').click()" style="padding:10px 20px; font-size:0.9em">📷 카메라 촬영</button>
       <button class="btn btn-secondary" onclick="event.stopPropagation(); document.getElementById('galleryInput').click()" style="padding:10px 20px; font-size:0.9em">🖼️ 갤러리 선택</button>
     </div>
+    <div style="margin-top:14px; padding:10px 12px; background:#0f1f3a; border:1px solid #1e3a8a; border-radius:10px; font-size:0.82em; color:#93c5fd; line-height:1.5">
+      💡 <strong>정확도를 높이려면</strong> 음식 옆에 <strong>숟가락·젓가락</strong>을 함께 찍어주세요.<br>
+      <span style="color:#a5b4fc">(손으로 먹는 음식은 신용카드를 옆에 두면 좋아요)</span>
+    </div>
+    <button class="guide-help-btn" onclick="event.stopPropagation(); openGuideModal('button')">📖 정확한 촬영법 자세히 보기</button>
     <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" />
     <input type="file" id="galleryInput" accept="image/*" style="display:none" />
     <input type="file" id="fileInput" accept="image/*" style="display:none" />
@@ -1263,6 +1288,53 @@ if (!localStorage.getItem('nutrilens_user')) {
       <div class="sub">인원을 선택하면 균등 분배되고, 이후 음식별로 세부 조정할 수 있어요</div>
       <div class="people-grid" id="peopleGrid"></div>
       <button class="btn btn-secondary" onclick="closeSharingPopup()" style="width:100%; padding:10px">취소</button>
+    </div>
+  </div>
+
+  <!-- 촬영 가이드 모달 (첫 방문 자동 노출 + "자세히 보기" 버튼으로 재호출) -->
+  <div class="guide-overlay" id="guideOverlay">
+    <div class="guide-popup">
+      <h3>📷 정확한 촬영법 가이드</h3>
+      <div class="guide-sub">사진 한 장으로 칼로리를 더 정확히 — 핵심은 reference 물체</div>
+
+      <div class="guide-section">
+        <div class="guide-section-title">왜 reference가 필요한가요?</div>
+        <div class="guide-section-body">
+          AI는 사진만 보고 음식의 <strong>실제 크기</strong>를 정확히 알기 어렵습니다.<br>
+          크기를 알 수 있는 물체(숟가락·카드 등)가 옆에 있으면 <strong>오차가 크게 줄어듭니다.</strong>
+        </div>
+      </div>
+
+      <div class="guide-section">
+        <div class="guide-section-title">✅ 추천 reference (음식 옆에 두세요)</div>
+        <div class="guide-section-body">
+          <span class="guide-emoji">🥄</span><span class="guide-good">숟가락</span> — 한국 표준 약 20cm<br>
+          <span class="guide-emoji">🥢</span><span class="guide-good">젓가락 한 쌍</span> — 한국 표준 약 25cm<br>
+          <span class="guide-emoji">💳</span><span class="guide-good">신용카드</span> — 가로 8.56cm (피자·햄버거·김밥 등 손으로 먹는 음식일 때)
+        </div>
+      </div>
+
+      <div class="guide-section">
+        <div class="guide-section-title">📸 촬영 팁</div>
+        <ul class="guide-tip-list">
+          <li>위에서 살짝 비스듬히 (정수리 각도 X, <strong>약 45도</strong>)</li>
+          <li>reference 물체가 음식과 <strong>같은 평면(테이블 위)</strong>에 있어야 함</li>
+          <li>reference가 음식에 <strong>절반 이상 가려지지 않도록</strong></li>
+          <li>음식 전체가 사진에 들어오게</li>
+        </ul>
+      </div>
+
+      <div class="guide-section">
+        <div class="guide-section-title">⚠️ 주의</div>
+        <div class="guide-section-body">
+          <span class="guide-bad">음식만 단독으로 찍으면</span> AI가 크기를 짐작해야 해서 <strong>오차가 50% 이상 날 수 있습니다.</strong><br>
+          <span style="color:#888; font-size:0.92em">(그래도 분석은 됩니다 — 단지 정확도가 떨어집니다)</span>
+        </div>
+      </div>
+
+      <div class="guide-actions">
+        <button class="guide-confirm-btn" onclick="closeGuideModal()">이해했어요</button>
+      </div>
     </div>
   </div>
 
@@ -1982,6 +2054,38 @@ async function saveManually(isAuto) {
   }
   const hint = document.getElementById('saveMealHint');
   if (hint) hint.textContent = isAuto ? '1시간이 지나 자동으로 저장되었습니다' : '이 식사가 기록에 저장되었습니다';
+}
+
+// ── 촬영 가이드 모달 (첫 방문 자동 노출 + 재호출) ──
+const GUIDE_SEEN_KEY = 'nutrilens_guide_seen_v1';
+function openGuideModal(source) {
+  document.getElementById('guideOverlay').classList.add('active');
+  // 분석 이벤트(추후 확장 가능): source = 'auto' (첫 방문) | 'button' (사용자 클릭)
+  try { console.log('[guide] opened, source=', source); } catch(e) {}
+}
+function closeGuideModal() {
+  document.getElementById('guideOverlay').classList.remove('active');
+  try { localStorage.setItem(GUIDE_SEEN_KEY, '1'); } catch(e) {}
+}
+// 첫 방문 시 자동 노출 — 로그인 화면 닫힌 뒤(메인 진입 시) 1회만
+function maybeShowGuideOnFirstVisit() {
+  try {
+    if (localStorage.getItem(GUIDE_SEEN_KEY) === '1') return;
+  } catch(e) {}
+  // 로그인 화면이 열려 있으면 닫힐 때까지 대기 (간단한 폴링)
+  const loginEl = document.getElementById('loginOverlay');
+  if (loginEl && loginEl.style.display !== 'none' && getComputedStyle(loginEl).display !== 'none') {
+    setTimeout(maybeShowGuideOnFirstVisit, 600);
+    return;
+  }
+  // 메인 화면 안정화를 위해 살짝 지연
+  setTimeout(() => openGuideModal('auto'), 400);
+}
+// DOM 준비 후 트리거
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', maybeShowGuideOnFirstVisit);
+} else {
+  maybeShowGuideOnFirstVisit();
 }
 
 // ── 이상해요 신고 ──
