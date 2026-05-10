@@ -1311,6 +1311,9 @@ if (!localStorage.getItem('nutrilens_user')) {
           <span class="guide-emoji">🥄</span><span class="guide-good">숟가락</span> — 한국 표준 약 20cm<br>
           <span class="guide-emoji">🥢</span><span class="guide-good">젓가락 한 쌍</span> — 한국 표준 약 25cm<br>
           <span class="guide-emoji">💳</span><span class="guide-good">신용카드</span> — 가로 8.56cm (피자·햄버거·김밥 등 손으로 먹는 음식일 때)
+          <div style="margin-top:8px; padding:8px 10px; background:#3a1f0f; border:1px solid #92400e; border-radius:6px; font-size:0.78em; color:#fbbf24">
+            🔒 <strong>보안 안내:</strong> 신용카드를 쓰실 때는 <strong>카드 뒷면</strong>이나 <strong>카드 번호가 안 보이는 면</strong>으로 두세요. 사진은 외부 AI 서버로 전송되므로 안전을 위해 권장드립니다.
+          </div>
         </div>
       </div>
 
