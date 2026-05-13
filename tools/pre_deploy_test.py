@@ -85,9 +85,9 @@ def test_core_foods_sanity():
         check(0 <= cal <= 910, f"{name} 칼로리",
               f"{cal}kcal/100g (범위: 0~910)")
 
-        # 서빙 사이즈: 10~600g
-        check(10 <= serving <= 600, f"{name} 서빙 사이즈",
-              f"{serving}g (범위: 10~600)")
+        # 서빙 사이즈: 10~1500g (한식 국물·탕은 800-1200g 흔함)
+        check(10 <= serving <= 1500, f"{name} 서빙 사이즈",
+              f"{serving}g (범위: 10~1500)")
 
         # 100g당 칼로리로 1인분 칼로리 계산 — 1인분 0~1500kcal
         per_serving_cal = cal * serving / 100
