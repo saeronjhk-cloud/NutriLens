@@ -372,6 +372,139 @@ def encode_image(image_path):
         return base64.b64encode(f.read()).decode("utf-8")
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Reference Detection (Phase 2 — 자체 YOLOv8 모델, 2026-05-19)
+# ─────────────────────────────────────────────────────────────────────
+# 학습 데이터: AI Hub 정밀촬영 5종 1,722장 (mAP50 99.0%, mAP50-95 90.0%)
+# 일반화 검증: 학습 안 한 음식 10/10 검출 (100%)
+# 추론 속도: CPU 1-2초/장 (Railway), GPU 1.9ms/장
+
+_REF_MODEL = None
+_REF_MODEL_PATH = Path(__file__).parent.parent / 'models' / 'ref_detection.pt'
+
+# Reference 객체의 실제 크기 (cm)
+REFERENCE_REAL_CM = {
+    'ref_spoon': 20.0,  # 한국 표준 숟가락 (식당·집 평균)
+    'ref_fork': 20.0,   # 양식 dinner fork
+    'ref_coin': 2.65,   # 500원 동전 지름
+}
+_REF_CLASS_NAMES = ['ref_spoon', 'ref_fork', 'ref_coin']
+
+
+def _get_reference_model():
+    """YOLO 모델 지연 로드 (서버 시작 시 1회만 로드)."""
+    global _REF_MODEL
+    if _REF_MODEL is False:  # 이전에 실패한 경우 재시도 안 함
+        return None
+    if _REF_MODEL is None:
+        if not _REF_MODEL_PATH.exists():
+            print(f"[Reference Model] 모델 파일 없음: {_REF_MODEL_PATH}")
+            _REF_MODEL = False
+            return None
+        try:
+            from ultralytics import YOLO
+            _REF_MODEL = YOLO(str(_REF_MODEL_PATH))
+            print(f"[Reference Model] 로드 완료: {_REF_MODEL_PATH.name}")
+        except ImportError:
+            print("[Reference Model] ultralytics 패키지 없음 — pip install ultralytics 필요")
+            _REF_MODEL = False
+            return None
+        except Exception as e:
+            print(f"[Reference Model] 로드 실패: {e}")
+            _REF_MODEL = False
+            return None
+    return _REF_MODEL
+
+
+def detect_reference_objects(image_path, conf_threshold=0.5):
+    """사진에서 reference 객체(spoon/fork/coin) 자동 검출.
+
+    Returns:
+        list of dict: [{class, bbox[x1,y1,x2,y2], confidence, real_cm}, ...]
+        검출 실패 또는 모델 미로드 시 빈 리스트.
+    """
+    model = _get_reference_model()
+    if model is None:
+        return []
+    try:
+        results = model.predict(str(image_path), conf=conf_threshold, verbose=False)
+        detections = []
+        for r in results:
+            if r.boxes is None or len(r.boxes) == 0:
+                continue
+            for box in r.boxes:
+                cls_id = int(box.cls[0])
+                if cls_id >= len(_REF_CLASS_NAMES):
+                    continue
+                cls_name = _REF_CLASS_NAMES[cls_id]
+                detections.append({
+                    'class': cls_name,
+                    'bbox': [float(x) for x in box.xyxy[0].tolist()],
+                    'confidence': float(box.conf[0]),
+                    'real_cm': REFERENCE_REAL_CM[cls_name],
+                })
+        return detections
+    except Exception as e:
+        print(f"[Reference Detect] 추론 실패: {e}")
+        return []
+
+
+def calculate_ppcm(detections):
+    """가장 신뢰도 높은 reference로 픽셀-cm 환산 정보 계산.
+
+    Returns:
+        dict 또는 None: {reference, confidence, pixel_length, real_cm, cm_per_pixel}
+    """
+    if not detections:
+        return None
+    import math
+    best = max(detections, key=lambda d: d['confidence'])
+    bbox = best['bbox']
+    pixel_len = math.sqrt((bbox[2] - bbox[0]) ** 2 + (bbox[3] - bbox[1]) ** 2)
+    if pixel_len <= 0:
+        return None
+    real_cm = best['real_cm']
+    return {
+        'reference': best['class'],
+        'confidence': best['confidence'],
+        'pixel_length': round(pixel_len, 1),
+        'real_cm': real_cm,
+        'cm_per_pixel': real_cm / pixel_len,
+        'bbox': bbox,
+    }
+
+
+def _build_reference_hint(ppcm_info, detections):
+    """SYSTEM_PROMPT에 주입할 reference 정보 텍스트."""
+    if not ppcm_info:
+        return ""
+    cm_per_px = ppcm_info['cm_per_pixel']
+    ref_name_kr = {'ref_spoon': '숟가락', 'ref_fork': '포크', 'ref_coin': '500원 동전'}.get(
+        ppcm_info['reference'], ppcm_info['reference'])
+    hint = f"""
+
+## 🎯 자동 검출된 reference 정보 (이 정보를 ★최우선★ 활용)
+
+NutriLens 자체 비전 모델이 이 사진에서 reference 객체를 검출했습니다:
+- **검출된 reference: {ref_name_kr}** (신뢰도 {ppcm_info['confidence']:.0%})
+- **실제 크기: {ppcm_info['real_cm']} cm**
+- **사진의 픽셀당 실제 크기: 1 픽셀 = {cm_per_px*10:.3f} mm ({cm_per_px:.4f} cm)**
+
+검출된 reference 좌표: {ppcm_info['bbox']}
+
+위 정보를 기반으로 음식의 실제 크기(cm)를 정확히 추정하세요.
+이 정보는 [표준 식기 크기]·[음식별 표준 1인분]보다 우선합니다.
+"""
+    if len(detections) > 1:
+        other = [d for d in detections if d['class'] != ppcm_info['reference']]
+        if other:
+            hint += "\n추가 검출된 객체:\n"
+            for d in other[:3]:
+                kr = {'ref_spoon': '숟가락', 'ref_fork': '포크', 'ref_coin': '동전'}.get(d['class'], d['class'])
+                hint += f"  - {kr} ({d['confidence']:.0%} 신뢰도)\n"
+    return hint
+
+
 def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
     """
     음식 사진을 GPT-4o Vision으로 분석
@@ -417,6 +550,13 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
         '.webp': 'image/webp',
     }.get(ext, 'image/jpeg')
 
+    # ── Reference 객체 자동 검출 (Phase 2 자체 모델) ──
+    ref_detections = detect_reference_objects(image_path)
+    ppcm_info = calculate_ppcm(ref_detections)
+    if ppcm_info:
+        print(f"[Reference] {ppcm_info['reference']} 검출, 1px = {ppcm_info['cm_per_pixel']*10:.3f}mm")
+    system_prompt = SYSTEM_PROMPT + _build_reference_hint(ppcm_info, ref_detections)
+
     # API 호출
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -426,7 +566,7 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": [
