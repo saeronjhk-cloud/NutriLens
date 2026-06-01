@@ -23,9 +23,11 @@ import time
 import threading
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 import io
 import re
+
+import sessions_store
 
 # ── 프로젝트 경로 설정 ──
 PROJECT_DIR = Path(__file__).parent.parent
@@ -45,16 +47,59 @@ _LOG_LOCK = threading.Lock()       # feedback/meal/report 로그 파일 read-mod
 # OpenAI Vision도 20MB 한도이므로 10MB로 충분
 MAX_REQUEST_BYTES = 10 * 1024 * 1024  # 10MB
 
-# ── 식사 세션 관리 (메모리 저장, 1시간 TTL) ──
-MEAL_SESSIONS = {}   # { session_id: { foods:[], created: timestamp } }
+# ── 식사 세션 관리 (user_id별 메모리 + SQLite write-through) ──
+# dict[user_id: str, dict] — 예: {"user-uuid-1": {"session_active": True, "foods": [...], ...}}
+MEAL_SESSIONS = {}
 SESSION_TTL = 3600   # 1시간
+
+UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.IGNORECASE,
+)
+
+
+def _validate_uid(uid):
+    """UUID 형식 검증. 유효하면 uid 반환, 아니면 None."""
+    if not uid or not isinstance(uid, str):
+        return None
+    uid = uid.strip()
+    return uid if UUID_RE.match(uid) else None
+
+
+def _get_allowed_origins():
+    """ALLOWED_PARENT_ORIGIN — 콤마 구분, 미설정 시 ['*']."""
+    raw = os.environ.get('ALLOWED_PARENT_ORIGIN', '').strip()
+    if not raw:
+        return ['*']
+    return [o.strip() for o in raw.split(',') if o.strip()]
+
+
+def _persist_session(user_id):
+    """MEAL_SESSIONS → SQLite write-through."""
+    with _SESSIONS_LOCK:
+        data = MEAL_SESSIONS.get(user_id)
+    if data:
+        sessions_store.save_session(user_id, data)
+
+
+def _delete_session(user_id):
+    """메모리 + SQLite에서 세션 삭제."""
+    with _SESSIONS_LOCK:
+        MEAL_SESSIONS.pop(user_id, None)
+    sessions_store.delete_session(user_id)
+
 
 def _cleanup_sessions():
     """만료된 세션 정리 — 호출자가 _SESSIONS_LOCK을 잡고 있어야 함"""
     now = time.time()
-    expired = [sid for sid, s in MEAL_SESSIONS.items() if now - s['created'] > SESSION_TTL]
-    for sid in expired:
-        del MEAL_SESSIONS[sid]
+    expired = []
+    for uid, s in MEAL_SESSIONS.items():
+        started = s.get('started_at') or s.get('created') or now
+        if now - started > SESSION_TTL:
+            expired.append(uid)
+    for uid in expired:
+        MEAL_SESSIONS.pop(uid, None)
+        sessions_store.delete_session(uid)
 
 # ── 피드백 학습 시스템 ──
 FEEDBACK_LOG_PATH = None  # 서버 시작 시 설정
@@ -729,6 +774,15 @@ def load_env():
 
 load_env()
 
+# ── SQLite 세션 DB 초기화 + 메모리 복원 ──
+sessions_store.init_db()
+removed = sessions_store.cleanup_old_sessions(max_age_hours=24)
+if removed:
+    print(f"[sessions_store] 오래된 세션 {removed}건 정리")
+MEAL_SESSIONS = sessions_store.load_all_active()
+if MEAL_SESSIONS:
+    print(f"[sessions_store] 활성 세션 {len(MEAL_SESSIONS)}건 복원: {list(MEAL_SESSIONS.keys())}")
+
 # ── AI JSON 파싱 (강화) ──
 def _parse_ai_json(content):
     """AI 응답에서 JSON을 추출 — 여러 형식 대응"""
@@ -860,8 +914,19 @@ HTML_PAGE = """<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>NutriLens - AI 음식 영양 분석</title>
+
+<!-- PWA: 홈화면 추가 시 진짜 앱처럼 보임 -->
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#1E3A8A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="NutriLens">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1674,10 +1739,10 @@ async function doLogin() {
   const nickname = document.getElementById('nicknameInput').value.trim();
   if (!nickname) return showToast('닉네임을 입력하세요.');
   try {
-    const resp = await fetch('/login', {
+    const resp = await fetch(apiUrl('/login'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ nickname: nickname })
+      body: JSON.stringify({ nickname: nickname, uid: NUTRI_UID })
     });
     const data = await resp.json();
     if (data.error) return showToast(data.error, 'error');
@@ -1708,11 +1773,12 @@ function switchTab(tab) {
 // ══════════════════════════════════════════════
 
 // ── 익명 UUID 생성·조회 (P0-3 신설) ──
-// localStorage 'nutrilens_uid' 키에 UUID 영구 저장. 첫 접속 시 자동 생성.
+// URL ?uid= 우선, 없으면 localStorage 'nutrilens_uid' (직접 접속 사용자 보호)
+window.NUTRI_ALLOWED_ORIGINS = __NUTRI_ALLOWED_ORIGINS__;
+
 function getOrCreateUid() {
   let uid = localStorage.getItem('nutrilens_uid');
   if (!uid) {
-    // RFC4122 v4 UUID — crypto.randomUUID 우선, 없으면 폴리필
     if (window.crypto && window.crypto.randomUUID) {
       uid = window.crypto.randomUUID();
     } else {
@@ -1727,17 +1793,96 @@ function getOrCreateUid() {
   }
   return uid;
 }
-// 페이지 로드 즉시 UID 보장
-const NUTRI_UID = getOrCreateUid();
+
+function resolveNutriUid() {
+  const params = new URLSearchParams(window.location.search);
+  const urlUid = params.get('uid');
+  if (urlUid) {
+    console.log('[UID] URL 파라미터 사용: ' + urlUid);
+    return urlUid;
+  }
+  return getOrCreateUid();
+}
+
+function apiUrl(path) {
+  const sep = path.includes('?') ? '&' : '?';
+  return path + sep + 'uid=' + encodeURIComponent(NUTRI_UID);
+}
+
+const NUTRI_UID = resolveNutriUid();
+
+function getPostMessageTargetOrigin() {
+  const allowed = window.NUTRI_ALLOWED_ORIGINS || [];
+  if (allowed.length === 0) return '*';
+  if (allowed.length === 1) return allowed[0];
+  try {
+    const refOrigin = new URL(document.referrer).origin;
+    if (allowed.includes(refOrigin)) return refOrigin;
+  } catch(e) {}
+  return allowed[0];
+}
+
+function buildMealPostMessageData(analysisData) {
+  const summary = analysisData.meal_summary || {};
+  const foods = (analysisData.foods || []).map((f, i) => {
+    const sharePct = sharingMode ? (sharingPcts[i] ?? 100) : 100;
+    const eatenPct = f.eaten_pct != null ? f.eaten_pct : 100;
+    return {
+      menu_name_ko: f.name_ko || '?',
+      portion_ratio: sharePct / 100,
+      share_pct: sharePct,
+      kcal: f.calories_kcal || 0,
+      protein_g: f.protein_g || 0,
+      carb_g: f.carbs_g || 0,
+      fat_g: f.fat_g || 0,
+      sodium_mg: f.sodium_mg || 0,
+      weight_g: f.estimated_serving_g || 0,
+      leftover_ratio: Math.max(0, (100 - eatenPct) / 100),
+    };
+  });
+  const leftoverNotes = (analysisData.foods || [])
+    .map(f => f.leftover_note)
+    .filter(Boolean);
+  let photoUrl = null;
+  try {
+    const img = document.getElementById('previewImg');
+    if (img && img.src && img.src.startsWith('http')) photoUrl = img.src;
+  } catch(e) {}
+  return {
+    date: _localToday(),
+    meal_type: summary.meal_type || (sessionActive ? '정찬' : '식사'),
+    foods: foods,
+    total_kcal: Math.round(summary.total_calories || 0),
+    people_count: sharingPeople || 1,
+    leftover_note: leftoverNotes.length ? leftoverNotes.join('; ') : null,
+    photo_url: photoUrl,
+    raw_response: analysisData.raw || null,
+  };
+}
+
+function notifyParentMealRecorded(analysisData) {
+  try {
+    if (window.parent === window) return;
+    const targetOrigin = getPostMessageTargetOrigin();
+    window.parent.postMessage({
+      type: 'nutrilens:meal_recorded',
+      user_id: NUTRI_UID,
+      meal_data: buildMealPostMessageData(analysisData),
+    }, targetOrigin);
+    console.log('[postMessage] 부모창에 식사 기록 전달:', targetOrigin);
+  } catch(e) {
+    console.warn('[postMessage] 전달 실패 (iframe 아님 또는 origin 불일치):', e.message);
+  }
+}
 
 // ── 서버 백업 fetch (fire-and-forget, P0-3 신설) ──
 // localStorage 저장 직후 호출 — 백업 실패해도 사용자 경험엔 영향 없음.
 function _backupToServer(endpoint, payload) {
   try {
-    fetch(endpoint, {
+    fetch(apiUrl(endpoint), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, uid: NUTRI_UID }),
     }).catch(e => console.warn('[백업] ' + endpoint + ' 실패:', e.message));
   } catch(e) { console.warn('[백업] 호출 실패:', e); }
 }
@@ -2028,7 +2173,10 @@ const NutriLocalDB = {
 async function saveMealRecord(analysisData) {
   if (!currentUser || !analysisData || !analysisData.foods || analysisData.foods.length === 0) return;
   if (mealSaved) { console.log('[기록] 이미 저장됨 — 중복 저장 방지'); return; }
-  try { NutriLocalDB.addMeal(currentUser, analysisData); }
+  try {
+    NutriLocalDB.addMeal(currentUser, analysisData);
+    notifyParentMealRecorded(analysisData);
+  }
   catch(e) { console.error('식사 기록 저장 실패:', e); }
 }
 
@@ -2116,10 +2264,11 @@ async function submitReport() {
   if (!text) return showToast('어떤 점이 이상한지 입력해주세요.');
   const food = currentAnalysis.foods[reportFoodIndex];
   try {
-    const resp = await fetch('/report', {
+    const resp = await fetch(apiUrl('/report'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
+        uid: NUTRI_UID,
         nickname: currentUser,
         food_name: food.name_ko || '?',
         food_index: reportFoodIndex,
@@ -2583,9 +2732,10 @@ async function toggleSession() {
     return;
   }
   try {
-    const resp = await fetch('/session/start', { method: 'POST' });
+    const resp = await fetch(apiUrl('/session/start'), { method: 'POST' });
     const data = await resp.json();
-    sessionId = data.session_id;
+    if (data.error) return showToast(data.error, 'error');
+    sessionId = NUTRI_UID;
     sessionActive = true;
     sessionPhotoCount = 0; sessionFoodCount = 0; sessionTotalCal = 0;
     document.getElementById('sessionBar').classList.add('active');
@@ -2599,10 +2749,10 @@ async function toggleSession() {
 async function endSession() {
   if (!sessionId) return;
   try {
-    const resp = await fetch('/session/end', {
+    const resp = await fetch(apiUrl('/session/end'), {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ session_id: sessionId })
+      body: JSON.stringify({ uid: NUTRI_UID })
     });
     const data = await resp.json();
     sessionActive = false;
@@ -2658,10 +2808,10 @@ async function submitCorrection() {
   if (!correctedName) return showToast('음식명을 입력하세요.');
 
   try {
-    const resp = await fetch('/correct', {
+    const resp = await fetch(apiUrl('/correct'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ original_name: originalName, corrected_name: correctedName, serving_pct: servingPct })
+      body: JSON.stringify({ uid: NUTRI_UID, original_name: originalName, corrected_name: correctedName, serving_pct: servingPct })
     });
     const data = await resp.json();
 
@@ -2794,10 +2944,9 @@ async function analyzeFood() {
   const formData = new FormData();
   formData.append('image', selectedFile);
   formData.append('api_key', '');
-  if (sessionActive && sessionId) formData.append('session_id', sessionId);
 
   try {
-    const resp = await fetch('/analyze', { method: 'POST', body: formData });
+    const resp = await fetch(apiUrl('/analyze'), { method: 'POST', body: formData });
     const data = await resp.json();
     document.getElementById('loading').style.display = 'none';
     if (data.error) {
@@ -2874,7 +3023,7 @@ async function analyzeLeftover() {
   }
 
   try {
-    const resp = await fetch('/analyze-leftover', { method: 'POST', body: formData });
+    const resp = await fetch(apiUrl('/analyze-leftover'), { method: 'POST', body: formData });
     const data = await resp.json();
     document.getElementById('loading').style.display = 'none';
     if (data.error) {
@@ -3200,23 +3349,120 @@ function renderResult(data, isAfterMeal) {
 class NutriLensHandler(BaseHTTPRequestHandler):
     """HTTP 요청 핸들러"""
 
+    def _parse_query(self):
+        parsed = urlparse(self.path)
+        return parse_qs(parsed.query)
+
+    def _resolve_cors_origin(self):
+        allowed = _get_allowed_origins()
+        if '*' in allowed:
+            return '*'
+        origin = self.headers.get('Origin', '')
+        if origin in allowed:
+            return origin
+        return allowed[0] if allowed else '*'
+
+    def _send_cors_headers(self):
+        self.send_header('Access-Control-Allow-Origin', self._resolve_cors_origin())
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+
+    def _extract_uid(self, body_dict=None):
+        """GET query + POST body에서 uid 추출."""
+        qs = self._parse_query()
+        uid = (qs.get('uid') or [''])[0].strip()
+        if not uid and body_dict:
+            uid = (body_dict.get('uid') or '').strip()
+        return uid
+
+    def _require_uid(self, body_dict=None):
+        """uid 필수 검증. (uid, error_dict) — error_dict가 있으면 호출자가 400 응답."""
+        uid = self._extract_uid(body_dict)
+        validated = _validate_uid(uid)
+        if not validated:
+            return None, {"error": "uid query parameter required"}
+        return validated, None
+
+    def do_OPTIONS(self):
+        """CORS preflight."""
+        self.send_response(204)
+        self._send_cors_headers()
+        self.end_headers()
+
     def do_GET(self):
         """메인 페이지 서빙"""
         path = self.path.split('?')[0]  # 쿼리 파라미터 제거
         if path == '/' or path == '/index.html':
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self._send_cors_headers()
             self.end_headers()
-            self.wfile.write(HTML_PAGE.encode('utf-8'))
+            allowed = _get_allowed_origins()
+            origins_json = json.dumps(
+                [] if '*' in allowed else allowed,
+                ensure_ascii=False,
+            )
+            html = HTML_PAGE.replace('__NUTRI_ALLOWED_ORIGINS__', origins_json)
+            self.wfile.write(html.encode('utf-8'))
         elif path == '/version':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.end_headers()
             self.wfile.write(json.dumps({"version": "4.0", "json_mode": True, "db_count": len(FOODS_DB)}, ensure_ascii=False).encode('utf-8'))
         elif path.startswith('/dashboard-data'):
+            uid, err = self._require_uid()
+            if err:
+                self._json_response(400, err)
+                return
             self._handle_dashboard_data()
+        elif path.startswith('/static/'):
+            # PWA: 정적 파일 서빙 (manifest.json, 아이콘 등)
+            self._serve_static(path)
         else:
             self.send_response(404)
+            self.end_headers()
+
+    def _serve_static(self, path):
+        """PWA용 정적 파일 서빙 (manifest, 아이콘)"""
+        # 경로 검증 — directory traversal 방지
+        if '..' in path:
+            self.send_response(403)
+            self.end_headers()
+            return
+
+        # static/ 폴더에서 파일 찾기
+        from pathlib import Path
+        static_dir = Path(__file__).parent.parent / 'static'
+        rel_path = path.replace('/static/', '', 1)
+        file_path = static_dir / rel_path
+
+        if not file_path.exists() or not file_path.is_file():
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        # Content-Type 판별
+        ext = file_path.suffix.lower()
+        mime_map = {
+            '.json': 'application/manifest+json',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.svg': 'image/svg+xml',
+            '.ico': 'image/x-icon',
+        }
+        content_type = mime_map.get(ext, 'application/octet-stream')
+
+        try:
+            data = file_path.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'public, max-age=86400')  # 1일 캐시
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            print(f"[static] 서빙 실패: {e}")
+            self.send_response(500)
             self.end_headers()
 
     def _parse_multipart(self):
@@ -3327,6 +3573,11 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             fields, files, err = self._parse_multipart()
             if err:
                 self._json_response(400, {"error": err})
+                return
+
+            uid, uid_err = self._require_uid(fields)
+            if uid_err:
+                self._json_response(400, uid_err)
                 return
 
             api_key = self._get_api_key(fields)
@@ -3511,6 +3762,11 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 self._json_response(400, {"error": err})
                 return
 
+            uid, uid_err = self._require_uid(fields)
+            if uid_err:
+                self._json_response(400, uid_err)
+                return
+
             api_key = self._get_api_key(fields)
             if not api_key:
                 self._json_response(400, {
@@ -3546,22 +3802,21 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 total = len(analysis.get('foods', []))
                 print(f"DB 매칭: {matched}/{total}개 음식 매칭됨")
 
-            # 3. 세션 모드: session_id가 있으면 세션에 누적
-            #    (동시 사진 업로드 시 list.extend 도중 다른 thread가 끼어드는 race 방지)
-            session_id = (fields or {}).get('session_id', '').strip()
+            # 3. 세션 모드: user_id(uid)별 정찬 세션에 누적
             session_snapshot = None
-            if session_id:
-                with _SESSIONS_LOCK:
-                    if session_id in MEAL_SESSIONS:
-                        session = MEAL_SESSIONS[session_id]
-                        new_foods = analysis.get('foods', [])
-                        session['foods'].extend(new_foods)
-                        session['photo_count'] += 1
-                        # lock 안에서 snapshot 떠두고 lock 밖에서 사용
-                        session_snapshot = {
-                            'foods': list(session['foods']),
-                            'photo_count': session['photo_count'],
-                        }
+            with _SESSIONS_LOCK:
+                if uid in MEAL_SESSIONS and MEAL_SESSIONS[uid].get('session_active'):
+                    session = MEAL_SESSIONS[uid]
+                    new_foods = analysis.get('foods', [])
+                    session['foods'].extend(new_foods)
+                    session['photo_count'] = session.get('photo_count', 0) + 1
+                    session['updated_at'] = time.time()
+                    session_snapshot = {
+                        'foods': list(session['foods']),
+                        'photo_count': session['photo_count'],
+                    }
+            if session_snapshot:
+                _persist_session(uid)
 
             if session_snapshot:
                 all_foods = session_snapshot['foods']
@@ -3570,7 +3825,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 total_carbs = sum(f.get('carbs_g', 0) for f in all_foods)
                 total_fat = sum(f.get('fat_g', 0) for f in all_foods)
 
-                analysis['session_id'] = session_id
+                analysis['user_id'] = uid
                 analysis['session_photo_count'] = session_snapshot['photo_count']
                 analysis['session_total_foods'] = len(all_foods)
                 analysis['session_summary'] = {
@@ -3579,7 +3834,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                     "total_carbs": round(total_carbs, 1),
                     "total_fat": round(total_fat, 1)
                 }
-                print(f"[세션] {session_id}: 사진 {session_snapshot['photo_count']}장, 총 {len(all_foods)}개 음식, {total_cal:.0f}kcal")
+                print(f"[세션] {uid}: 사진 {session_snapshot['photo_count']}장, 총 {len(all_foods)}개 음식, {total_cal:.0f}kcal")
 
             # 4. 결과 반환
             print("분석 완료!")
@@ -3592,50 +3847,55 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
     # ── 식사 세션 API ──
     def _handle_session_start(self):
-        """식사 세션 시작 — 빈 세션 생성
-
-        ThreadingHTTPServer 환경: MEAL_SESSIONS 수정과 정리를 _SESSIONS_LOCK으로 직렬화.
-        """
-        session_id = str(uuid.uuid4())[:8]
+        """식사 세션 시작 — user_id별 빈 세션 생성"""
+        uid, uid_err = self._require_uid()
+        if uid_err:
+            self._json_response(400, uid_err)
+            return
+        now = time.time()
         with _SESSIONS_LOCK:
             _cleanup_sessions()
-            MEAL_SESSIONS[session_id] = {
+            MEAL_SESSIONS[uid] = {
+                'session_active': True,
                 'foods': [],
-                'created': time.time(),
-                'photo_count': 0
+                'started_at': now,
+                'created': now,
+                'updated_at': now,
+                'photo_count': 0,
             }
-        print(f"[세션] 새 식사 세션 시작: {session_id}")
-        self._json_response(200, {"session_id": session_id})
+        _persist_session(uid)
+        print(f"[세션] 새 식사 세션 시작: user_id={uid}")
+        self._json_response(200, {"user_id": uid, "session_active": True})
 
     def _handle_session_end(self):
-        """식사 세션 종료 — 누적 결과 반환 후 세션 삭제
-
-        세션 조회·삭제를 한 lock 블록 안에서 처리하여 race 방지.
-        """
+        """식사 세션 종료 — 누적 결과 반환 후 세션 삭제"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
             req = json.loads(body) if body.strip() else {}
-            session_id = req.get('session_id', '')
+
+            uid, uid_err = self._require_uid(req)
+            if uid_err:
+                self._json_response(400, uid_err)
+                return
 
             with _SESSIONS_LOCK:
-                if session_id not in MEAL_SESSIONS:
+                if uid not in MEAL_SESSIONS:
                     self._json_response(404, {"error": "세션을 찾을 수 없습니다."})
                     return
-                session = MEAL_SESSIONS[session_id]
-                # snapshot 떠두고 즉시 삭제
-                foods = list(session['foods'])
-                photo_count = session['photo_count']
-                del MEAL_SESSIONS[session_id]
+                session = MEAL_SESSIONS[uid]
+                foods = list(session.get('foods', []))
+                photo_count = session.get('photo_count', 0)
+                del MEAL_SESSIONS[uid]
+            sessions_store.delete_session(uid)
 
-            # 합산 계산 (lock 밖에서 — snapshot 사용)
             total_cal = sum(f.get('calories_kcal', 0) for f in foods)
             total_prot = sum(f.get('protein_g', 0) for f in foods)
             total_carbs = sum(f.get('carbs_g', 0) for f in foods)
             total_fat = sum(f.get('fat_g', 0) for f in foods)
 
             result = {
-                "session_id": session_id,
+                "user_id": uid,
                 "photo_count": photo_count,
                 "foods": foods,
                 "meal_summary": {
@@ -3649,7 +3909,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 }
             }
 
-            print(f"[세션] 세션 종료: {session_id} → {len(foods)}개 음식, {total_cal:.0f}kcal")
+            print(f"[세션] 세션 종료: user_id={uid} → {len(foods)}개 음식, {total_cal:.0f}kcal")
             self._json_response(200, result)
 
         except Exception as e:
@@ -3662,6 +3922,11 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')
             req = json.loads(body)
+
+            uid, uid_err = self._require_uid(req)
+            if uid_err:
+                self._json_response(400, uid_err)
+                return
 
             original_name = req.get('original_name', '')
             corrected_name = req.get('corrected_name', '').strip()
@@ -3725,6 +3990,12 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')
             req = json.loads(body)
+
+            uid, uid_err = self._require_uid(req)
+            if uid_err:
+                self._json_response(400, uid_err)
+                return
+
             nickname = req.get('nickname', '').strip()
             if not nickname or len(nickname) < 1:
                 self._json_response(400, {"error": "닉네임을 입력하세요."})
@@ -3744,11 +4015,15 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
             req = json.loads(body) if body.strip() else {}
 
-            uid = (req.get('uid') or '').strip()
+            uid, uid_err = self._require_uid(req)
+            if uid_err:
+                self._json_response(400, uid_err)
+                return
+
             nickname = (req.get('nickname') or '').strip()
             record = req.get('record') or {}
 
-            if not uid or not record:
+            if not record:
                 # 잘못된 페이로드여도 클라이언트는 200으로 받아서 신경 안 쓰게
                 self._json_response(200, {"saved": False, "reason": "uid 또는 record 누락"})
                 return
@@ -3770,6 +4045,12 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')
             req = json.loads(body)
+
+            uid, uid_err = self._require_uid(req)
+            if uid_err:
+                self._json_response(400, uid_err)
+                return
+
             nickname = req.get('nickname', '').strip()
             food_name = req.get('food_name', '?')
             report_text = req.get('report_text', '').strip()
@@ -3823,7 +4104,11 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
             req = json.loads(body) if body.strip() else {}
 
-            uid = (req.get('uid') or '').strip()
+            uid, uid_err = self._require_uid(req)
+            if uid_err:
+                self._json_response(400, uid_err)
+                return
+
             nickname = (req.get('nickname') or '').strip()
             calories = req.get('calories', 0) or 0
             protein = req.get('protein', 0) or 0
@@ -3838,24 +4123,40 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
     # ── Feature 1: 오늘 진행 상황 API (레거시 — localStorage로 이전) ──
     def _handle_today_progress(self):
+        uid, uid_err = self._require_uid()
+        if uid_err:
+            self._json_response(400, uid_err)
+            return
         self._json_response(200, {"calories":0,"protein":0,"goal_calories":1800,"goal_protein":120,"remaining_calories":1800,"remaining_protein":120,"calorie_pct":0,"protein_pct":0})
 
     # ── Feature 2: 주간 매크로 분석 API (레거시 — localStorage로 이전) ──
     def _handle_weekly_macro(self):
+        uid, uid_err = self._require_uid()
+        if uid_err:
+            self._json_response(400, uid_err)
+            return
         self._json_response(200, {"days":[],"avg_ratio":{},"feedback":""})
 
     # ── Feature 3: 단백질 타이밍 분석 API (레거시 — localStorage로 이전) ──
     def _handle_protein_timing(self):
+        uid, uid_err = self._require_uid()
+        if uid_err:
+            self._json_response(400, uid_err)
+            return
         self._json_response(200, {"timing_slots":{},"avg_per_slot":{},"threshold":30,"feedback":[]})
 
     # ── 대시보드 데이터 API (레거시 — localStorage로 이전) ──
     def _handle_dashboard_data(self):
+        uid, uid_err = self._require_uid()
+        if uid_err:
+            self._json_response(400, uid_err)
+            return
         self._json_response(200, {"daily":[],"meal_pattern":{},"balance":{},"top_foods":[],"warnings":[],"weekly_report":"","total_meals":0,"total_days":0})
 
     def _json_response(self, code, data):
         self.send_response(code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
 
@@ -3873,6 +4174,9 @@ if __name__ == '__main__':
     print("  NutriLens 테스트 서버 (Threading)")
     print("=" * 50)
     print(f"  DB: {len(FOODS_DB)}종 음식 로드됨")
+    print(f"  세션 DB: {os.environ.get('SESSION_DB_PATH', 'data/sessions.db')}")
+    print(f"  CORS origin: {os.environ.get('ALLOWED_PARENT_ORIGIN', '* (dev)')}")
+    print(f"  활성 세션: {len(MEAL_SESSIONS)}건")
     print(f"  주소: http://localhost:{PORT}")
     print(f"  종료: Ctrl+C")
     print(f"  요청 크기 한도: {MAX_REQUEST_BYTES // (1024*1024)}MB")
