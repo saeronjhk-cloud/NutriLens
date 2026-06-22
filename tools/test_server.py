@@ -3291,10 +3291,6 @@ function renderResult(data, isAfterMeal) {
       '<button class="preset-btn" data-idx="'+i+'" data-val="'+v+'" onclick="setSharingPct('+i+','+v+')">'+v+'%</button>'
     ).join('');
 
-    const _pchoices=['적게','보통','많게','매우많게'];
-    const _cur=food._portionChoice||'보통';
-    const portionBtns=_pchoices.map(c=>'<button class="pq-btn'+(_cur===c?' pq-on':'')+'" onclick="quickPortion('+i+',\''+c+'\')">'+c+'</button>').join('');
-    const rangeText=food._range?portionRangeText(food._range):'양을 보정하면 더 정확해져요';
     const sharingHtml = '<div class="food-sharing" id="sharing_container_'+i+'" style="display:none">'
       + '<div class="sharing-header">'
       + '<span class="sharing-label">내가 먹은 비율</span>'
@@ -3314,8 +3310,6 @@ function renderResult(data, isAfterMeal) {
       + '<span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div></div>'
       + '<div class="confidence-bar"><div class="confidence-fill" style="width:'+confPct+'%;background:'+confColor+'"></div></div>'
       + '<div style="font-size:0.8em;color:#888;margin-bottom:10px;margin-top:-8px">확신도 '+confPct+'% · 약 '+(food.estimated_serving_g||'?')+'g</div>'
-      + '<div class="portion-quick"><span style="font-size:0.8em;color:#9ca3af">양 보정:</span>'+portionBtns+'</div>'
-      + '<div class="kcal-range" id="kcalRange_'+i+'">'+rangeText+'</div>'
       + eatenBarHtml
       + '<div class="nutrition-grid">'
       + '<div class="nutrition-item"><div class="nutrition-value">'+(food.calories_kcal||0)+'</div><div class="nutrition-label">칼로리 kcal</div></div>'
@@ -3845,6 +3839,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             ref_hint = ""
             ref_info = {"detected": False, "type": None, "confidence": 0}
             try:
+                if os.environ.get("REF_DETECT", "1") == "0":
+                    raise RuntimeError("REF_DETECT=0 (비활성)")  # Railway 환경변수로 즉시 끌 수 있음
                 import tempfile
                 from food_analyzer import detect_reference_objects, calculate_ppcm, _build_reference_hint
                 _tf = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
