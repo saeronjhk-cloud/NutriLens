@@ -3586,6 +3586,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         if path == '/analyze':
             self._handle_analyze()
+        elif path == '/refcheck':
+            self._handle_refcheck()
         elif path == '/analyze-leftover':
             self._handle_leftover()
         elif path == '/session/start':
@@ -3800,6 +3802,39 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self._json_response(500, {"error": f"서버 에러: {str(e)}"})
+
+    def _handle_refcheck(self):
+        """[디버그] GPT-4o 없이 YOLO reference 검출만 실행. 원인 진단용(무과금).
+        반환: {model_loaded, conf, count, detections:[{class,confidence}], err}"""
+        import tempfile
+        out={"model_loaded": None, "conf": None, "count": 0, "detections": [], "err": None}
+        try:
+            fields, files, err = self._parse_multipart()
+            if err:
+                self._json_response(400, {"error": err}); return
+            image_file = files.get('image')
+            if not image_file:
+                self._json_response(400, {"error": "이미지가 업로드되지 않았습니다."}); return
+            image_data = image_file['data']
+            try:
+                conf = float(os.environ.get("REF_CONF", "0.10"))
+            except Exception:
+                conf = 0.10
+            out["conf"]=conf
+            from food_analyzer import _get_reference_model, detect_reference_objects
+            out["model_loaded"] = _get_reference_model() is not None
+            _tf = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            _tf.write(image_data); _tf.close()
+            try:
+                dets = detect_reference_objects(_tf.name, conf_threshold=conf)
+                out["count"]=len(dets)
+                out["detections"]=[{"class":d["class"],"confidence":round(d["confidence"],3)} for d in dets]
+            finally:
+                try: os.unlink(_tf.name)
+                except Exception: pass
+        except Exception as e:
+            out["err"]=str(e)
+        self._json_response(200, out)
 
     def _handle_analyze(self):
         """일반 음식 분석"""
