@@ -3821,6 +3821,28 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             except Exception:
                 conf = 0.10
             out["conf"]=conf
+            # 정밀 진단: import/torch/모델로드 실패 원인 직접 포착
+            diag={}
+            try:
+                import importlib
+                u=importlib.import_module("ultralytics"); diag["ultralytics"]=getattr(u,"__version__","?")
+            except Exception as e:
+                diag["ultralytics_err"]=repr(e)
+            try:
+                import importlib
+                t=importlib.import_module("torch"); diag["torch"]=getattr(t,"__version__","?")
+            except Exception as e:
+                diag["torch_err"]=repr(e)
+            from pathlib import Path as _P
+            _mp=_P(__file__).parent.parent/"models"/"ref_detection.pt"
+            diag["model_path_exists"]=_mp.exists()
+            diag["model_size"]=(_mp.stat().st_size if _mp.exists() else 0)
+            try:
+                from ultralytics import YOLO as _Y
+                _Y(str(_mp)); diag["yolo_load"]="ok"
+            except Exception as e:
+                diag["yolo_load_err"]=repr(e)[:300]
+            out["diag"]=diag
             from food_analyzer import _get_reference_model, detect_reference_objects
             out["model_loaded"] = _get_reference_model() is not None
             _tf = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
