@@ -620,6 +620,13 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
             "raw_response": content
         }
 
+    # reference(숟가락/포크/동전) 자동 검출 결과를 응답에 포함 → UI 표시·신뢰도 판단용
+    analysis["reference"] = {
+        "detected": ppcm_info is not None,
+        "type": ppcm_info["reference"] if ppcm_info else None,
+        "confidence": round(ppcm_info["confidence"], 2) if ppcm_info else 0,
+    }
+
     return analysis
 
 

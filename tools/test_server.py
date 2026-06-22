@@ -847,7 +847,7 @@ MEAL_LOG_PATH = PROJECT_DIR / 'meal_log.json'
 REPORT_LOG_PATH = PROJECT_DIR / 'report_log.json'
 
 # ── OpenAI API 호출 (urllib 사용, 외부 패키지 불필요) ──
-def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o"):
+def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o", ref_hint=""):
     """GPT-4o Vision API 호출"""
     url = "https://api.openai.com/v1/chat/completions"
 
@@ -857,6 +857,8 @@ def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o"):
     if hints:
         hint_text = "\n\n## 사용자 피드백 기반 주의사항\n다음은 자주 잘못 인식되는 음식입니다:\n" + "\n".join(hints)
         system_content += hint_text
+    if ref_hint:
+        system_content += ref_hint  # 자동 검출된 reference(숟가락/포크/동전) 크기 힌트
 
     payload = {
         "model": model,
@@ -989,6 +991,13 @@ HTML_PAGE = """<!DOCTYPE html>
 
   /* 음식 카드 */
   .food-card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 20px; margin-bottom: 12px; }
+  .portion-quick { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:6px 0 2px; }
+  .pq-btn { padding:3px 10px; border-radius:14px; border:1px solid #374151; background:#1f2937; color:#d1d5db; font-size:0.8em; cursor:pointer; }
+  .pq-btn.pq-on { background:#2563eb; border-color:#2563eb; color:#fff; }
+  .kcal-range { font-size:0.78em; color:#9ca3af; margin-bottom:8px; }
+  .ref-banner { font-size:0.85em; border-radius:10px; padding:8px 12px; margin-bottom:12px; }
+  .ref-banner.ref-on { background:rgba(16,185,129,0.12); border:1px solid #10b981; color:#6ee7b7; }
+  .ref-banner.ref-off { background:rgba(245,158,11,0.10); border:1px solid #b45309; color:#fbbf24; }
   .food-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
   .food-name { font-size: 1.15em; font-weight: 600; }
   .food-name-en { font-size: 0.85em; color: #888; margin-left: 8px; }
@@ -3219,7 +3228,37 @@ function recalcTotal() {
 }
 
 // ── 결과 렌더링 ──
+function portionRangeText(r){
+  const k=r&&r.nutrients&&r.nutrients.kcal;
+  if(!k||!k.known) return '데이터 부족(판단 보류)';
+  return '약 '+k.low+'~'+k.high+' kcal · 신뢰 '+k.confidence;
+}
+async function quickPortion(i, choice){
+  const f=(window.analysisData&&analysisData.foods)?analysisData.foods[i]:null;
+  if(!f) return;
+  if(f._baseServing===undefined){
+    f._baseServing=f.estimated_serving_g||0;
+    f._baseNut={kcal:f.calories_kcal||0,protein_g:f.protein_g||0,carbs_g:f.carbs_g||0,fat_g:f.fat_g||0,sugar_g:f.sugar_g,sodium_mg:f.sodium_mg,fiber_g:f.fiber_g};
+  }
+  const grade=f.quality_grade||((f.db_matched||f.source==='DB_MATCHED')?'B':(String(f.source||'').indexOf('GOLD')>=0?'A':'C'));
+  try{
+    const resp=await fetch(apiUrl('/adjust'),{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({per_serving:f._baseNut,serving_g:f._baseServing,grade:grade,category:f.category||'',portion_choice:choice})});
+    const r=await resp.json();
+    if(r.error){showToast('보정 실패: '+r.error,'error');return;}
+    f._range=r; f._portionChoice=choice; f.estimated_serving_g=r.serving_g;
+    const N=r.nutrients||{};
+    if(N.kcal&&N.kcal.known) f.calories_kcal=N.kcal.point;
+    if(N.protein_g&&N.protein_g.known) f.protein_g=N.protein_g.point;
+    if(N.carbs_g&&N.carbs_g.known) f.carbs_g=N.carbs_g.point;
+    if(N.fat_g&&N.fat_g.known) f.fat_g=N.fat_g.point;
+    if(N.sugar_g&&N.sugar_g.known) f.sugar_g=N.sugar_g.point;
+    if(N.sodium_mg&&N.sodium_mg.known) f.sodium_mg=N.sodium_mg.point;
+    renderResult(analysisData, !!window.__isAfterMeal);
+  }catch(e){ showToast('보정 오류: '+e.message,'error'); }
+}
 function renderResult(data, isAfterMeal) {
+  window.__isAfterMeal = isAfterMeal;
   const foods = data.foods || [];
   const summary = data.meal_summary || {};
   sharingPcts = {};
@@ -3227,6 +3266,13 @@ function renderResult(data, isAfterMeal) {
   sharingPeople = 1;
 
   let cardsHtml = '';
+  const _ref = data.reference || {};
+  if (_ref.detected) {
+    const _rn = ({ref_spoon:'숟가락', ref_fork:'포크', ref_coin:'동전'})[_ref.type] || '식기';
+    cardsHtml += '<div class="ref-banner ref-on">📏 '+_rn+' 인식됨 — 크기 보정 적용(정확도↑)</div>';
+  } else {
+    cardsHtml += '<div class="ref-banner ref-off">📏 식기 미인식 — 숟가락이나 카드를 음식 옆에 같이 찍으면 더 정확해져요</div>';
+  }
   foods.forEach((food, i) => {
     sharingPcts[i] = 100;
     const isDb = food.db_matched || food.source === 'DB_MATCHED';
@@ -3245,6 +3291,10 @@ function renderResult(data, isAfterMeal) {
       '<button class="preset-btn" data-idx="'+i+'" data-val="'+v+'" onclick="setSharingPct('+i+','+v+')">'+v+'%</button>'
     ).join('');
 
+    const _pchoices=['적게','보통','많게','매우많게'];
+    const _cur=food._portionChoice||'보통';
+    const portionBtns=_pchoices.map(c=>'<button class="pq-btn'+(_cur===c?' pq-on':'')+'" onclick="quickPortion('+i+',\''+c+'\')">'+c+'</button>').join('');
+    const rangeText=food._range?portionRangeText(food._range):'양을 보정하면 더 정확해져요';
     const sharingHtml = '<div class="food-sharing" id="sharing_container_'+i+'" style="display:none">'
       + '<div class="sharing-header">'
       + '<span class="sharing-label">내가 먹은 비율</span>'
@@ -3264,6 +3314,8 @@ function renderResult(data, isAfterMeal) {
       + '<span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div></div>'
       + '<div class="confidence-bar"><div class="confidence-fill" style="width:'+confPct+'%;background:'+confColor+'"></div></div>'
       + '<div style="font-size:0.8em;color:#888;margin-bottom:10px;margin-top:-8px">확신도 '+confPct+'% · 약 '+(food.estimated_serving_g||'?')+'g</div>'
+      + '<div class="portion-quick"><span style="font-size:0.8em;color:#9ca3af">양 보정:</span>'+portionBtns+'</div>'
+      + '<div class="kcal-range" id="kcalRange_'+i+'">'+rangeText+'</div>'
       + eatenBarHtml
       + '<div class="nutrition-grid">'
       + '<div class="nutrition-item"><div class="nutrition-value">'+(food.calories_kcal||0)+'</div><div class="nutrition-label">칼로리 kcal</div></div>'
@@ -3562,6 +3614,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_weekly_macro()
         elif path == '/protein-timing':
             self._handle_protein_timing()
+        elif path == '/adjust':
+            self._handle_adjust()
         else:
             self.send_response(404)
             self.end_headers()
@@ -3787,13 +3841,38 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             print(f"\n분석 요청: {filename} ({len(image_data)/1024:.0f}KB)")
             print("GPT-4o Vision API 호출 중...")
 
+            # 0. reference 자동 검출(숟가락/포크/동전) → 크기 보정 힌트 주입
+            ref_hint = ""
+            ref_info = {"detected": False, "type": None, "confidence": 0}
+            try:
+                import tempfile
+                from food_analyzer import detect_reference_objects, calculate_ppcm, _build_reference_hint
+                _tf = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                _tf.write(image_data); _tf.close()
+                try:
+                    _dets = detect_reference_objects(_tf.name)
+                    _ppcm = calculate_ppcm(_dets)
+                    if _ppcm:
+                        ref_hint = _build_reference_hint(_ppcm, _dets)
+                        ref_info = {"detected": True, "type": _ppcm["reference"], "confidence": round(_ppcm["confidence"], 2)}
+                        print(f"[Reference] {_ppcm['reference']} 검출 → 프롬프트 주입")
+                    else:
+                        print("[Reference] 식기 미검출")
+                finally:
+                    try: os.unlink(_tf.name)
+                    except Exception: pass
+            except Exception as _re:
+                print(f"[Reference] 검출 스킵: {_re}")
+
             # 1. AI 분석
-            analysis = call_openai_vision(base64_image, media_type, api_key)
+            analysis = call_openai_vision(base64_image, media_type, api_key, ref_hint=ref_hint)
 
             if "error" in analysis:
                 print(f"에러: {analysis['error']}")
                 self._json_response(200, analysis)
                 return
+
+            analysis["reference"] = ref_info  # reference 검출 결과를 응답에 포함
 
             # 2. DB 매칭
             if FOODS_DB:
@@ -3982,6 +4061,27 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self._json_response(500, {"error": f"수정 에러: {str(e)}"})
+
+    def _handle_adjust(self):
+        """분량 보정(적게/보통/많게) + range 재계산 — 엔진(portion.adjust_food) 단일 소스."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            req = json.loads(self.rfile.read(content_length).decode('utf-8'))
+            per_serving = req.get('per_serving') or {}
+            base_serving = float(req.get('serving_g') or 0)
+            grade = req.get('grade') or 'B'
+            category = req.get('category') or ''
+            choice = req.get('portion_choice')  # None=기본, 적게/보통/많게/매우많게
+            per100 = {}
+            if base_serving > 0:
+                for k, v in per_serving.items():
+                    per100[k] = (v / base_serving * 100) if v is not None else None
+            from portion import adjust_food
+            result = adjust_food(per100, base_serving, grade, category, choice)
+            self._json_response(200, result)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            self._json_response(500, {"error": f"adjust 에러: {str(e)}"})
 
     # ── 로그인 API ──
     def _handle_login(self):
