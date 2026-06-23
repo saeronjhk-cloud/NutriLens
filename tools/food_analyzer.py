@@ -390,6 +390,40 @@ REFERENCE_REAL_CM = {
 }
 _REF_CLASS_NAMES = ['ref_spoon', 'ref_fork', 'ref_coin']
 
+# 클래스별 신뢰도 임계 (동전은 형태가 일정해 안정적 → 0.5 / 숟가락·포크는 실사진서 낮음 → 0.35)
+# 근거: nutrilens_reference_live_eval_v1.md (2026-06-23 12장 실측).
+REF_BASE_CONF = 0.30  # 1차 후보 추출용 낮은 임계
+REF_CONF_TIERS = {'ref_coin': 0.50, 'ref_spoon': 0.35, 'ref_fork': 0.35}
+
+
+def filter_references_tiered(detections):
+    """클래스별 임계로 필터링. coin≥0.50, spoon/fork≥0.35."""
+    out = []
+    for d in (detections or []):
+        thr = REF_CONF_TIERS.get(d.get('class'), 0.5)
+        if d.get('confidence', 0) >= thr:
+            out.append(d)
+    return out
+
+
+def select_best_reference(detections):
+    """ppcm 신뢰성이 높은 동전을 우선. 동전 없으면 최고 신뢰 식기."""
+    if not detections:
+        return None
+    coins = [d for d in detections if d.get('class') == 'ref_coin']
+    pool = coins if coins else detections
+    return max(pool, key=lambda d: d.get('confidence', 0))
+
+
+def reference_confidence_level(ppcm_info):
+    """high: 동전이거나 신뢰도 0.5+, 그 외 low(근사)."""
+    if not ppcm_info:
+        return None
+    if ppcm_info.get('reference') == 'ref_coin' or ppcm_info.get('confidence', 0) >= 0.5:
+        return 'high'
+    return 'low'
+
+
 
 def _get_reference_model():
     """YOLO 모델 지연 로드 (서버 시작 시 1회만 로드)."""
@@ -474,8 +508,8 @@ def calculate_ppcm(detections):
     }
 
 
-def _build_reference_hint(ppcm_info, detections):
-    """SYSTEM_PROMPT에 주입할 reference 정보 텍스트."""
+def _build_reference_hint(ppcm_info, detections, level="high"):
+    """SYSTEM_PROMPT에 주입할 reference 정보 텍스트. level=low면 근사 보정으로 안내."""
     if not ppcm_info:
         return ""
     cm_per_px = ppcm_info['cm_per_pixel']
@@ -492,9 +526,13 @@ NutriLens 자체 비전 모델이 이 사진에서 reference 객체를 검출했
 
 검출된 reference 좌표: {ppcm_info['bbox']}
 
-위 정보를 기반으로 음식의 실제 크기(cm)를 정확히 추정하세요.
-이 정보는 [표준 식기 크기]·[음식별 표준 1인분]보다 우선합니다.
+위 정보를 기반으로 음식의 실제 크기(cm)를 추정하세요.
 """
+    if level == "low":
+        hint += ("\n⚠️ 단, 이 reference는 **저신뢰 검출(근사)**입니다. 크기 보정의 출발점으로만 쓰고, "
+                 "최종 추정은 음식별 표준 1인분과 함께 보수적으로 판단하세요. 불확실성(범위)을 넓게 잡으세요.\n")
+    else:
+        hint += "\n이 정보는 [표준 식기 크기]·[음식별 표준 1인분]보다 우선합니다(고신뢰 검출).\n"
     if len(detections) > 1:
         other = [d for d in detections if d['class'] != ppcm_info['reference']]
         if other:

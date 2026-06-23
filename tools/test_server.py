@@ -998,6 +998,7 @@ HTML_PAGE = """<!DOCTYPE html>
   .ref-banner { font-size:0.85em; border-radius:10px; padding:8px 12px; margin-bottom:12px; }
   .ref-banner.ref-on { background:rgba(16,185,129,0.12); border:1px solid #10b981; color:#6ee7b7; }
   .ref-banner.ref-off { background:rgba(245,158,11,0.10); border:1px solid #b45309; color:#fbbf24; }
+  .ref-banner.ref-low { background:rgba(234,179,8,0.10); border:1px solid #a16207; color:#fde047; }
   .food-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
   .food-name { font-size: 1.15em; font-weight: 600; }
   .food-name-en { font-size: 0.85em; color: #888; margin-left: 8px; }
@@ -3267,11 +3268,13 @@ function renderResult(data, isAfterMeal) {
 
   let cardsHtml = '';
   const _ref = data.reference || {};
-  if (_ref.detected) {
-    const _rn = ({ref_spoon:'숟가락', ref_fork:'포크', ref_coin:'동전'})[_ref.type] || '식기';
+  const _rn = ({ref_spoon:'숟가락', ref_fork:'포크', ref_coin:'동전'})[_ref.type] || '기준물';
+  if (_ref.detected && _ref.level === 'high') {
     cardsHtml += '<div class="ref-banner ref-on">📏 '+_rn+' 인식됨 — 크기 보정 적용(정확도↑)</div>';
+  } else if (_ref.detected) {
+    cardsHtml += '<div class="ref-banner ref-low">📏 '+_rn+' 인식(저신뢰) — 동전이나 카드를 음식 옆에 평평히 함께 찍으면 더 정확해져요</div>';
   } else {
-    cardsHtml += '<div class="ref-banner ref-off">📏 식기 미인식 — 숟가락이나 카드를 음식 옆에 같이 찍으면 더 정확해져요</div>';
+    cardsHtml += '<div class="ref-banner ref-off">📏 기준물 미인식 — 동전이나 카드를 음식 옆에 평평히 같이 찍으면 정확도가 올라가요</div>';
   }
   foods.forEach((food, i) => {
     sharingPcts[i] = 100;
@@ -3899,18 +3902,24 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 if os.environ.get("REF_DETECT", "1") == "0":
                     raise RuntimeError("REF_DETECT=0 (비활성)")  # Railway 환경변수로 즉시 끌 수 있음
                 import tempfile
-                from food_analyzer import detect_reference_objects, calculate_ppcm, _build_reference_hint
+                from food_analyzer import (detect_reference_objects, calculate_ppcm, _build_reference_hint,
+                                           filter_references_tiered, select_best_reference,
+                                           reference_confidence_level, REF_BASE_CONF)
                 _tf = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
                 _tf.write(image_data); _tf.close()
                 try:
-                    _dets = detect_reference_objects(_tf.name)
-                    _ppcm = calculate_ppcm(_dets)
+                    _dets = filter_references_tiered(
+                        detect_reference_objects(_tf.name, conf_threshold=REF_BASE_CONF))
+                    _best = select_best_reference(_dets)
+                    _ppcm = calculate_ppcm([_best]) if _best else None
                     if _ppcm:
-                        ref_hint = _build_reference_hint(_ppcm, _dets)
-                        ref_info = {"detected": True, "type": _ppcm["reference"], "confidence": round(_ppcm["confidence"], 2)}
-                        print(f"[Reference] {_ppcm['reference']} 검출 → 프롬프트 주입")
+                        _lvl = reference_confidence_level(_ppcm)
+                        ref_hint = _build_reference_hint(_ppcm, _dets, level=_lvl)
+                        ref_info = {"detected": True, "type": _ppcm["reference"],
+                                    "confidence": round(_ppcm["confidence"], 2), "level": _lvl}
+                        print(f"[Reference] {_ppcm['reference']} 검출({_lvl}, {_ppcm['confidence']:.2f}) → 프롬프트 주입")
                     else:
-                        print("[Reference] 식기 미검출")
+                        print("[Reference] 기준물 미검출")
                 finally:
                     try: os.unlink(_tf.name)
                     except Exception: pass
