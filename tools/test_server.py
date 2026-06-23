@@ -1003,6 +1003,8 @@ HTML_PAGE = """<!DOCTYPE html>
   .food-name { font-size: 1.15em; font-weight: 600; }
   .food-name-en { font-size: 0.85em; color: #888; margin-left: 8px; }
   .source-badge { font-size: 0.75em; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+  .confirm-banner { margin:8px 0 4px; padding:8px 12px; border-radius:10px; font-size:0.82em; cursor:pointer; background:rgba(245,158,11,0.10); border:1px solid #b45309; color:#fbbf24; }
+  .confirm-banner:hover { background:rgba(245,158,11,0.18); }
   .source-db { background: rgba(110,231,183,0.15); color: #6ee7b7; }
   .source-ai { background: rgba(251,191,36,0.15); color: #fbbf24; }
   .confidence-bar { height: 4px; background: #2a2a4a; border-radius: 2px; margin-bottom: 14px; overflow: hidden; }
@@ -3311,6 +3313,7 @@ function renderResult(data, isAfterMeal) {
       + '<div><button class="edit-btn" onclick="openEditModal('+i+')">✏️ 수정</button>'
       + '<button class="report-btn" id="report_btn_'+i+'" onclick="openReportModal('+i+')">⚠️ 이상해요</button> '
       + '<span class="source-badge '+(isDb?'source-db':'source-ai')+'">'+(isDb?'DB 검증':'AI 추정')+'</span></div></div>'
+      + (food.match_confidence==='low' ? '<div class="confirm-banner" onclick="openEditModal('+i+')">🤔 이 음식이 맞나요? DB 매칭이 불확실해 AI 추정값입니다 — 탭해서 확인·수정</div>' : '')
       + '<div class="confidence-bar"><div class="confidence-fill" style="width:'+confPct+'%;background:'+confColor+'"></div></div>'
       + '<div style="font-size:0.8em;color:#888;margin-bottom:10px;margin-top:-8px">확신도 '+confPct+'% · 약 '+(food.estimated_serving_g||'?')+'g</div>'
       + eatenBarHtml
