@@ -843,7 +843,8 @@ print(f"DB 로드 완료: {len(FOODS_DB)}종")
 
 # ── 모니터링 #1: 매칭 결과 분포 카운터 ──
 MATCH_METRICS = {"started_at": time.time(), "analyses": 0, "foods": 0,
-                 "high_override": 0, "low_ai_kept": 0, "no_match": 0, "v2_override": 0}
+                 "high_override": 0, "low_ai_kept": 0, "no_match": 0, "v2_override": 0,
+                 "corrections": 0, "corrections_low": 0, "corrections_high": 0, "corrections_other": 0}
 try:
     _v2p = PROJECT_DIR / 'core_extension_v2.json'
     V2_NAMES = set(json.load(open(_v2p, encoding='utf-8')).get('new_additions', {}).keys()) if _v2p.exists() else set()
@@ -2829,11 +2830,13 @@ async function submitCorrection() {
 
   if (!correctedName) return showToast('음식명을 입력하세요.');
 
+  const _ef = (currentAnalysis.foods[idx] || {});
+  const _cstate = _ef.db_matched ? 'high' : (_ef.match_confidence === 'low' ? 'low' : 'none');
   try {
     const resp = await fetch(apiUrl('/correct'), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ uid: NUTRI_UID, original_name: originalName, corrected_name: correctedName, serving_pct: servingPct })
+      body: JSON.stringify({ uid: NUTRI_UID, original_name: originalName, corrected_name: correctedName, serving_pct: servingPct, correction_state: _cstate })
     });
     const data = await resp.json();
 
@@ -3488,6 +3491,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             _m["low_rate_pct"] = round(_m["low_ai_kept"] / _tot * 100, 1)
             _m["nomatch_rate_pct"] = round(_m["no_match"] / _tot * 100, 1)
             _m["v2_override_rate_pct"] = round(_m["v2_override"] / _tot * 100, 1)
+            _m["low_correction_rate_pct"] = round(_m["corrections_low"] / (_m["low_ai_kept"] or 1) * 100, 1)
+            _m["high_correction_rate_pct"] = round(_m["corrections_high"] / (_m["high_override"] or 1) * 100, 1)
             self._json_response(200, _m)
         else:
             self.send_response(404)
@@ -4158,6 +4163,15 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             if not corrected_name:
                 self._json_response(400, {"error": "수정할 음식명을 입력하세요."})
                 return
+
+            # 모니터링 #2: confidence별 수정 카운트
+            try:
+                _st = req.get('correction_state')
+                MATCH_METRICS["corrections"] += 1
+                if _st == 'low': MATCH_METRICS["corrections_low"] += 1
+                elif _st == 'high': MATCH_METRICS["corrections_high"] += 1
+                else: MATCH_METRICS["corrections_other"] += 1
+            except Exception: pass
 
             # 1. 피드백 기록
             correction_count = _record_correction(original_name, corrected_name)
