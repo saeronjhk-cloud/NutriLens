@@ -3591,6 +3591,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_analyze()
         elif path == '/refcheck':
             self._handle_refcheck()
+        elif path == '/dbcheck':
+            self._handle_dbcheck()
         elif path == '/analyze-leftover':
             self._handle_leftover()
         elif path == '/session/start':
@@ -3805,6 +3807,28 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self._json_response(500, {"error": f"서버 에러: {str(e)}"})
+
+    def _handle_dbcheck(self):
+        """[디버그] 영양 테이블(CORE_FOODS) 상태 확인. 무과금. v2 로드 검증용."""
+        out={"core_foods_total": None, "v2_loaded": None, "samples": {}, "err": None}
+        try:
+            import food_analyzer as _fa, json as _json, os as _os
+            out["core_foods_total"]=len(_fa.CORE_FOODS)
+            # core_extension_v2.json의 신규 이름 중 실제 CORE에 들어온 수
+            _p=_os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),"core_extension_v2.json")
+            _names=[]
+            if _os.path.exists(_p):
+                _v2=_json.load(open(_p,encoding="utf-8")); _names=list(_v2.get("new_additions",{}).keys())
+            out["v2_file_count"]=len(_names)
+            out["v2_loaded"]=sum(1 for n in _names if n in _fa.CORE_FOODS)
+            for nm in ["북엇국","갈치구이","채소볶음밥","쇠갈비찜"]:
+                k,d=_fa._search_core_foods(nm)
+                out["samples"][nm]= None if not d else {
+                    "key":k, "cal_per100":d.get("cal"), "serving":d.get("serving"),
+                    "src":d.get("src"), "note":d.get("note")}
+        except Exception as e:
+            out["err"]=repr(e)
+        self._json_response(200, out)
 
     def _handle_refcheck(self):
         """[디버그] GPT-4o 없이 YOLO reference 검출만 실행. 원인 진단용(무과금).
