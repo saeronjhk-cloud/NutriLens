@@ -3826,6 +3826,19 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 out["samples"][nm]= None if not d else {
                     "key":k, "cal_per100":d.get("cal"), "serving":d.get("serving"),
                     "src":d.get("src"), "note":d.get("note")}
+            # 매칭 guard 라이브 검증: 고신뢰=DB보정 / 저신뢰=AI유지
+            try:
+                _mock={"foods":[
+                    {"name_ko":"김치찌개","calories_kcal":999,"protein_g":1,"carbs_g":1,"fat_g":1,"estimated_serving_g":400},
+                    {"name_ko":"바나나우유","calories_kcal":120,"protein_g":4,"carbs_g":20,"fat_g":3,"estimated_serving_g":200},
+                    {"name_ko":"크림파스타","calories_kcal":600,"protein_g":15,"carbs_g":70,"fat_g":25,"estimated_serving_g":300},
+                ]}
+                _r=_fa.match_with_db(_mock, {})
+                out["guard_sample"]=[{"name":f["name_ko"],"db_matched":f.get("db_matched"),
+                    "match_confidence":f.get("match_confidence","-"),"db_candidate":f.get("db_candidate","-"),
+                    "kcal":f.get("calories_kcal")} for f in _r["foods"]]
+            except Exception as _ge:
+                out["guard_err"]=repr(_ge)
         except Exception as e:
             out["err"]=repr(e)
         self._json_response(200, out)

@@ -2072,7 +2072,7 @@ def _search_core_foods(name):
             best_key = key
             best_len = len(name)
 
-    if best_key and best_len >= len(name) * 0.4:
+    if best_key and best_len >= len(name) * 0.5:   # 0.4→0.5 강화(자문)
         return best_key, CORE_FOODS[best_key]
 
     # 5) 공백/구분자 뒤에 키가 나오는 경우 (긴 키 우선)
@@ -2395,6 +2395,25 @@ def _restore_ai_estimates(food, ai_original):
     food['source'] = 'AI_ESTIMATED'
 
 
+def _match_confidence(clean, key):
+    """(질의, 매칭키) 관계로 매칭 신뢰도 판정. 고신뢰일 때만 DB가 AI값을 덮어쓴다(보수).
+    high = 정확일치 / 키가 질의의 공백단어 또는 뒤쪽 조합과 정확히 일치.
+    low  = 그 외(부분·구분자·접미사·퍼지) → 덮어쓰지 않고 AI 추정값 유지.
+    """
+    if not key:
+        return 'none'
+    if clean == key:
+        return 'high'
+    words = clean.split()
+    if len(words) > 1:
+        if key in words:
+            return 'high'
+        for st in range(len(words)):
+            if ' '.join(words[st:]) == key:
+                return 'high'
+    return 'low'
+
+
 def match_with_db(analysis, foods_db):
     """
     AI 분석 결과를 DB와 매칭하여 보정
@@ -2415,7 +2434,8 @@ def match_with_db(analysis, foods_db):
 
         # ── 1순위: 골드 테이블 (1,771건, 100g 기준 통일) ──
         gold_key, gold_data = _search_gold(ai_name)
-        if gold_data:
+        _gconf = _match_confidence(_normalize_food_name(ai_name), gold_key) if gold_data else 'none'
+        if gold_data and _gconf == 'high':
             gold_serving = gold_data.get('serving') or 100
             # AI가 서빙 사이즈를 추정했으면 그걸 사용
             ai_serving = food.get('estimated_serving_g')
@@ -2469,6 +2489,14 @@ def match_with_db(analysis, foods_db):
 
             # ── 안전장치: 영양소(g)는 음식 총 중량(g)을 초과할 수 없음 ──
             _cap_nutrients_by_serving(food, effective_serving)
+            continue
+
+        # ── 저신뢰 매칭: 덮어쓰지 않고 AI 추정값 유지 (보수 — 약한 매칭이 확신값 대체 차단) ──
+        if gold_data:  # 매칭됐지만 _gconf != 'high'
+            food['db_matched'] = False
+            food['source'] = 'AI_ESTIMATED'
+            food['match_confidence'] = 'low'
+            food['db_candidate'] = gold_key
             continue
 
         # ── 2순위: 기존 SQLite DB (품질 필터 + 관련성 검증) ──
