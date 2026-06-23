@@ -841,6 +841,16 @@ print("음식 DB 로딩 중...")
 FOODS_DB = load_food_db()
 print(f"DB 로드 완료: {len(FOODS_DB)}종")
 
+# ── 모니터링 #1: 매칭 결과 분포 카운터 ──
+MATCH_METRICS = {"started_at": time.time(), "analyses": 0, "foods": 0,
+                 "high_override": 0, "low_ai_kept": 0, "no_match": 0, "v2_override": 0}
+try:
+    _v2p = PROJECT_DIR / 'core_extension_v2.json'
+    V2_NAMES = set(json.load(open(_v2p, encoding='utf-8')).get('new_additions', {}).keys()) if _v2p.exists() else set()
+except Exception:
+    V2_NAMES = set()
+METRICS_LOG_PATH = PROJECT_DIR / 'match_metrics.jsonl' 
+
 # 피드백 로그 경로 설정
 FEEDBACK_LOG_PATH = PROJECT_DIR / 'feedback_log.json'
 MEAL_LOG_PATH = PROJECT_DIR / 'meal_log.json'
@@ -3470,6 +3480,15 @@ class NutriLensHandler(BaseHTTPRequestHandler):
         elif path.startswith('/static/'):
             # PWA: 정적 파일 서빙 (manifest.json, 아이콘 등)
             self._serve_static(path)
+        elif path == '/metrics':
+            _m = dict(MATCH_METRICS)
+            _tot = _m["foods"] or 1
+            _m["uptime_min"] = round((time.time() - _m["started_at"]) / 60, 1)
+            _m["high_rate_pct"] = round(_m["high_override"] / _tot * 100, 1)
+            _m["low_rate_pct"] = round(_m["low_ai_kept"] / _tot * 100, 1)
+            _m["nomatch_rate_pct"] = round(_m["no_match"] / _tot * 100, 1)
+            _m["v2_override_rate_pct"] = round(_m["v2_override"] / _tot * 100, 1)
+            self._json_response(200, _m)
         else:
             self.send_response(404)
             self.end_headers()
@@ -3982,6 +4001,29 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 matched = sum(1 for f in analysis.get('foods', []) if f.get('db_matched'))
                 total = len(analysis.get('foods', []))
                 print(f"DB 매칭: {matched}/{total}개 음식 매칭됨")
+                # 모니터링 #1: 매칭 결과 분포 집계 (best-effort)
+                try:
+                    MATCH_METRICS["analyses"] += 1
+                    _rec = {"ts": round(time.time()), "uid": (uid or "")[:8], "foods": []}
+                    for _f in analysis.get("foods", []):
+                        MATCH_METRICS["foods"] += 1
+                        _nm = _f.get("name_ko") or ""
+                        if _f.get("db_matched"):
+                            MATCH_METRICS["high_override"] += 1
+                            if _f.get("db_name") in V2_NAMES or _nm in V2_NAMES:
+                                MATCH_METRICS["v2_override"] += 1
+                            _o = "high"
+                        elif _f.get("match_confidence") == "low":
+                            MATCH_METRICS["low_ai_kept"] += 1; _o = "low"
+                        else:
+                            MATCH_METRICS["no_match"] += 1; _o = "none"
+                        _rec["foods"].append({"n": _nm, "o": _o, "kcal": _f.get("calories_kcal")})
+                    try:
+                        with open(METRICS_LOG_PATH, "a", encoding="utf-8") as _mf:
+                            _mf.write(json.dumps(_rec, ensure_ascii=False) + "\n")
+                    except Exception: pass
+                except Exception as _me:
+                    print(f"[metrics] 집계 스킵: {_me}")
 
             # 3. 세션 모드: user_id(uid)별 정찬 세션에 누적
             session_snapshot = None
