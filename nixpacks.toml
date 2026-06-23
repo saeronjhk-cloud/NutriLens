@@ -1,16 +1,19 @@
 # Railway NIXPACKS 빌드 설정
-# 목적: ultralytics가 OpenCV(cv2)를 import할 때 필요한 시스템 공유 라이브러리 제공.
-# 원인: 헤드리스 컨테이너엔 libxcb.so.1 / libGL.so.1 등이 없어
-#       `import ultralytics` 단계에서 ImportError('libxcb.so.1: cannot open shared object file') 발생.
-#       → reference 검출(YOLO) 모델이 로드 자체가 안 됨.
-# 진단 근거: /refcheck 엔드포인트 diag.ultralytics_err (2026-06-23 확정).
+# ────────────────────────────────────────────────────────────
+# 문제: `import ultralytics` 시 ImportError('libxcb.so.1: cannot open shared object file')
+#       → reference 검출(YOLO) 모델이 로드 자체가 안 됨. (2026-06-23 /refcheck diag로 확정)
+#
+# 1차 시도(실패): aptPkgs로 libxcb1 등 설치 → nixpacks는 Nix 빌드라
+#                apt 라이브러리가 cv2/torch의 라이브러리 경로에 안 잡혀 무효.
+#
+# 해결(정공법): ultralytics가 끌어오는 일반 opencv-python(=GUI/X11 의존, libxcb 필요)을
+#              GUI 의존이 전혀 없는 opencv-python-headless로 교체.
+#              install 단계 뒤(build 단계)에서 강제 스왑 → cv2 = headless 확정.
+# ────────────────────────────────────────────────────────────
 
-[phases.setup]
-aptPkgs = [
-  "libgl1",          # libGL.so.1  (cv2 코어)
-  "libglib2.0-0",    # libgthread-2.0 / libglib (cv2)
-  "libxcb1",         # libxcb.so.1 ← 직접 누락된 라이브러리
-  "libsm6",          # libSM.so.6
-  "libxext6",        # libXext.so.6
-  "libxrender1"      # libXrender.so.1
+[phases.build]
+dependsOn = ["install"]
+cmds = [
+  "pip uninstall -y opencv-python opencv-python-headless || true",
+  "pip install --no-cache-dir opencv-python-headless"
 ]
