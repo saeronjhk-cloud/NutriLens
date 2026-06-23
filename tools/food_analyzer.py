@@ -1964,6 +1964,24 @@ try:
 except Exception as _e:
     print(f"[CORE 확장] core_extension.json 로드 실패 (무시하고 계속): {_e}")
 
+# ── 통합 식품영양성분DB '음식' 통합 (2026-06-23) ──
+# core_extension_v2.json: 식약처 통합 식품영양성분DB(2021) DB군='음식'·상용제품='품목대표'
+#   일반 한식 대표메뉴 중 CORE 신규 440종. per-1회제공량 → per-100g 변환 완료.
+try:
+    _ext2_path = Path(__file__).parent.parent / 'core_extension_v2.json'
+    if _ext2_path.exists():
+        with open(_ext2_path, 'r', encoding='utf-8') as _f:
+            _ext2 = json.load(_f)
+        _new2 = 0
+        for _nm, _data in _ext2.get('new_additions', {}).items():
+            if _nm not in CORE_FOODS:
+                CORE_FOODS[_nm] = _data
+                _new2 += 1
+        print(f"[CORE 확장 v2] 통합DB 음식 로드: 신규 {_new2}건 → CORE_FOODS 총 {len(CORE_FOODS)}건")
+except Exception as _e2:
+    print(f"[CORE 확장 v2] core_extension_v2.json 로드 실패 (무시하고 계속): {_e2}")
+
+
 
 # ── 접미사 기반 음식 카테고리 매핑 ──
 # "옥수수차" → "차", "녹차빙수" → "빙수" 등 접미사로 카테고리 판별
