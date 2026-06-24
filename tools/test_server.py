@@ -842,9 +842,17 @@ FOODS_DB = load_food_db()
 print(f"DB 로드 완료: {len(FOODS_DB)}종")
 
 # ── 모니터링 #1: 매칭 결과 분포 카운터 ──
+# 모니터링 #3: 저신뢰(AI값 유지) 음식 영양 outlier 카운터 (2 AI 합의 D안)
 MATCH_METRICS = {"started_at": time.time(), "analyses": 0, "foods": 0,
                  "high_override": 0, "low_ai_kept": 0, "no_match": 0, "v2_override": 0,
-                 "corrections": 0, "corrections_low": 0, "corrections_high": 0, "corrections_other": 0}
+                 "corrections": 0, "corrections_low": 0, "corrections_high": 0, "corrections_other": 0,
+                 "low_outlier_kcal_soft": 0, "low_outlier_kcal_hard": 0,
+                 "low_outlier_na_soft": 0, "low_outlier_na_hard": 0, "low_macro_mismatch": 0}
+
+# 모니터링 #3 임계값 (저신뢰 음식 1건 기준, 엔진 우선·고정 규칙). JSONL raw로 재튜닝 가능.
+OUTLIER_KCAL_SOFT = 1200; OUTLIER_KCAL_HARD = 1500   # kcal
+OUTLIER_NA_SOFT = 3000;  OUTLIER_NA_HARD = 4000      # mg
+MACRO_MISMATCH_RATIO = 0.20                          # |매크로추정kcal - AI kcal| / AI kcal
 try:
     _v2p = PROJECT_DIR / 'core_extension_v2.json'
     V2_NAMES = set(json.load(open(_v2p, encoding='utf-8')).get('new_additions', {}).keys()) if _v2p.exists() else set()
@@ -3493,6 +3501,16 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             _m["v2_override_rate_pct"] = round(_m["v2_override"] / _tot * 100, 1)
             _m["low_correction_rate_pct"] = round(_m["corrections_low"] / (_m["low_ai_kept"] or 1) * 100, 1)
             _m["high_correction_rate_pct"] = round(_m["corrections_high"] / (_m["high_override"] or 1) * 100, 1)
+            # 모니터링 #3: 저신뢰 음식 대비 outlier 비율 (분모=low_ai_kept)
+            _low = _m["low_ai_kept"] or 1
+            _m["thresholds"] = {"kcal_soft": OUTLIER_KCAL_SOFT, "kcal_hard": OUTLIER_KCAL_HARD,
+                                "na_soft": OUTLIER_NA_SOFT, "na_hard": OUTLIER_NA_HARD,
+                                "macro_mismatch_ratio": MACRO_MISMATCH_RATIO}
+            _m["outlier_kcal_soft_rate_pct"] = round(_m["low_outlier_kcal_soft"] / _low * 100, 1)
+            _m["outlier_kcal_hard_rate_pct"] = round(_m["low_outlier_kcal_hard"] / _low * 100, 1)
+            _m["outlier_na_soft_rate_pct"] = round(_m["low_outlier_na_soft"] / _low * 100, 1)
+            _m["outlier_na_hard_rate_pct"] = round(_m["low_outlier_na_hard"] / _low * 100, 1)
+            _m["macro_mismatch_rate_pct"] = round(_m["low_macro_mismatch"] / _low * 100, 1)
             self._json_response(200, _m)
         else:
             self.send_response(404)
@@ -4022,7 +4040,27 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                             MATCH_METRICS["low_ai_kept"] += 1; _o = "low"
                         else:
                             MATCH_METRICS["no_match"] += 1; _o = "none"
-                        _rec["foods"].append({"n": _nm, "o": _o, "kcal": _f.get("calories_kcal")})
+                        _fr = {"n": _nm, "o": _o, "kcal": _f.get("calories_kcal")}
+                        # 모니터링 #3: 저신뢰(AI값 유지) 음식만 영양 outlier 집계 + raw 로깅
+                        if _o == "low":
+                            try:
+                                _kc = float(_f.get("calories_kcal") or 0)
+                                _na = float(_f.get("sodium_mg") or 0)
+                                _cb = float(_f.get("carbs_g") or 0)
+                                _pr = float(_f.get("protein_g") or 0)
+                                _ft = float(_f.get("fat_g") or 0)
+                                _sg = float(_f.get("sugar_g") or 0)
+                                if _kc > OUTLIER_KCAL_HARD: MATCH_METRICS["low_outlier_kcal_hard"] += 1
+                                elif _kc > OUTLIER_KCAL_SOFT: MATCH_METRICS["low_outlier_kcal_soft"] += 1
+                                if _na > OUTLIER_NA_HARD: MATCH_METRICS["low_outlier_na_hard"] += 1
+                                elif _na > OUTLIER_NA_SOFT: MATCH_METRICS["low_outlier_na_soft"] += 1
+                                _macro_kc = _cb * 4 + _pr * 4 + _ft * 9
+                                _mm = bool(_kc > 0 and abs(_macro_kc - _kc) / _kc > MACRO_MISMATCH_RATIO)
+                                if _mm: MATCH_METRICS["low_macro_mismatch"] += 1
+                                _fr.update({"na": _na, "cb": _cb, "pr": _pr, "ft": _ft, "sg": _sg,
+                                            "mkc": round(_macro_kc, 1), "mm": _mm})
+                            except Exception: pass
+                        _rec["foods"].append(_fr)
                     try:
                         with open(METRICS_LOG_PATH, "a", encoding="utf-8") as _mf:
                             _mf.write(json.dumps(_rec, ensure_ascii=False) + "\n")
