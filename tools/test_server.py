@@ -3291,7 +3291,7 @@ function renderResult(data, isAfterMeal) {
 
   let cardsHtml = '';
   const _ref = data.reference || {};
-  const _rn = ({ref_spoon:'숟가락', ref_fork:'포크', ref_coin:'동전'})[_ref.type] || '기준물';
+  const _rn = ({ref_spoon:'숟가락', ref_chopsticks:'젓가락', ref_fork:'포크', ref_coin:'동전', ref_card:'카드', cup:'컵', phone:'폰'})[_ref.type] || '기준물';
   if (_ref.detected && _ref.level === 'high') {
     cardsHtml += '<div class="ref-banner ref-on">📏 '+_rn+' 인식됨 — 크기 보정 적용(정확도↑)</div>';
   } else if (_ref.detected) {

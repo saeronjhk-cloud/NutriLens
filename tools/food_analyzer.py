@@ -380,20 +380,25 @@ def encode_image(image_path):
 # 추론 속도: CPU 1-2초/장 (Railway), GPU 1.9ms/장
 
 _REF_MODEL = None
-_REF_MODEL_PATH = Path(__file__).parent.parent / 'models' / 'ref_detection.pt'
+_REF_MODEL_PATH = Path(__file__).parent.parent / 'models' / 'ref_detection_v2.pt'  # v2 7클래스(2026-06-25 Eval 게이트 통과: 폰 5/5)
 
 # Reference 객체의 실제 크기 (cm)
 REFERENCE_REAL_CM = {
-    'ref_spoon': 20.0,  # 한국 표준 숟가락 (식당·집 평균)
-    'ref_fork': 20.0,   # 양식 dinner fork
-    'ref_coin': 2.65,   # 500원 동전 지름
-}
-_REF_CLASS_NAMES = ['ref_spoon', 'ref_fork', 'ref_coin']
+    'ref_spoon': 20.0,       # 한국 표준 숟가락
+    'ref_chopsticks': 23.0,  # 한국 표준 젓가락(길이)
+    'ref_fork': 19.0,        # dinner fork
+    'ref_coin': 2.65,        # 500원 동전 지름
+    'ref_card': 8.56,        # 카드 장변
+}  # cup/phone 미등록 = ppcm 환산에서 자동 제외
+# v2(2026-06-25): 7클래스 모델 ref_detection_v2.pt 학습 data.yaml과 동일 순서 — 절대 변경 금지
+_REF_CLASS_NAMES = ['ref_spoon', 'ref_chopsticks', 'ref_fork', 'ref_coin', 'ref_card', 'cup', 'phone']
 
 # 클래스별 신뢰도 임계 (동전은 형태가 일정해 안정적 → 0.5 / 숟가락·포크는 실사진서 낮음 → 0.35)
 # 근거: nutrilens_reference_live_eval_v1.md (2026-06-23 12장 실측).
 REF_BASE_CONF = 0.30  # 1차 후보 추출용 낮은 임계
-REF_CONF_TIERS = {'ref_coin': 0.50, 'ref_spoon': 0.35, 'ref_fork': 0.35}
+REF_CONF_TIERS = {'ref_coin': 0.50, 'ref_card': 0.50,
+                  'ref_spoon': 0.35, 'ref_chopsticks': 0.35, 'ref_fork': 0.35,
+                  'cup': 0.40, 'phone': 0.40}  # cup/phone은 검출 임계만, select에서 배제
 
 
 def filter_references_tiered(detections):
@@ -407,11 +412,12 @@ def filter_references_tiered(detections):
 
 
 def select_best_reference(detections):
-    """ppcm 신뢰성이 높은 동전을 우선. 동전 없으면 최고 신뢰 식기."""
-    if not detections:
+    """크기기준(REFERENCE_REAL_CM 보유) 클래스만 ppcm 후보. cup/phone 자동 제외. 동전·카드 우선."""
+    cands = [d for d in (detections or []) if d.get('class') in REFERENCE_REAL_CM]
+    if not cands:
         return None
-    coins = [d for d in detections if d.get('class') == 'ref_coin']
-    pool = coins if coins else detections
+    coins = [d for d in cands if d['class'] in ('ref_coin', 'ref_card')]
+    pool = coins if coins else cands
     return max(pool, key=lambda d: d.get('confidence', 0))
 
 
@@ -513,7 +519,7 @@ def _build_reference_hint(ppcm_info, detections, level="high"):
     if not ppcm_info:
         return ""
     cm_per_px = ppcm_info['cm_per_pixel']
-    ref_name_kr = {'ref_spoon': '숟가락', 'ref_fork': '포크', 'ref_coin': '500원 동전'}.get(
+    ref_name_kr = {'ref_spoon': '숟가락', 'ref_chopsticks': '젓가락', 'ref_fork': '포크', 'ref_coin': '500원 동전', 'ref_card': '카드', 'cup': '컵', 'phone': '폰'}.get(
         ppcm_info['reference'], ppcm_info['reference'])
     hint = f"""
 
@@ -538,7 +544,7 @@ NutriLens 자체 비전 모델이 이 사진에서 reference 객체를 검출했
         if other:
             hint += "\n추가 검출된 객체:\n"
             for d in other[:3]:
-                kr = {'ref_spoon': '숟가락', 'ref_fork': '포크', 'ref_coin': '동전'}.get(d['class'], d['class'])
+                kr = {'ref_spoon': '숟가락', 'ref_chopsticks': '젓가락', 'ref_fork': '포크', 'ref_coin': '동전', 'ref_card': '카드', 'cup': '컵', 'phone': '폰'}.get(d['class'], d['class'])
                 hint += f"  - {kr} ({d['confidence']:.0%} 신뢰도)\n"
     return hint
 

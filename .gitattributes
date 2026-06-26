@@ -42,6 +42,7 @@ Procfile    text eol=lf
 *.docx      binary
 *.doc       binary
 *.pdf       binary
+*.pt        binary
 *.zip       binary
 *.tar       binary
 *.gz        binary
