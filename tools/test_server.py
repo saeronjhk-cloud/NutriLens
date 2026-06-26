@@ -35,11 +35,12 @@ TOOLS_DIR = Path(__file__).parent
 sys.path.insert(0, str(TOOLS_DIR))
 
 # food_analyzer 모듈 임포트
-from food_analyzer import load_food_db, match_with_db, SYSTEM_PROMPT
+from food_analyzer import load_food_db, match_with_db, SYSTEM_PROMPT, gold_match_class
 
 # ── 동시성 보호 (ThreadingHTTPServer 대응) ──
 # 글로벌 dict/파일에 동시 접근하는 부분을 직렬화
 _SESSIONS_LOCK = threading.Lock()  # MEAL_SESSIONS 보호
+_METRICS_LOCK = threading.Lock()   # 모니터링 #4 동적 dict 보호(동시 요청 시 iteration 안전)
 _LOG_LOCK = threading.Lock()       # feedback/meal/report 로그 파일 read-modify-write 보호
 
 # ── 요청 크기 제한 (DoS 방지) ──
@@ -848,6 +849,61 @@ MATCH_METRICS = {"started_at": time.time(), "analyses": 0, "foods": 0,
                  "corrections": 0, "corrections_low": 0, "corrections_high": 0, "corrections_other": 0,
                  "low_outlier_kcal_soft": 0, "low_outlier_kcal_hard": 0,
                  "low_outlier_na_soft": 0, "low_outlier_na_hard": 0, "low_macro_mismatch": 0}
+
+# 모니터링 #4: generic fallback(no_match) 음식 이름별 집계 + v2 효과(transition) 추적
+NO_MATCH_FOODS = {}        # 정규화이름 -> no_match 횟수 (DB 매칭 실패 = AI값 전적 의존)
+LOW_FOODS = {}             # 정규화이름 -> low 횟수 (참고: 약한 매칭, AI값 유지)
+_FALLBACK_NAME_CAP = 1500  # 이름 종류 상한 (메모리 보호; 정규화로 파편화 완화해 상향)
+_FALLBACK_OVERFLOW = {"no_match": 0, "low": 0}  # 상한 초과 드롭 횟수(자문: distinct 왜곡 감시)
+# v1->v2 gold 매칭 전이표 (자문 P0): v2 순수기여(none/low->high)와 회귀(high->none/low) 증명
+TRANSITIONS = {}
+HIGH_HIGH_CHANGED = {}            # "이름|v1키->v2키" -> 횟수 (high→high 변이 예시, 상한 300)
+MUTATION = {"high_high_changed": 0}  # high→high인데 매칭대상 바뀜 = silent regression 후보(자문 P0)
+import re as _re4
+# 양/인분 수식어(약간·많은·적은·곱빼기)는 칼로리 왜곡 → 제거 금지(자문). 메뉴명 일부(왕/미니/특)도 제외.
+# 남긴 수식어는 '공백으로 분리된 선두 토큰'일 때만 제거 → '매운탕' 같은 결합어 보호(자문 P0).
+_FOOD_MODIFIERS = ("매운", "순한", "집밥", "가정식", "수제", "고소한", "달콤한")
+def _norm_food_name(_name):
+    """집계용 최소 정규화: 괄호 제거, 흔한 오탈자 교정, 공백분리 선두 수식어만 제거, 공백 제거.
+    (분석/집계용 — 실제 영양 매칭과 분리. raw 이름은 JSONL 보존. 양 수식어는 보존.)"""
+    n = (_name or "").strip()
+    if not n:
+        return ""
+    n = _re4.sub(r"\s*\([^)]*\)", "", n)         # 괄호 내용 제거
+    n = n.replace("찌게", "찌개").replace("떡복이", "떡볶이").replace("치즈케익", "치즈케이크")
+    _parts = n.split()
+    while len(_parts) > 1 and _parts[0] in _FOOD_MODIFIERS:  # 선두 수식어 토큰만 제거
+        _parts = _parts[1:]
+    return "".join(_parts)                          # 나머지 공백 제거
+def _tally_fallback(_d, _name, _kind):
+    _n = _norm_food_name(_name)
+    if not _n:
+        return
+    with _METRICS_LOCK:
+        if _n in _d:
+            _d[_n] += 1
+        elif len(_d) < _FALLBACK_NAME_CAP:
+            _d[_n] = 1
+        else:
+            _FALLBACK_OVERFLOW[_kind] = _FALLBACK_OVERFLOW.get(_kind, 0) + 1
+def _tally_transition(_name):
+    """같은 이름을 v1(=v2제외)/v2 gold로 매칭해 전이 1건 집계. GPT 재호출 없음(무과금)."""
+    try:
+        _v1c, _v1k = gold_match_class(_name, exclude_v2=True)
+        _v2c, _v2k = gold_match_class(_name, exclude_v2=False)
+        _k = _v1c + "->" + _v2c
+        _mut = (_v1c == "high" and _v2c == "high" and _v1k != _v2k)
+        with _METRICS_LOCK:
+            TRANSITIONS[_k] = TRANSITIONS.get(_k, 0) + 1
+            if _mut:
+                MUTATION["high_high_changed"] += 1
+                _ck = _norm_food_name(_name) + "|" + str(_v1k) + "->" + str(_v2k)
+                if _ck in HIGH_HIGH_CHANGED:
+                    HIGH_HIGH_CHANGED[_ck] += 1
+                elif len(HIGH_HIGH_CHANGED) < 300:
+                    HIGH_HIGH_CHANGED[_ck] = 1
+    except Exception:
+        pass
 
 # 모니터링 #3 임계값 (저신뢰 음식 1건 기준, 엔진 우선·고정 규칙). JSONL raw로 재튜닝 가능.
 OUTLIER_KCAL_SOFT = 1200; OUTLIER_KCAL_HARD = 1500   # kcal
@@ -3499,6 +3555,48 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             _m["low_rate_pct"] = round(_m["low_ai_kept"] / _tot * 100, 1)
             _m["nomatch_rate_pct"] = round(_m["no_match"] / _tot * 100, 1)
             _m["v2_override_rate_pct"] = round(_m["v2_override"] / _tot * 100, 1)
+            # 모니터링 #4: generic fallback(no_match) 감소 루프 + v2 효과
+            _m["fallback_rate_pct"] = round((_m["no_match"] + _m["low_ai_kept"]) / _tot * 100, 1)
+            _m["v2_share_of_high_pct"] = round(_m["v2_override"] / (_m["high_override"] or 1) * 100, 1)
+            # 동적 dict는 lock으로 스냅샷(동시 쓰기 중 iteration 안전 — 자문/리뷰 반영)
+            with _METRICS_LOCK:
+                _nmf = dict(NO_MATCH_FOODS)
+                _lof = dict(LOW_FOODS)
+                _ovf = dict(_FALLBACK_OVERFLOW)
+                _tr = dict(TRANSITIONS)
+                _mut = dict(MUTATION)
+                _hhc = dict(HIGH_HIGH_CHANGED)
+            _m["distinct_no_match_foods"] = len(_nmf)
+            _m["distinct_low_foods"] = len(_lof)
+            _m["top_no_match_foods"] = sorted(_nmf.items(), key=lambda _x: -_x[1])[:15]
+            _m["top_low_foods"] = sorted(_lof.items(), key=lambda _x: -_x[1])[:15]
+            _m["fallback_overflow"] = _ovf
+            # 자문 반영: 명칭 명확화 — (no_match+low)=AI 의존률
+            _m["ai_dependence_rate_pct"] = _m["fallback_rate_pct"]
+            _m["hard_fallback_rate_pct"] = _m["nomatch_rate_pct"]   # no_match = DB 부재
+            _m["soft_fallback_rate_pct"] = _m["low_rate_pct"]       # low = 매칭로직 불확신
+            # 모니터링 #4 핵심: v1->v2 gold 전이표 (v2 순수기여·회귀 인과 증명)
+            # ⚠️ 이 transition은 'gold 매칭 레이어 단독' 격리 실험값. v1은 gold 실패 시 SQLite로
+            #    구제될 수 있어 '최종 사용자 fallback 감소'와 다를 수 있음(자문 P0 — gold_ prefix로 명시).
+            _trtot = sum(_tr.values()) or 1
+            _inc = _tr.get("none->high", 0) + _tr.get("low->high", 0)
+            _reg = _tr.get("high->none", 0) + _tr.get("high->low", 0)
+            _v1_nonhigh = sum(v for k, v in _tr.items()
+                              if k.startswith("none->") or k.startswith("low->")) or 1
+            _m["gold_transitions"] = _tr
+            _m["gold_transition_total"] = sum(_tr.values())
+            _m["gold_transitions_note"] = ("gold 레이어 단독 격리값(최종 결과 아님). "
+                "v1은 SQLite로 구제됐을 수 있어 최종 fallback 감소와 다를 수 있음.")
+            # 전체 트래픽 대비 절대 개선폭
+            _m["gold_v2_incremental_high_rate_pct"] = round(_inc / _trtot * 100, 1)
+            # v1 실패(none/low)건 중 v2가 high로 구제한 비율 = v2 DB 순수 퀄리티(희석 제거)
+            _m["gold_v2_recovery_rate_among_v1_nonhigh_pct"] = round(_inc / _v1_nonhigh * 100, 1)
+            _m["gold_v2_regression_rate_pct"] = round(_reg / _trtot * 100, 1)
+            _m["gold_v2_net_high_gain_rate_pct"] = round((_inc - _reg) / _trtot * 100, 1)
+            # silent mutation: high->high인데 매칭 대상이 바뀜 = 영양값 조용히 바뀔 위험(자문 P0)
+            _m["gold_high_high_changed_count"] = _mut.get("high_high_changed", 0)
+            _m["gold_high_high_changed_rate_pct"] = round(_mut.get("high_high_changed", 0) / _trtot * 100, 1)
+            _m["top_high_high_changed"] = sorted(_hhc.items(), key=lambda _x: -_x[1])[:15]
             _m["low_correction_rate_pct"] = round(_m["corrections_low"] / (_m["low_ai_kept"] or 1) * 100, 1)
             _m["high_correction_rate_pct"] = round(_m["corrections_high"] / (_m["high_override"] or 1) * 100, 1)
             # 모니터링 #3: 저신뢰 음식 대비 outlier 비율 (분모=low_ai_kept)
@@ -4038,8 +4136,13 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                             _o = "high"
                         elif _f.get("match_confidence") == "low":
                             MATCH_METRICS["low_ai_kept"] += 1; _o = "low"
+                            _tally_fallback(LOW_FOODS, _nm, "low")
                         else:
                             MATCH_METRICS["no_match"] += 1; _o = "none"
+                            _tally_fallback(NO_MATCH_FOODS, _nm, "no_match")
+                        # 모니터링 #4 transition: 이름을 v1/v2 gold로 각각 매칭(무과금)
+                        if _nm:
+                            _tally_transition(_nm)
                         _fr = {"n": _nm, "o": _o, "kcal": _f.get("calories_kcal")}
                         # 모니터링 #3: 저신뢰(AI값 유지) 음식만 영양 outlier 집계 + raw 로깅
                         if _o == "low":
@@ -4062,8 +4165,9 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                             except Exception: pass
                         _rec["foods"].append(_fr)
                     try:
-                        with open(METRICS_LOG_PATH, "a", encoding="utf-8") as _mf:
-                            _mf.write(json.dumps(_rec, ensure_ascii=False) + "\n")
+                        with _LOG_LOCK:
+                            with open(METRICS_LOG_PATH, "a", encoding="utf-8") as _mf:
+                                _mf.write(json.dumps(_rec, ensure_ascii=False) + "\n")
                     except Exception: pass
                 except Exception as _me:
                     print(f"[metrics] 집계 스킵: {_me}")

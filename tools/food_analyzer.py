@@ -1973,6 +1973,7 @@ except Exception as _e:
 # ── 통합 식품영양성분DB '음식' 통합 (2026-06-23) ──
 # core_extension_v2.json: 식약처 통합 식품영양성분DB(2021) DB군='음식'·상용제품='품목대표'
 #   일반 한식 대표메뉴 중 CORE 신규 440종. per-1회제공량 → per-100g 변환 완료.
+_V2_ADDED_KEYS = set()   # 모니터링 #4: v2가 실제로 신규 추가한 CORE 키 집합
 try:
     _ext2_path = Path(__file__).parent.parent / 'core_extension_v2.json'
     if _ext2_path.exists():
@@ -1982,10 +1983,17 @@ try:
         for _nm, _data in _ext2.get('new_additions', {}).items():
             if _nm not in CORE_FOODS:
                 CORE_FOODS[_nm] = _data
+                _V2_ADDED_KEYS.add(_nm)
                 _new2 += 1
         print(f"[CORE 확장 v2] 통합DB 음식 로드: 신규 {_new2}건 → CORE_FOODS 총 {len(CORE_FOODS)}건")
 except Exception as _e2:
     print(f"[CORE 확장 v2] core_extension_v2.json 로드 실패 (무시하고 계속): {_e2}")
+
+# ── 모니터링 #4 (transition matrix): v2 효과 격리용 v1 스냅샷 ──
+# v2(core_extension_v2.json 434종)는 CORE_FOODS(gold 경로)에만 추가되고 SQLite DB엔 없음.
+# 따라서 v2가 결과를 바꿀 수 있는 곳은 gold 경로뿐 → 같은 이름을 v1(=v2 제외)/v2로 각각
+# gold 매칭해 transition(none/low/high → none/low/high)을 세면 v2 순수 기여·회귀를 증명.
+CORE_FOODS_V1 = {k: v for k, v in CORE_FOODS.items() if k not in _V2_ADDED_KEYS}
 
 
 
@@ -2024,15 +2032,16 @@ FOOD_SUFFIXES = [
 ]
 
 
-def _search_core_foods(name):
+def _search_core_foods(name, _core=None):
     """핵심 음식 참조 테이블에서 검색 (정확 → 접미사 → 복합이름 뒤에서부터 → 부분 매칭)
 
     핵심: "토마토 소스 파스타"는 "토마토"가 아니라 "파스타"에 매칭되어야 함.
     핵심: "옥수수차"는 "옥수수"가 아니라 "차" 계열로 매칭되어야 함.
     """
+    _cf = _core if _core is not None else CORE_FOODS
     # 1) 정확 매칭
-    if name in CORE_FOODS:
-        return name, CORE_FOODS[name]
+    if name in _cf:
+        return name, _cf[name]
 
     # 2) 접미사 기반 매칭 — 붙어있는 복합어 처리
     #    "옥수수차" → suffix "차", "녹차빙수" → suffix "빙수"
@@ -2041,14 +2050,14 @@ def _search_core_foods(name):
         if name.endswith(suffix) and len(name) > len(suffix):
             # 전체 이름이 CORE_FOODS에 있으면 우선 (이미 1단계에서 체크됨)
             # 접미사 조합이 CORE_FOODS에 있는지 체크
-            if name in CORE_FOODS:
-                return name, CORE_FOODS[name]
+            if name in _cf:
+                return name, _cf[name]
             # fallback 키 사용
-            if fallback_key and fallback_key in CORE_FOODS:
-                return fallback_key, CORE_FOODS[fallback_key]
+            if fallback_key and fallback_key in _cf:
+                return fallback_key, _cf[fallback_key]
             # suffix 자체가 CORE_FOODS에 있으면 사용
-            if suffix in CORE_FOODS:
-                return suffix, CORE_FOODS[suffix]
+            if suffix in _cf:
+                return suffix, _cf[suffix]
 
     # 3) 복합 이름 (공백 구분): 뒤에서부터 핵심어 매칭 (긴 조합 우선)
     #    "리코타 치즈 샐러드" → "리코타 치즈 샐러드" 정확 매칭 시도
@@ -2058,19 +2067,19 @@ def _search_core_foods(name):
         # 뒤에서부터 단어를 늘려가며 시도 (긴 조합 우선)
         for start in range(len(words)):
             combo = ' '.join(words[start:])
-            if combo in CORE_FOODS:
-                return combo, CORE_FOODS[combo]
+            if combo in _cf:
+                return combo, _cf[combo]
         # 뒤에서부터 단일 단어 매칭 (최소 2자)
         for word in reversed(words):
-            if len(word) >= 2 and word in CORE_FOODS:
-                return word, CORE_FOODS[word]
+            if len(word) >= 2 and word in _cf:
+                return word, _cf[word]
 
-    # 4) 부분 매칭: name이 CORE_FOODS 키로 시작 (가장 긴 매칭 우선)
+    # 4) 부분 매칭: name이 _cf 키로 시작 (가장 긴 매칭 우선)
     #    예: "김치볶음밥" → "김치볶음밥" (정확 먼저, 없으면 "김치")
     #    단, 매칭 키 길이가 원본의 40% 이상이어야 관련성 인정
     best_key = None
     best_len = 0
-    for key in CORE_FOODS:
+    for key in _cf:
         if name.startswith(key) and len(key) > best_len:
             best_key = key
             best_len = len(key)
@@ -2079,17 +2088,17 @@ def _search_core_foods(name):
             best_len = len(name)
 
     if best_key and best_len >= len(name) * 0.5:   # 0.4→0.5 강화(자문)
-        return best_key, CORE_FOODS[best_key]
+        return best_key, _cf[best_key]
 
     # 5) 공백/구분자 뒤에 키가 나오는 경우 (긴 키 우선)
     #    예: "매운 김치찌개" → "김치찌개"
-    for key in sorted(CORE_FOODS.keys(), key=len, reverse=True):
+    for key in sorted(_cf.keys(), key=len, reverse=True):
         if len(key) >= 2:
             idx = name.find(key)
             if idx > 0:
                 prev = name[idx - 1]
                 if prev in ' _(/·\t':
-                    return key, CORE_FOODS[key]
+                    return key, _cf[key]
 
     return None, None
 
@@ -2120,7 +2129,7 @@ def _normalize_food_name(name):
     n = n.strip()
     return n
 
-def _search_gold(name):
+def _search_gold(name, _core=None):
     """골드 테이블에서 음식 검색 — 정확→CORE→관련성 검증 매칭
 
     핵심 원칙:
@@ -2137,7 +2146,7 @@ def _search_gold(name):
 
     # 1) CORE_FOODS 매칭 (최우선 — 수동 검증 + 보정 데이터)
     #    Gold DB에 같은 이름이 있어도 CORE_FOODS가 이김
-    core_key, core_data = _search_core_foods(clean)
+    core_key, core_data = _search_core_foods(clean, _core)
     if core_data:
         return core_key, {
             'cal': core_data['cal'], 'prot': core_data['prot'],
@@ -2418,6 +2427,23 @@ def _match_confidence(clean, key):
             if ' '.join(words[st:]) == key:
                 return 'high'
     return 'low'
+
+
+def gold_match_class(name, exclude_v2=False):
+    """모니터링 #4: gold 경로 매칭 결과를 (class, key)로 반환.
+    class ∈ {'high','low','none'} — match_with_db의 gold 분기 판정과 동일 규칙.
+    exclude_v2=True면 v2(434종)를 뺀 CORE_FOODS_V1로 매칭 → v1 결과 재현.
+    v2는 gold 경로(CORE_FOODS)에만 존재하므로, 이 함수만으로 v2 효과를 격리 측정 가능.
+    """
+    _core = CORE_FOODS_V1 if exclude_v2 else None  # None이면 _search_gold가 전체 CORE 사용
+    try:
+        key, data = _search_gold(name, _core)
+    except Exception:
+        return 'none', None
+    if not data:
+        return 'none', None
+    conf = _match_confidence(_normalize_food_name(name), key)
+    return ('high' if conf == 'high' else 'low'), key
 
 
 def match_with_db(analysis, foods_db):
