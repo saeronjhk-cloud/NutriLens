@@ -54,6 +54,10 @@ MAX_REQUEST_BYTES = 10 * 1024 * 1024  # 10MB
 MEAL_SESSIONS = {}
 SESSION_TTL = 3600   # 1시간
 
+# 디버그 엔드포인트(/refcheck·/dbcheck) 게이트.
+# 기본 비활성 — 라이브 노출 차단. 진단 필요 시 환경변수 DEBUG_ENDPOINTS=1 로만 활성화.
+DEBUG_ENDPOINTS = os.environ.get('DEBUG_ENDPOINTS', '').strip().lower() in ('1', 'true', 'yes', 'on')
+
 UUID_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
     re.IGNORECASE,
@@ -3777,9 +3781,9 @@ class NutriLensHandler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         if path == '/analyze':
             self._handle_analyze()
-        elif path == '/refcheck':
+        elif path == '/refcheck' and DEBUG_ENDPOINTS:
             self._handle_refcheck()
-        elif path == '/dbcheck':
+        elif path == '/dbcheck' and DEBUG_ENDPOINTS:
             self._handle_dbcheck()
         elif path == '/analyze-leftover':
             self._handle_leftover()
