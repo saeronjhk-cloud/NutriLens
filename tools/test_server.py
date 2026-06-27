@@ -28,6 +28,7 @@ import io
 import re
 
 import sessions_store
+import metrics_store
 
 # ── 프로젝트 경로 설정 ──
 PROJECT_DIR = Path(__file__).parent.parent
@@ -905,6 +906,47 @@ def _tally_transition(_name):
     except Exception:
         pass
 
+
+# ── 모니터링 영속화: 재시작/재배포 시 카운터·전이표 복원 (web-volume의 metrics.db) ──
+def _persist_metrics():
+    """현재 메트릭 상태 스냅샷을 SQLite에 저장(분석마다 1회). 실패해도 분석에 영향 없음."""
+    try:
+        with _METRICS_LOCK:
+            _state = {
+                "counters": dict(MATCH_METRICS),
+                "transitions": dict(TRANSITIONS),
+                "no_match_foods": dict(NO_MATCH_FOODS),
+                "low_foods": dict(LOW_FOODS),
+                "high_high_changed": dict(HIGH_HIGH_CHANGED),
+                "mutation": dict(MUTATION),
+                "fallback_overflow": dict(_FALLBACK_OVERFLOW),
+            }
+        metrics_store.save_state(_state)
+    except Exception as _pe:
+        print(f"[metrics_store] persist 스킵: {_pe}")
+
+try:
+    metrics_store.init_db()
+    _saved = metrics_store.load_state()
+    if _saved:
+        for _k, _v in (_saved.get("counters") or {}).items():
+            if _k in MATCH_METRICS:
+                MATCH_METRICS[_k] = _v   # started_at 포함 → uptime=총 수집기간
+        TRANSITIONS.update(_saved.get("transitions") or {})
+        NO_MATCH_FOODS.update(_saved.get("no_match_foods") or {})
+        LOW_FOODS.update(_saved.get("low_foods") or {})
+        HIGH_HIGH_CHANGED.update(_saved.get("high_high_changed") or {})
+        if isinstance(_saved.get("mutation"), dict) and "high_high_changed" in _saved["mutation"]:
+            MUTATION["high_high_changed"] = _saved["mutation"]["high_high_changed"]
+        for _k, _v in (_saved.get("fallback_overflow") or {}).items():
+            _FALLBACK_OVERFLOW[_k] = _v
+        print(f"[metrics_store] 복원 완료: analyses={MATCH_METRICS.get('analyses')} "
+              f"foods={MATCH_METRICS.get('foods')} transitions={sum(TRANSITIONS.values())}")
+    else:
+        print("[metrics_store] 저장된 메트릭 없음(최초 시작)")
+except Exception as _re:
+    print(f"[metrics_store] 복원 스킵: {_re}")
+
 # 모니터링 #3 임계값 (저신뢰 음식 1건 기준, 엔진 우선·고정 규칙). JSONL raw로 재튜닝 가능.
 OUTLIER_KCAL_SOFT = 1200; OUTLIER_KCAL_HARD = 1500   # kcal
 OUTLIER_NA_SOFT = 3000;  OUTLIER_NA_HARD = 4000      # mg
@@ -914,7 +956,10 @@ try:
     V2_NAMES = set(json.load(open(_v2p, encoding='utf-8')).get('new_additions', {}).keys()) if _v2p.exists() else set()
 except Exception:
     V2_NAMES = set()
-METRICS_LOG_PATH = PROJECT_DIR / 'match_metrics.jsonl' 
+try:
+    METRICS_LOG_PATH = metrics_store._metrics_db_path().parent / 'match_metrics.jsonl'  # 영속 볼륨
+except Exception:
+    METRICS_LOG_PATH = PROJECT_DIR / 'match_metrics.jsonl'
 
 # 피드백 로그 경로 설정
 FEEDBACK_LOG_PATH = PROJECT_DIR / 'feedback_log.json'
@@ -4169,6 +4214,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                             with open(METRICS_LOG_PATH, "a", encoding="utf-8") as _mf:
                                 _mf.write(json.dumps(_rec, ensure_ascii=False) + "\n")
                     except Exception: pass
+                    _persist_metrics()   # 영속화: 분석마다 SQLite에 스냅샷 저장
                 except Exception as _me:
                     print(f"[metrics] 집계 스킵: {_me}")
 
