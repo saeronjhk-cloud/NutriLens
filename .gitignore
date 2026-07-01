@@ -2,6 +2,8 @@
 .env
 credentials.json
 token.json
+# API 키 등 *Keys*.txt 는 절대 커밋 금지 (예: "API Keys.txt")
+*Keys*.txt
 
 # Python
 __pycache__/
@@ -17,6 +19,11 @@ __pycache__/
 *.sqlite-wal
 *.sqlite-shm
 *_backup.sqlite
+# 로컬 정제 산출물 (배포용 gold_foods.sqlite / nutrilens_db.sqlite 는 추적 유지)
+nutrilens_clean.sqlite
+
+# 코드 백업본 (예: test_server.py.bak)
+*.bak
 
 # 대용량 원본 파일 (DB에 이미 통합됨)
 FoodData_Central_sr_legacy_food_json_2018-04.json
