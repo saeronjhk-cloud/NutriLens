@@ -26,6 +26,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 import io
 import re
+import hmac
 
 import sessions_store
 import metrics_store
@@ -57,6 +58,9 @@ SESSION_TTL = 3600   # 1시간
 # 디버그 엔드포인트(/refcheck·/dbcheck) 게이트.
 # 기본 비활성 — 라이브 노출 차단. 진단 필요 시 환경변수 DEBUG_ENDPOINTS=1 로만 활성화.
 DEBUG_ENDPOINTS = os.environ.get('DEBUG_ENDPOINTS', '').strip().lower() in ('1', 'true', 'yes', 'on')
+# 디버그 엔드포인트 2차 잠금(P0). 플래그를 켜도 이 토큰 없이는 절대 열리지 않음(fail-closed).
+# 요청 헤더 X-Debug-Token 이 이 값과 상수시간 비교로 일치해야만 핸들러 진입.
+DEBUG_TOKEN = os.environ.get('DEBUG_TOKEN', '').strip()
 
 UUID_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
@@ -3776,14 +3780,31 @@ class NutriLensHandler(BaseHTTPRequestHandler):
         b64 = base64.b64encode(file_info['data']).decode('utf-8')
         return b64, media_type
 
+    def _debug_authorized(self):
+        """디버그 엔드포인트 접근 허가 — 이중 게이트.
+        (1) DEBUG_ENDPOINTS 플래그 ON, (2) DEBUG_TOKEN 이 설정됨(비어있지 않음),
+        (3) 요청 헤더 X-Debug-Token 이 DEBUG_TOKEN 과 상수시간 비교로 일치.
+        셋 중 하나라도 불충족이면 False → 라우팅에서 bare 404 로 떨어져
+        경로/토큰 존재를 일절 누설하지 않는다. 토큰 미설정 시엔 플래그만으로
+        절대 열리지 않는다(fail-closed) — 플래그를 켠 순간 재노출되던 P0 취약점 차단."""
+        if not DEBUG_ENDPOINTS:
+            return False
+        if not DEBUG_TOKEN:
+            return False
+        try:
+            provided = self.headers.get('X-Debug-Token', '') if self.headers else ''
+            return hmac.compare_digest(provided, DEBUG_TOKEN)
+        except Exception:
+            return False
+
     def do_POST(self):
         """음식 사진 분석 API"""
         path = self.path.split('?')[0]
         if path == '/analyze':
             self._handle_analyze()
-        elif path == '/refcheck' and DEBUG_ENDPOINTS:
+        elif path == '/refcheck' and self._debug_authorized():
             self._handle_refcheck()
-        elif path == '/dbcheck' and DEBUG_ENDPOINTS:
+        elif path == '/dbcheck' and self._debug_authorized():
             self._handle_dbcheck()
         elif path == '/analyze-leftover':
             self._handle_leftover()
