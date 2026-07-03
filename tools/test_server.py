@@ -3768,6 +3768,20 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
         return fields, files, None
 
+    def _check_engine_key(self, request_id=None):
+        """서버-서버 인증: ENGINE_API_KEY 설정 시에만 강제(계약 §3, 미설정=개방 이행기).
+        통과 시 True, 실패 시 401 응답 후 False 반환."""
+        want_key = os.environ.get('ENGINE_API_KEY', '')
+        if not want_key:
+            return True
+        got = (self.headers.get('Authorization') or '')
+        if got.startswith('Bearer ') and got[7:] == want_key:
+            return True
+        self._json_response(401, {"ok": False, "error": {
+            "code": "UNAUTHORIZED", "message": "engine key mismatch",
+            "retryable": False}, "request_id": request_id or str(uuid.uuid4())})
+        return False
+
     def _get_api_key(self, fields):
         """API 키 추출"""
         api_key = (fields or {}).get('api_key', '').strip()
@@ -3845,6 +3859,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
     def _handle_leftover(self):
         """전/후 사진 비교 — 남은 음식 분석"""
+        if not self._check_engine_key():
+            return
         try:
             fields, files, err = self._parse_multipart()
             if err:
@@ -4121,6 +4137,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
 
     def _handle_analyze(self):
         """일반 음식 분석"""
+        if not self._check_engine_key():
+            return
 
         try:
             fields, files, err = self._parse_multipart()
@@ -4636,15 +4654,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
         """API 계약 v1 §5-2 — 주간 리포트 규칙 계산(stateless, 저장 안 함).
         룰 원전: IP eval 06 스냅샷 / 구현: tools/report_weekly.py (Eval 12/12 GREEN 후 배선)."""
         request_id = self.headers.get('X-Request-Id') or str(uuid.uuid4())
-        # 서버-서버 인증: ENGINE_API_KEY 설정 시에만 강제(계약 §3, 미설정=개방 이행기)
-        want_key = os.environ.get('ENGINE_API_KEY', '')
-        if want_key:
-            got = (self.headers.get('Authorization') or '')
-            if not (got.startswith('Bearer ') and got[7:] == want_key):
-                self._json_response(401, {"ok": False, "error": {
-                    "code": "UNAUTHORIZED", "message": "engine key mismatch",
-                    "retryable": False}, "request_id": request_id})
-                return
+        if not self._check_engine_key(request_id):
+            return
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
