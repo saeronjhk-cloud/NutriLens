@@ -3586,6 +3586,12 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             )
             html = HTML_PAGE.replace('__NUTRI_ALLOWED_ORIGINS__', origins_json)
             self.wfile.write(html.encode('utf-8'))
+        elif path == '/v1/health':
+            # API 계약 v1 §5-3 (무인증)
+            self._json_response(200, {"ok": True, "data": {
+                "status": "up", "db_loaded": len(FOODS_DB) > 0,
+                "foods": len(FOODS_DB),
+                "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0")}})
         elif path == '/version':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -3828,6 +3834,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_weekly_macro()
         elif path == '/protein-timing':
             self._handle_protein_timing()
+        elif path == '/v1/report/weekly':
+            self._handle_v1_report_weekly()
         elif path == '/adjust':
             self._handle_adjust()
         else:
@@ -4623,6 +4631,46 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._json_response(400, uid_err)
             return
         self._json_response(200, {"daily":[],"meal_pattern":{},"balance":{},"top_foods":[],"warnings":[],"weekly_report":"","total_meals":0,"total_days":0})
+
+    def _handle_v1_report_weekly(self):
+        """API 계약 v1 §5-2 — 주간 리포트 규칙 계산(stateless, 저장 안 함).
+        룰 원전: IP eval 06 스냅샷 / 구현: tools/report_weekly.py (Eval 12/12 GREEN 후 배선)."""
+        request_id = self.headers.get('X-Request-Id') or str(uuid.uuid4())
+        # 서버-서버 인증: ENGINE_API_KEY 설정 시에만 강제(계약 §3, 미설정=개방 이행기)
+        want_key = os.environ.get('ENGINE_API_KEY', '')
+        if want_key:
+            got = (self.headers.get('Authorization') or '')
+            if not (got.startswith('Bearer ') and got[7:] == want_key):
+                self._json_response(401, {"ok": False, "error": {
+                    "code": "UNAUTHORIZED", "message": "engine key mismatch",
+                    "retryable": False}, "request_id": request_id})
+                return
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
+            req = json.loads(body) if body.strip() else {}
+        except (ValueError, UnicodeDecodeError):
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": "invalid json body",
+                "retryable": False, "field": "body"}, "request_id": request_id})
+            return
+        if not isinstance(req.get('meals'), list):
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": "meals must be a list",
+                "retryable": False, "field": "meals"}, "request_id": request_id})
+            return
+        try:
+            import report_weekly as _rw
+            data = _rw.compute_report(req)
+        except Exception as _e:
+            self._json_response(500, {"ok": False, "error": {
+                "code": "INTERNAL", "message": "report computation failed: %s" % type(_e).__name__,
+                "retryable": True}, "request_id": request_id})
+            return
+        self._json_response(200, {"ok": True, "data": data,
+                                  "schema_version": "report.v1",
+                                  "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0"),
+                                  "request_id": request_id})
 
     def _json_response(self, code, data):
         self.send_response(code)

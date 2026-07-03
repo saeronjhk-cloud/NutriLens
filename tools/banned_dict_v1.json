@@ -1,0 +1,74 @@
+{
+  "version": "v1",
+  "updated": "2026-07-01",
+  "note": "v0 + 2-AI 반영. 소비자 노출 문구 전용. 매칭은 normalization 사본에서 수행하되 whitelist_contexts와 combination_rule을 우선 적용해 false positive를 방지한다.",
+  "scope_channels": ["report_next_action", "coaching_message", "recommendation_card", "push", "affiliate_copy"],
+
+  "normalization": {
+    "steps": ["unicode_nfkc", "strip_whitespace", "strip_symbols_emoji", "lower_ascii"],
+    "match_on": ["original", "no_space", "no_symbol"],
+    "note": "원문 노출은 유지. 매칭용 사본 3종 중 하나라도 히트 시 후보. whitelist/combination 규칙으로 최종 판정."
+  },
+
+  "disease_terms": [
+    "당뇨", "당뇨병", "당수치", "혈당관리", "고혈압", "혈압약", "암", "발암", "종양",
+    "치료", "완치", "처방", "진단", "질병예방", "당뇨예방", "고혈압예방", "암예방",
+    "혈당강하", "콜레스테롤개선", "면역력강화", "면역증진", "염증완화", "지방간",
+    "동맥경화", "심장병", "합병증", "인슐린", "대사증후군치료", "diabetes", "hypertension"
+  ],
+  "disease_abbrev": { "ㄷㄴ": "당뇨", "ㄱㅎㅇ": "고혈압" },
+
+  "efficacy_claim_patterns": [
+    "예방", "치료", "완치", "개선됩니다", "개선돼요", "낫는다", "낫습니다",
+    "효과가있", "효능", "에좋다", "에좋아요", "강화됩니다", "증진됩니다"
+  ],
+
+  "combination_rule": {
+    "description": "G1/G3은 disease_term 또는 건강목적어 + efficacy_claim_pattern 이 함께 나타날 때만 발동. 정보/수치/성분 문맥 단독은 통과.",
+    "trigger_when": "has(disease_term) AND has(efficacy_claim_pattern)",
+    "also_trigger": "commercial_recommendation==true AND has(disease_term)",
+    "pass_when": "has(disease_term) AND is_informational_context"
+  },
+
+  "whitelist_contexts": [
+    "혈당 지수", "혈당지수", "당지수", "GI지수", "GI 지수",
+    "콜레스테롤 수치", "콜레스테롤수치", "나트륨 수치", "혈압 측정",
+    "단백질", "식이섬유", "포화지방", "불포화지방", "근육", "근육량",
+    "영양 균형", "영양균형", "성분 해설", "성분표"
+  ],
+  "whitelist_note": "이 표현들은 disease_terms에 부분일치해도 정보/성분/수치 문맥이므로 차단하지 않는다. combination_rule과 함께 적용.",
+
+  "banned_expressions": [
+    { "term": "위험", "replacement": "주의 신호", "severity": "high" },
+    { "term": "유해", "replacement": "확인 필요", "severity": "high" },
+    { "term": "해롭다", "replacement": "섭취 빈도 조절이 필요할 수 있어요", "severity": "high" },
+    { "term": "해로운", "replacement": "확인이 필요한", "severity": "high" },
+    { "term": "발암", "replacement": "성분 확인 필요", "severity": "high" },
+    { "term": "독성", "replacement": "성분 확인 필요", "severity": "high" },
+    { "term": "먹으면 안 됨", "replacement": "섭취 빈도를 조절해보세요", "severity": "high" },
+    { "term": "먹으면안돼", "replacement": "섭취 빈도를 조절해보세요", "severity": "high" },
+    { "term": "최악", "replacement": "내 기준과 적합도가 낮은", "severity": "mid" },
+    { "term": "안전하지 않", "replacement": "확인이 필요한", "severity": "high" }
+  ],
+
+  "efficacy_replacement_style": "정보 제공형으로 변환(예: '~ 참고하세요', '~ 균형에 도움이 될 수 있어요'). evidence_level=official_claim 인 경우에만 인정범위 기능성 표현 허용.",
+
+  "safe_alternatives_vocab": [
+    "주의 신호", "확인 필요", "섭취 빈도 조절", "내 기준과의 적합도",
+    "성분 해설", "영양 균형 참고", "생활습관 관리", "정보 제공", "선택 보조"
+  ],
+
+  "safe_fallback_messages": {
+    "report_next_action": "이번 주는 일반적인 식생활 균형을 참고해 주세요.",
+    "coaching_card": "오늘도 기록해주셔서 좋아요. 균형 잡힌 한 끼를 챙겨보세요."
+  },
+
+  "cta_whitelist": {
+    "coaching": ["none", "save", "learn_more"],
+    "education": ["none", "save", "learn_more"],
+    "affiliate": ["learn_more", "affiliate_link"],
+    "product_discovery": ["none", "save", "learn_more"]
+  },
+  "disclosure_labels": ["광고", "제휴"],
+  "priority_order": ["safety_allergy", "disease_medical_restriction", "nutrition_over_under", "personal_goal", "affiliate_recommendation"]
+}

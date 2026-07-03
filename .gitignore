@@ -37,3 +37,8 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Domain IP 원본은 저장소 밖 관리(원칙3) — 코드에는 복사본만
+IP/
+HANDOFF_*.md
+nutrilens_HANDOFF_*.md
