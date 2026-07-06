@@ -1012,6 +1012,7 @@ def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o", ref_hi
         "max_tokens": 2000,
         "temperature": 0.2,
         "response_format": {"type": "json_object"},
+        "store": False,
     }
 
     data = json.dumps(payload).encode('utf-8')

@@ -630,6 +630,7 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
         ],
         "max_tokens": 2000,
         "temperature": 0.2,
+        "store": False,
     }
 
     try:
