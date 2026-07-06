@@ -38,6 +38,7 @@ sys.path.insert(0, str(TOOLS_DIR))
 
 # food_analyzer 모듈 임포트
 from food_analyzer import load_food_db, match_with_db, SYSTEM_PROMPT, gold_match_class
+from leftover_engine import compute_leftover
 
 # ── 동시성 보호 (ThreadingHTTPServer 대응) ──
 # 글로벌 dict/파일에 동시 접근하는 부분을 직렬화
@@ -3849,6 +3850,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_weekly_macro()
         elif path == '/protein-timing':
             self._handle_protein_timing()
+        elif path == '/v1/analyze':
+            self._handle_v1_analyze()
         elif path == '/v1/report/weekly':
             self._handle_v1_report_weekly()
         elif path == '/adjust':
@@ -4650,6 +4653,63 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._json_response(400, uid_err)
             return
         self._json_response(200, {"daily":[],"meal_pattern":{},"balance":{},"top_foods":[],"warnings":[],"weekly_report":"","total_meals":0,"total_days":0})
+
+    def _handle_v1_analyze(self):
+        """API v1 analyze — Path A: mode=leftover (순수 산술, OpenAI 미진입)."""
+        request_id = self.headers.get('X-Request-Id') or str(uuid.uuid4())
+        if not self._check_engine_key(request_id):
+            return
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body_raw = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
+            body = json.loads(body_raw) if body_raw.strip() else {}
+        except (ValueError, UnicodeDecodeError):
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": "invalid json body",
+                "retryable": False}, "request_id": request_id})
+            return
+
+        mode = (body.get('mode') or '').strip()
+        if mode != 'leftover':
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "POST /v1/analyze supports mode=leftover only (no image)",
+                "retryable": False}, "request_id": request_id})
+            return
+
+        pre_result = body.get('pre_result')
+        if not isinstance(pre_result, dict) or not isinstance(pre_result.get('foods'), list):
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": "pre_result.foods required",
+                "retryable": False}, "request_id": request_id})
+            return
+
+        kwargs = {}
+        if 'eaten_ratio' in body:
+            kwargs['eaten_ratio'] = body['eaten_ratio']
+        if 'session_eaten_ratio' in body:
+            kwargs['session_eaten_ratio'] = body['session_eaten_ratio']
+        if 'per_food' in body:
+            kwargs['per_food'] = body['per_food']
+        if body.get('pre_meal_session_id'):
+            kwargs['pre_meal_session_id'] = body['pre_meal_session_id']
+
+        try:
+            result = compute_leftover(pre_result, **kwargs)
+        except ValueError as e:
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": str(e),
+                "retryable": False}, "request_id": request_id})
+            return
+
+        print(f"[v1/analyze leftover] foods={len(result.get('foods', []))} openai_called=false")
+        self._json_response(200, {
+            "ok": True,
+            "data": result,
+            "schema_version": "analyze.v1",
+            "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0"),
+            "request_id": request_id,
+        })
 
     def _handle_v1_report_weekly(self):
         """API 계약 v1 §5-2 — 주간 리포트 규칙 계산(stateless, 저장 안 함).

@@ -1,0 +1,14 @@
+[functions.account-delete]
+verify_jwt = false
+
+[functions.meal-analysis-jobs]
+verify_jwt = false
+
+[functions.analysis-status]
+verify_jwt = false
+
+[functions.weekly-report]
+verify_jwt = false
+
+[functions.meal-leftover]
+verify_jwt = false
