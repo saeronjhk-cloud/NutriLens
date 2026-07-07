@@ -38,7 +38,11 @@ sys.path.insert(0, str(TOOLS_DIR))
 
 # food_analyzer 모듈 임포트
 from food_analyzer import load_food_db, match_with_db, SYSTEM_PROMPT, gold_match_class
-from leftover_engine import compute_leftover
+from leftover_engine import (
+    apply_photo_ai,
+    compute_leftover,
+    estimate_eaten_ratio_from_photo,
+)
 
 # ── 동시성 보호 (ThreadingHTTPServer 대응) ──
 # 글로벌 dict/파일에 동시 접근하는 부분을 직렬화
@@ -4684,6 +4688,11 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 "retryable": False}, "request_id": request_id})
             return
 
+        leftover_method = (body.get('leftover_method') or 'slider').strip()
+        if leftover_method == 'photo_ai':
+            self._handle_v1_leftover_photo_ai(body, pre_result, request_id)
+            return
+
         kwargs = {}
         if 'eaten_ratio' in body:
             kwargs['eaten_ratio'] = body['eaten_ratio']
@@ -4703,6 +4712,44 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             return
 
         print(f"[v1/analyze leftover] foods={len(result.get('foods', []))} openai_called=false")
+        self._json_response(200, {
+            "ok": True,
+            "data": result,
+            "schema_version": "analyze.v1",
+            "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0"),
+            "request_id": request_id,
+        })
+
+    def _handle_v1_leftover_photo_ai(self, body, pre_result, request_id):
+        """Path B - 식후사진으로 AI가 '전체 섭취 비율'만 추정 -> 엔진이 결정론 재계산.
+        엔진은 stateless(photo_ai_suggested, meal_log 미갱신). 저장/멱등/상태전이는 Edge.
+        계약 27 v2 3절 / P1-2. AI 실패는 fail-closed."""
+        after_image = body.get('after_image') or ''
+        mime = body.get('after_image_mime') or 'image/jpeg'
+        api_key = os.environ.get('OPENAI_API_KEY', '') or (body.get('api_key') or '')
+        try:
+            est = estimate_eaten_ratio_from_photo(after_image, mime, pre_result, api_key)
+        except RuntimeError as e:
+            msg = str(e)
+            code = "CROP_FAILED" if ("image" in msg or "crop" in msg) else "AI_ESTIMATE_FAILED"
+            self._json_response(502, {"ok": False, "error": {
+                "code": code, "message": msg, "retryable": True},
+                "request_id": request_id})
+            return
+        try:
+            result = apply_photo_ai(
+                pre_result,
+                estimated_eaten_ratio=est['estimated_eaten_ratio'],
+                confidence=est['confidence'],
+            )
+        except ValueError as e:
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": str(e), "retryable": False},
+                "request_id": request_id})
+            return
+        result['ai_note'] = est.get('note', '')
+        print("[v1/analyze leftover photo_ai] ratio=%s conf=%s confirm=%s openai_called=true" % (
+            result['estimated_eaten_ratio'], result['confidence'], result['requires_user_confirmation']))
         self._json_response(200, {
             "ok": True,
             "data": result,

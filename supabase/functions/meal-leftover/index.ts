@@ -46,7 +46,7 @@ async function sha256hex(text: string): Promise<string> {
 function requestHashPayload(body: Record<string, unknown>): Record<string, unknown> {
   const allowed = [
     "pre_meal_log_id", "pre_meal_session_id", "leftover_method",
-    "eaten_ratio", "session_eaten_ratio", "per_food", "mode",
+    "eaten_ratio", "session_eaten_ratio", "per_food", "mode", "confirmed_eaten_ratio",
   ];
   const out: Record<string, unknown> = {};
   for (const k of allowed.sort()) {
@@ -209,6 +209,137 @@ function successResponse(
   });
 }
 
+// =====================================================================
+// Path B — 식후사진 AI (photo_ai). 계약 27 v2 3절 / P1-2 / P1-b.
+// suggest: after_image -> 엔진 AI 추정 -> adjustment(user_confirmed=false, meal_log 미갱신).
+// confirm: confirmed_eaten_ratio -> 결정론 슬라이더 -> user_confirmed=true + meal_log 갱신.
+// meal scope 전용(P1). 저장/멱등/상태전이는 Edge. 스키마·RPC 변경 없음(기존 재사용).
+// =====================================================================
+async function handlePhotoAi(
+  admin: ReturnType<typeof createClient>,
+  uid: string,
+  idemKey: string,
+  requestHash: string,
+  body: Record<string, unknown>,
+  requestId: string,
+): Promise<Response> {
+  const preMealLogId = body.pre_meal_log_id as string | undefined;
+  if (!preMealLogId) {
+    return err(400, "VALIDATION_ERROR", "photo_ai requires pre_meal_log_id (meal scope only in P1)", requestId);
+  }
+
+  const { data: mealLog, error: mlErr } = await admin.from("meal_log")
+    .select("id,user_id,foods,summary,original_summary,adjusted_summary,source")
+    .eq("id", preMealLogId)
+    .eq("user_id", uid)
+    .maybeSingle();
+  if (mlErr) return err(500, "INTERNAL", mlErr.message, requestId, true);
+  if (!mealLog) return err(403, "VALIDATION_ERROR", "forbidden_owner_mismatch", requestId);
+
+  const built = foodsFromMealLog(mealLog as { id: string; foods: unknown }, 0);
+  const canonicalFoods = built.foods;
+  const originalSummaryCanonical =
+    (mealLog.original_summary as Record<string, unknown>) ?? (mealLog.summary as Record<string, unknown>);
+  const previousAdjusted = (mealLog.adjusted_summary as Record<string, unknown> | null) ?? null;
+  const originalFoodsSnapshot = buildOriginalFoodsSnapshot(canonicalFoods);
+  const preResultFoods = canonicalFoods.map(({ _meal_log_id: _, ...rest }) => rest);
+
+  const confirmedRatio = body.confirmed_eaten_ratio;
+  const isConfirm = typeof confirmedRatio === "number";
+
+  const engineBody: Record<string, unknown> = { pre_result: { foods: preResultFoods } };
+  if (isConfirm) {
+    engineBody.leftover_method = "slider";
+    engineBody.eaten_ratio = confirmedRatio;
+  } else {
+    engineBody.leftover_method = "photo_ai";
+    engineBody.after_image = body.after_image ?? "";
+    engineBody.after_image_mime = body.after_image_mime ?? "image/jpeg";
+  }
+
+  let engineResult: Record<string, unknown>;
+  let engineVersion = ENGINE_VERSION;
+  try {
+    const eng = await callEngineLeftover(engineBody, requestId, idemKey);
+    engineResult = eng.data;
+    engineVersion = eng.engine_version ?? ENGINE_VERSION;
+  } catch (e) {
+    const ee = e as EngineError;
+    return err(ee.status, ee.code, ee.message, requestId, ee.code === "UPSTREAM_TIMEOUT");
+  }
+
+  const engineFoods = (engineResult.foods as Record<string, unknown>[]) ?? [];
+  const adjustedCanonical = engineSummaryToMealLog(engineResult.summary as Record<string, unknown>);
+  const originalSnapshot =
+    originalSummaryCanonical ?? engineSummaryToMealLog(engineResult.pre_summary as Record<string, unknown>);
+  const confidence = (engineResult.confidence as number | null) ?? null;
+  const requiresConfirm = Boolean(engineResult.requires_user_confirmation);
+  const estimatedRatio = isConfirm
+    ? (confirmedRatio as number)
+    : Number(engineResult.estimated_eaten_ratio ?? representativeRatio(body));
+
+  // P1-2: meal_log 갱신은 user_confirmed(확인) 후에만.
+  const mealLogUpdates = isConfirm
+    ? [{
+        id: preMealLogId,
+        leftover_method: "photo_ai",
+        eaten_ratio: estimatedRatio,
+        original_summary: (mealLog.original_summary as unknown) ?? originalSnapshot,
+        adjusted_summary: adjustedCanonical,
+        leftover_note: aggregateLeftoverNote(engineFoods),
+        leftover_engine_version: engineVersion,
+      }]
+    : [];
+
+  const { data: rpcRes, error: rpcErr } = await admin.rpc("apply_leftover_adjustment", {
+    p: {
+      user_id: uid,
+      idempotency_key: idemKey,
+      request_hash: requestHash,
+      meal_log_id: preMealLogId,
+      meal_session_id: null,
+      method: "photo_ai",
+      scope: "meal",
+      eaten_ratio: estimatedRatio,
+      original_summary_snapshot: originalSnapshot,
+      previous_adjusted_summary: previousAdjusted,
+      adjusted_summary: adjustedCanonical,
+      original_foods_snapshot: originalFoodsSnapshot,
+      session_food_snapshot: null,
+      confidence: confidence,
+      user_confirmed: isConfirm,
+      endpoint: isConfirm ? "analyze.leftover.photo_ai.confirm" : "analyze.leftover.photo_ai.suggest",
+      engine_version: engineVersion,
+      meal_log_updates: mealLogUpdates,
+    },
+  });
+  if (rpcErr) {
+    if (rpcErr.message?.includes("IDEMPOTENCY_KEY_REUSE_MISMATCH")) {
+      return err(409, "IDEMPOTENCY_KEY_REUSE_MISMATCH", "idempotency key reused with different body", requestId);
+    }
+    return err(500, "INTERNAL", `apply_leftover_adjustment failed: ${rpcErr.message}`, requestId, true);
+  }
+  const rpc = (rpcRes ?? {}) as { replay?: boolean; adjusted_summary?: Record<string, unknown> };
+
+  return successResponse({
+    adjusted_summary: rpc.adjusted_summary ?? adjustedCanonical,
+    pre_summary: mealLogSummaryToPre(originalSnapshot),
+    foods: rpc.replay ? [] : engineFoods,
+    leftover_method: "photo_ai",
+    state: isConfirm ? "user_confirmed" : "photo_ai_suggested",
+    meal_log_updated: isConfirm,
+    requires_user_confirmation: requiresConfirm,
+    ...(isConfirm
+      ? {}
+      : {
+          estimated_eaten_ratio: estimatedRatio,
+          confidence,
+          suggested_note: (engineResult.suggested_note as string) ?? "",
+        }),
+    ...(rpc.replay ? { idempotent_replay: true } : {}),
+  }, requestId, engineVersion);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
@@ -246,8 +377,8 @@ Deno.serve(async (req) => {
   }
 
   const leftoverMethod = String(body.leftover_method ?? "slider");
-  if (leftoverMethod !== "slider") {
-    return err(400, "VALIDATION_ERROR", "Path A supports leftover_method=slider only", requestId);
+  if (leftoverMethod !== "slider" && leftoverMethod !== "photo_ai") {
+    return err(400, "VALIDATION_ERROR", "leftover_method must be slider or photo_ai", requestId);
   }
 
   const preMealLogId = body.pre_meal_log_id as string | undefined;
@@ -277,6 +408,11 @@ Deno.serve(async (req) => {
       leftover_method: existingAdj.method ?? leftoverMethod,
       idempotent_replay: true,
     }, requestId);
+  }
+
+  // Path B: photo_ai는 별도 흐름(제안/확인). JWT/동의/멱등 조회는 위에서 공유.
+  if (leftoverMethod === "photo_ai") {
+    return await handlePhotoAi(admin, uid, idemKey, requestHash, body, requestId);
   }
 
   // 6) 입력 배타/검증

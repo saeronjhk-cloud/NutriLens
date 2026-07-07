@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""leftover_engine 회귀 — 29_정찬_잔반_Eval셋_v2.1.1.jsonl (25/25 + 3 SKIP)."""
+"""leftover_engine 회귀 — 29_정찬_잔반_Eval셋_v2.2_PathB.jsonl (32/32 + 6 SKIP).
+Path A 25건 + Path B(photo_ai) 7건. 엔진 함수로 직접 검증(하네스와 비트 동일 확인)."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ PROJECT_DIR = TOOLS_DIR.parent
 sys.path.insert(0, str(TOOLS_DIR))
 
 from leftover_engine import (  # noqa: E402
+    apply_photo_ai_from_case,
     approx,
     check_finite,
     compute_leftover_from_case,
@@ -19,10 +21,9 @@ from leftover_engine import (  # noqa: E402
     display_totals,
 )
 
-# eval 하네스와 동일 — leftover_engine 외 케이스 타입 검증
 CONFIRM_THRESHOLD = 0.70
 
-EVAL_JSONL = PROJECT_DIR / "IP" / "통합앱_P1" / "29_정찬_잔반_Eval셋_v2.1.1.jsonl"
+EVAL_JSONL = PROJECT_DIR / "IP" / "통합앱_P1" / "29_정찬_잔반_Eval셋_v2.2_PathB.jsonl"
 
 
 def check_leftover(case):
@@ -119,6 +120,39 @@ def check_confirmation(case):
     return [] if req == case["expect"]["requires_user_confirmation"] else [f"confirm {req}"]
 
 
+def check_photo_ai(case):
+    """Path B — 엔진 apply_photo_ai가 결정론(원본 x ratio) 출력/확인게이트를 지키는지."""
+    try:
+        r = apply_photo_ai_from_case(case)
+    except ValueError as e:
+        return [f"예상외 reject: {e}"]
+    exp = case["expect"]
+    errs = []
+    if r["requires_user_confirmation"] != exp["requires_user_confirmation"]:
+        errs.append(f"confirm exp {exp['requires_user_confirmation']} got {r['requires_user_confirmation']}")
+    if r["leftover_method"] != "photo_ai":
+        errs.append("method != photo_ai")
+    if r["state"] != exp.get("state", "photo_ai_suggested"):
+        errs.append(f"state {r['state']}")
+    if r["meal_log_updated"] != exp.get("meal_log_updated", False):
+        errs.append(f"meal_log_updated {r['meal_log_updated']}")
+    if r["minimization"].get("openai_called") is not True:
+        errs.append("photo_ai는 openai_called=true여야")
+    display = display_totals(r)
+    for k, v in exp.get("display_totals", {}).items():
+        if not approx(display.get(k, 0), v):
+            errs.append(f"display {k}: exp {v}, got {display.get(k)}")
+    return errs
+
+
+def check_photo_ai_invalid(case):
+    try:
+        apply_photo_ai_from_case(case)
+    except ValueError as e:
+        return [] if str(e) == case["expect_reject"] else [f"reject 사유: exp {case['expect_reject']}, got {e}"]
+    return [f"reject 되어야 함(exp {case['expect_reject']})"]
+
+
 def run_eval(path: Path) -> tuple[int, int, int]:
     passed = failed = skipped = 0
     fns = {
@@ -130,6 +164,8 @@ def run_eval(path: Path) -> tuple[int, int, int]:
         "session": check_session,
         "provenance": check_provenance,
         "confirmation": check_confirmation,
+        "photo_ai": check_photo_ai,
+        "photo_ai_invalid": check_photo_ai_invalid,
     }
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -151,16 +187,16 @@ def run_eval(path: Path) -> tuple[int, int, int]:
     total = passed + failed
     print(
         f"\n결과: {passed}/{total} 통과, {skipped} SKIP(통합)",
-        "✅ 100%" if failed == 0 else f"❌ {failed} 실패",
+        "OK 100%" if failed == 0 else f"FAIL {failed}건",
     )
     return passed, failed, skipped
 
 
-def test_eval_jsonl_25_25():
+def test_eval_jsonl_32_32():
     passed, failed, skipped = run_eval(EVAL_JSONL)
     assert failed == 0, f"{failed} eval cases failed"
-    assert passed == 25
-    assert skipped == 3
+    assert passed == 32
+    assert skipped == 6
 
 
 if __name__ == "__main__":
