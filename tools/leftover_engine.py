@@ -265,6 +265,14 @@ def estimate_eaten_ratio_from_photo(
         f"[식전 음식]\n{hint}"
     )
 
+    # 서버 강제 최소화(16_ L1 crop + L2 detail:low): 원본 프레임 미전송(17_ 축 A).
+    from image_minimize import minimize_to_data_url, CropFailed  # lazy(PIL 의존)
+    import base64 as _b64
+    try:
+        _data_url, _min_meta = minimize_to_data_url(_b64.b64decode(after_image_b64))
+    except CropFailed as _e:
+        raise RuntimeError(f"crop_failed:{_e}")
+
     payload = {
         "model": model,
         "messages": [
@@ -275,7 +283,7 @@ def estimate_eaten_ratio_from_photo(
                     {"type": "text", "text": user_text},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{after_image_b64}", "detail": "high"},
+                        "image_url": {"url": _data_url, "detail": _min_meta["detail"]},
                     },
                 ],
             },
@@ -312,6 +320,12 @@ def estimate_eaten_ratio_from_photo(
         "estimated_eaten_ratio": parsed["estimated_eaten_ratio"],
         "confidence": parsed["confidence"],
         "note": parsed.get("note", ""),
+        "minimization": {
+            "original_frame_sent": _min_meta["original_frame_sent"],
+            "crop_mode": _min_meta["crop_mode"],
+            "crop_bounds_area_ratio": _min_meta["crop_bounds_area_ratio"],
+            "detail": _min_meta["detail"],
+        },
     }
 
 

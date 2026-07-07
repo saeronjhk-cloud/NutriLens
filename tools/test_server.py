@@ -4748,6 +4748,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 "request_id": request_id})
             return
         result['ai_note'] = est.get('note', '')
+        if isinstance(result.get('minimization'), dict) and est.get('minimization'):
+            result['minimization'].update(est['minimization'])
         print("[v1/analyze leftover photo_ai] ratio=%s conf=%s confirm=%s openai_called=true" % (
             result['estimated_eaten_ratio'], result['confidence'], result['requires_user_confirmation']))
         self._json_response(200, {
