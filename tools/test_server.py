@@ -43,7 +43,11 @@ from leftover_engine import (
     compute_leftover,
     estimate_eaten_ratio_from_photo,
 )
-from checkup_engine import interpret as checkup_interpret
+try:
+    from checkup_engine import interpret as checkup_interpret
+except Exception as _e:  # checkup_engine 미배포(파일 미추적)여도 서버 기동 유지 — /v1/checkup/interpret만 비활성
+    checkup_interpret = None
+    print(f"[checkup] checkup_engine import 실패 → 검진 엔드포인트 비활성: {_e}")
 
 # ── 동시성 보호 (ThreadingHTTPServer 대응) ──
 # 글로벌 dict/파일에 동시 접근하는 부분을 직렬화
