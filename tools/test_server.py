@@ -1026,27 +1026,34 @@ def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o", ref_hi
     }
 
     data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(url, data=data, method='POST')
-    req.add_header("Authorization", f"Bearer {api_key}")
-    req.add_header("Content-Type", "application/json")
-
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
-        return {"error": f"OpenAI API 에러 ({e.code}): {body}"}
-    except Exception as e:
-        return {"error": f"API 호출 실패: {str(e)}"}
-
-    if "error" in result:
-        return {"error": f"OpenAI: {result['error'].get('message', str(result['error']))}"}
+    result = None
+    for _attempt in range(2):  # content=null(간헐적 빈 완성) 시 1회 재시도
+        req = urllib.request.Request(url, data=data, method='POST')
+        req.add_header("Authorization", f"Bearer {api_key}")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')
+            return {"error": f"OpenAI API 에러 ({e.code}): {body}"}
+        except Exception as e:
+            return {"error": f"API 호출 실패: {str(e)}"}
+        if "error" in result:
+            return {"error": f"OpenAI: {result['error'].get('message', str(result['error']))}"}
+        if result["choices"][0]["message"].get("content") is not None:
+            break  # 정상 응답 → 종료
 
     content = result["choices"][0]["message"]["content"]
     if content is None:
-        # OpenAI가 content=null 반환(모델 거부/빈 응답/length 등) → 크래시 대신 정상 에러 반환.
-        _finish = (result.get("choices") or [{}])[0].get("finish_reason")
-        return {"error": f"AI가 응답 내용을 반환하지 않았어요 (사유: {_finish}). 다른 사진으로 다시 시도해 주세요.", "raw": ""}
+        # 재시도 후에도 빈 응답 → 크래시 대신 정상 에러. refusal/사유를 로그+표면화.
+        _ch = (result.get("choices") or [{}])[0]
+        _msg = _ch.get("message") or {}
+        _refusal = _msg.get("refusal")
+        _finish = _ch.get("finish_reason")
+        print(f"[analyze] content=None finish={_finish} refusal={_refusal!r} keys={list(_msg.keys())}")
+        _why = f"거부됨: {_refusal}" if _refusal else f"사유: {_finish}"
+        return {"error": f"AI가 응답을 반환하지 않았어요 ({_why}). 다시 시도해 주세요.", "raw": ""}
 
     parsed = _parse_ai_json(content)
     if parsed is not None:
