@@ -43,6 +43,7 @@ from leftover_engine import (
     compute_leftover,
     estimate_eaten_ratio_from_photo,
 )
+from checkup_engine import interpret as checkup_interpret
 
 # ── 동시성 보호 (ThreadingHTTPServer 대응) ──
 # 글로벌 dict/파일에 동시 접근하는 부분을 직렬화
@@ -1038,11 +1039,15 @@ def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o", ref_hi
         return {"error": f"OpenAI: {result['error'].get('message', str(result['error']))}"}
 
     content = result["choices"][0]["message"]["content"]
+    if content is None:
+        # OpenAI가 content=null 반환(모델 거부/빈 응답/length 등) → 크래시 대신 정상 에러 반환.
+        _finish = (result.get("choices") or [{}])[0].get("finish_reason")
+        return {"error": f"AI가 응답 내용을 반환하지 않았어요 (사유: {_finish}). 다른 사진으로 다시 시도해 주세요.", "raw": ""}
 
     parsed = _parse_ai_json(content)
     if parsed is not None:
         return parsed
-    return {"error": "AI 응답 파싱 실패", "raw": content[:300]}
+    return {"error": "AI 응답 파싱 실패", "raw": (content or "")[:300]}
 
 
 # ── HTML 페이지 ──
@@ -3856,6 +3861,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_protein_timing()
         elif path == '/v1/analyze':
             self._handle_v1_analyze()
+        elif path == '/v1/checkup/interpret':
+            self._handle_v1_checkup_interpret()
         elif path == '/v1/report/weekly':
             self._handle_v1_report_weekly()
         elif path == '/adjust':
@@ -4756,6 +4763,51 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             "ok": True,
             "data": result,
             "schema_version": "analyze.v1",
+            "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0"),
+            "request_id": request_id,
+        })
+
+    def _handle_v1_checkup_interpret(self):
+        """검진 해석 — internal-only(CHECKUP_ENABLED). 25 5-1 / 31 룰 / 48 컴플라이언스.
+        수치+성별+연령대+treated(입력)만 수신(PII 없음). 저장 안 함. 유질환자 자동산출 금지."""
+        request_id = self.headers.get('X-Request-Id') or str(uuid.uuid4())
+        if os.environ.get('CHECKUP_ENABLED', '').strip().lower() not in ('1', 'true', 'yes'):
+            self._json_response(404, {"ok": False, "error": {
+                "code": "NOT_FOUND", "message": "checkup endpoint disabled (internal-only)",
+                "retryable": False}, "request_id": request_id})
+            return
+        if not self._check_engine_key(request_id):
+            return
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body_raw = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else '{}'
+            body = json.loads(body_raw) if body_raw.strip() else {}
+        except (ValueError, UnicodeDecodeError):
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": "invalid json body",
+                "retryable": False}, "request_id": request_id})
+            return
+        measures = body.get('measures')
+        if not measures:
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": "measures required",
+                "retryable": False}, "request_id": request_id})
+            return
+        try:
+            data = checkup_interpret(
+                body.get('sex'), measures,
+                age_band=body.get('age_band'),
+                treated=bool(body.get('treated', False)),
+                official_verdict=body.get('official_verdict'),
+            )
+        except Exception as e:  # noqa: BLE001
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": str(e),
+                "retryable": False}, "request_id": request_id})
+            return
+        print(f"[v1/checkup] overall={data['overall']['status']} consult={data['overall']['consult_required']}")
+        self._json_response(200, {
+            "ok": True, "data": data, "schema_version": "checkup.v1",
             "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0"),
             "request_id": request_id,
         })
