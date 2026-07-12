@@ -985,9 +985,14 @@ MEAL_LOG_PATH = PROJECT_DIR / 'meal_log.json'
 REPORT_LOG_PATH = PROJECT_DIR / 'report_log.json'
 
 # ── OpenAI API 호출 (urllib 사용, 외부 패키지 불필요) ──
-def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o", ref_hint=""):
-    """GPT-4o Vision API 호출"""
+def call_openai_vision(image_bytes, api_key, model="gpt-4o", ref_hint=""):
+    """GPT-4o Vision API 호출.
+    [P0-③ 컴플라이언스] 원본 프레임은 OpenAI로 전송하지 않는다(IP76 §1 / IP109 Q3).
+    image_minimize로 crop+다운스케일+JPEG 재인코딩(EXIF 제거) 후 detail:low만 전송."""
     url = "https://api.openai.com/v1/chat/completions"
+    # ── 서버 강제 최소화(원본 미전송) ──
+    from image_minimize import minimize_to_data_url
+    _img_url, _mmeta = minimize_to_data_url(image_bytes)
 
     # 피드백 학습 힌트 반영
     hints = _get_correction_hints()
@@ -1012,8 +1017,8 @@ def call_openai_vision(base64_image, media_type, api_key, model="gpt-4o", ref_hi
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:{media_type};base64,{base64_image}",
-                            "detail": "high"
+                            "url": _img_url,
+                            "detail": _mmeta["detail"]
                         }
                     }
                 ]
@@ -3910,8 +3915,10 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 self._json_response(400, {"error": "전/후 사진 2장이 필요합니다."})
                 return
 
-            before_b64, before_mt = self._image_to_base64(before_file)
-            after_b64, after_mt = self._image_to_base64(after_file)
+            # [P0-③] 원본 미전송 — 전/후 사진도 최소화(crop+detail:low+EXIF 제거) 후 전송
+            from image_minimize import minimize_to_data_url
+            before_url, _bmin = minimize_to_data_url(before_file['data'])
+            after_url, _amin = minimize_to_data_url(after_file['data'])
 
             # 식전 분석 결과가 있으면 파싱
             before_analysis = None
@@ -3923,8 +3930,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                     pass
 
             print(f"\n남은 음식 분석 요청")
-            print(f"  전: {before_file['filename']} ({len(before_file['data'])/1024:.0f}KB)")
-            print(f"  후: {after_file['filename']} ({len(after_file['data'])/1024:.0f}KB)")
+            print(f"  전: ({len(before_file['data'])/1024:.0f}KB)")  # [P0-③] 파일명 미로깅
+            print(f"  후: ({len(after_file['data'])/1024:.0f}KB)")
             if before_analysis:
                 print(f"  식전 분석 결과 전달: {len(before_analysis.get('foods', []))}개 음식")
 
@@ -3957,11 +3964,11 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                             {"type": "text", "text": user_text},
                             {
                                 "type": "image_url",
-                                "image_url": {"url": f"data:{before_mt};base64,{before_b64}", "detail": "high"}
+                                "image_url": {"url": before_url, "detail": _bmin["detail"]}
                             },
                             {
                                 "type": "image_url",
-                                "image_url": {"url": f"data:{after_mt};base64,{after_b64}", "detail": "high"}
+                                "image_url": {"url": after_url, "detail": _amin["detail"]}
                             }
                         ]
                     }
@@ -4194,7 +4201,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             filename = image_file['filename']
             image_data = image_file['data']
 
-            print(f"\n분석 요청: {filename} ({len(image_data)/1024:.0f}KB)")
+            print(f"\n분석 요청: ({len(image_data)/1024:.0f}KB)")  # [P0-③] 파일명 미로깅
             print("GPT-4o Vision API 호출 중...")
 
             # 0. reference 자동 검출(숟가락/포크/동전) → 크기 보정 힌트 주입
@@ -4228,8 +4235,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             except Exception as _re:
                 print(f"[Reference] 검출 스킵: {_re}")
 
-            # 1. AI 분석
-            analysis = call_openai_vision(base64_image, media_type, api_key, ref_hint=ref_hint)
+            # 1. AI 분석 (원본 미전송 — call_openai_vision 내부에서 최소화)
+            analysis = call_openai_vision(image_data, api_key, ref_hint=ref_hint)
 
             if "error" in analysis:
                 print(f"에러: {analysis['error']}")
