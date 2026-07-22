@@ -42,3 +42,6 @@ Thumbs.db
 IP/
 HANDOFF_*.md
 nutrilens_HANDOFF_*.md
+
+# --- 2026-07-23 세션36: 기준선 v1 라벨 정본은 *.csv 예외로 추적 ---
+!raw_photos/labels_final_v1.csv
