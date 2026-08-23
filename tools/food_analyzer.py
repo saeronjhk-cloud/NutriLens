@@ -13,8 +13,10 @@ NutriLens AI 음식 분석 엔진 (2단계 핵심 도구)
 """
 
 import os
+import re
 import sys
 import json
+import time
 import base64
 import argparse
 import threading
@@ -489,6 +491,297 @@ def detect_reference_objects(image_path, conf_threshold=0.5):
         return []
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# food30 엔진 (2026-08-16 세션45) — 원칙5 「엔진 우선 → AI 폴백」
+# ──────────────────────────────────────────────────────────────────────────
+# 모델   : models/food30_detection_v4.pt  (밥류 8종 + 탕류 22종 = 30클래스)
+# 학습   : AI Hub 대분류01·04 / train 52,037장(배경 17.5%) / 30 epoch
+#          val mAP50 0.9526 · mAP50-95 0.819
+# 게이트 : IP/165 §7 — 2026-08-14 판정
+#          G1 오탐 2/88 (τ=0.70) · mAP50 0.9526  → §7-2 기준(오탐≤2 · mAP50≥0.90) 통과
+#          G2 하이브리드 63.3% vs GPT-4o 51.1% (+12.2pt, n=60)  → 통과
+# 설계   : IP/166 v2 (30종판). v1(밥류 8종 전용)은 폐기가 아니라 이 블록으로 대체됨.
+# ⚠ v3 는 negative 셋 오염(정탐 8종 4,000장을 배경으로 학습)으로 폐기. v4 만 사용할 것.
+# ══════════════════════════════════════════════════════════════════════════
+_F30_MODEL = None
+_F30_MODEL_PATH = Path(__file__).parent.parent / 'models' / 'food30_detection_v4.pt'
+
+# datasets/food30_021/data.yaml 과 동일 순서 — 절대 변경 금지(모델 출력 id)
+FOOD30_CLASS_NAMES = [
+    '쌀밥', '기타잡곡밥', '콩밥', '보리밥', '돌솥밥', '현미밥', '흑미밥', '감자밥',          # 0-7  밥류
+    '갈비탕', '감자탕', '곰탕', '매운탕', '꼬리곰탕', '꽃게탕', '낙지탕', '내장탕',           # 8-15 탕류
+    '닭곰탕', '닭볶음탕', '지리탕', '도가니탕', '삼계탕', '설렁탕', '알탕', '연포탕',
+    '오리탕', '추어탕', '해물탕', '닭개장', '육개장', '뼈해장국',
+]
+_F30_RICE_IDX = range(0, 8)     # 밥류
+_F30_SOUP_IDX = range(8, 30)    # 탕류
+
+# IP/165 §7 실측으로 확정한 최종 임계. 「τ=0.60 상한」은 설계서에 없는 조항이었음(§7-2 각주).
+FOOD30_CONF_TAU = 0.70
+
+# 제이 확정(2026-08-16): 30종 전부 개방.
+# 근거 — G1·G2 를 30종 전체로 측정해 통과했으므로 IP/165 §8 「측정 안 한 클래스 금지」에 저촉되지 않음.
+# 정탐률이 낮은 클래스(곰탕 1/10 · 내장탕 0/5 등)는 대부분 WRONG 이 아니라 ABSTAIN 이라
+# τ=0.70 에서 스스로 침묵한다. 화이트리스트에서 빼도 「곰탕 사진 → 설렁탕」 혼동은 막지 못한다.
+FOOD30_WHITELIST = set(FOOD30_CLASS_NAMES)
+
+# 엔진 클래스명 → DB 조회용 이름. None = DB 근거 없음 → 교체하지 않는다.
+# 2026-08-16 실측: food_analyzer 런타임 CORE_FOODS(1,656건, 100g 기준 통일) 기준으로
+# _search_gold() 가 30종 중 29종을 high-confidence 로 반환. 미매칭은 '기타잡곡밥' 1종뿐.
+# ⚠ IP/166 v1 §2-B 의 「콩밥·돌솥밥 DB 미등재」는 sqlite 만 조회한 결과였고,
+#   실제 매칭 경로인 CORE_FOODS 확장본(core_extension.json / _v2.json)에는 존재한다. → 해소.
+FOOD30_DB_KEY = {n: n for n in FOOD30_CLASS_NAMES}
+FOOD30_DB_KEY['기타잡곡밥'] = '잡곡밥'      # gold 미등재. '기타'로 시작해 부분매칭도 실패 → 명시 매핑.
+
+
+_F30_LOAD_LOCK = threading.Lock()
+
+
+def _get_food30_model():
+    """food30 YOLO 지연 로드. 실패는 1회만 시도하고 이후 조용히 비활성.
+
+    클래스 순서가 FOOD30_CLASS_NAMES 와 다르면 로드를 거부한다(규칙18: 코드가 거부하게 만든다).
+    순서가 어긋나면 학습은 정상으로 보이지만 전 클래스가 조용히 오답이 된다(규칙11).
+
+    ★ 락이 필요한 이유: 서버가 ThreadingHTTPServer 다. 첫 요청 2건이 동시에 들어오면
+      둘 다 `_F30_MODEL is None` 을 통과해 22.5MB 가중치 + torch 그래프를 **두 번** 올린다.
+      ref 모델까지 겹치면 Railway 컨테이너가 OOM 으로 강제종료된다 — try/except 로 못 막는다.
+    """
+    # 락 없는 빠른 경로 (로드가 끝난 뒤의 대부분의 요청).
+    # `is False` / `is not None` 로만 판정한다 — YOLO 객체에 bool() 을 걸지 않는다.
+    if _F30_MODEL is False:
+        return None
+    if _F30_MODEL is not None:
+        return _F30_MODEL
+    with _F30_LOAD_LOCK:
+        return _load_food30_model_locked()
+
+
+def _load_food30_model_locked():
+    global _F30_MODEL
+    if _F30_MODEL is False:
+        return None
+    if _F30_MODEL is None:
+        if FOOD30_CONF_TAU is None or not FOOD30_WHITELIST:
+            _F30_MODEL = False
+            return None                              # 게이트 미완 = 비활성 (기본 안전)
+        if not _F30_MODEL_PATH.exists():
+            print(f"[food30] 모델 파일 없음: {_F30_MODEL_PATH}")
+            _F30_MODEL = False
+            return None
+        try:
+            from ultralytics import YOLO
+            _m = YOLO(str(_F30_MODEL_PATH))
+            _names = [_m.names[i] for i in range(len(_m.names))]
+            if _names != FOOD30_CLASS_NAMES:
+                print("[food30] ★ 클래스 순서 불일치 — 엔진을 비활성화합니다.")
+                print(f"          모델: {_names}")
+                print(f"          코드: {FOOD30_CLASS_NAMES}")
+                _F30_MODEL = False
+                return None
+            _F30_MODEL = _m
+            print(f"[food30] 로드 완료: {_F30_MODEL_PATH.name} (τ={FOOD30_CONF_TAU}, 30클래스 순서 일치)")
+        except Exception as e:
+            print(f"[food30] 로드 실패: {e}")
+            _F30_MODEL = False
+            return None
+    return _F30_MODEL
+
+
+def detect_food30(image_path):
+    """밥류·탕류 판정. 카테고리별 최고 confidence 1건씩, 최대 2건을 돌려준다.
+
+    반환: {'rice': {'class','confidence'} | None, 'soup': {...} | None}
+    전부 None = '밥·탕이 아니다'가 아니라 '판정하지 않는다'. 호출부는 GPT-4o 로 넘긴다.
+
+    한 사진에 밥과 국이 함께 오르는 것이 한식의 기본 상차림이므로 카테고리를 나눈다
+    (IP/166 v2 §3 — 제이 확정 2026-08-16).
+    """
+    out = {'rice': None, 'soup': None}
+    if os.environ.get('FOOD30_ENGINE', '1') == '0':   # 운영 중 즉시 끄기(Railway 환경변수)
+        return out
+    model = _get_food30_model()
+    if model is None:
+        return out
+    try:
+        results = model.predict(str(image_path), conf=FOOD30_CONF_TAU, verbose=False)
+    except Exception as e:
+        print(f"[food30] 추론 실패: {e}")
+        return out
+    for r in results:
+        if getattr(r, 'boxes', None) is None or len(r.boxes) == 0:
+            continue
+        for b in r.boxes:
+            cid = int(b.cls[0])
+            if cid >= len(FOOD30_CLASS_NAMES):
+                continue
+            name = FOOD30_CLASS_NAMES[cid]
+            if name not in FOOD30_WHITELIST:          # 게이트 미검증 클래스는 침묵
+                continue
+            conf = float(b.conf[0])
+            if conf < FOOD30_CONF_TAU:
+                # predict(conf=) 가 이미 걸렀어야 하지만 여기서 한 번 더 자른다.
+                # ultralytics 버전에 따라 conf 인자 해석이 달라질 수 있고, 그때 τ 가
+                # 조용히 무력화되면 G1 오탐 2건 보장이 통째로 깨진다.
+                continue
+            slot = 'rice' if cid in _F30_RICE_IDX else 'soup'
+            if out[slot] is None or conf > out[slot]['confidence']:
+                out[slot] = {'class': name, 'confidence': conf}
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# GPT 응답의 어떤 항목을 교체 대상으로 볼 것인가 (IP/166 v2 §3-1)
+# ──────────────────────────────────────────────────────────────────────────
+# ★ 화이트리스트(허용목록) 방식이다. 블랙리스트(제외목록)는 2026-08-16 검증에서
+#   구멍이 드러나 폐기했다:
+#     - endswith('밥') + 제외목록  →  곤드레밥·약밥·굴밥·영양밥·콩나물밥이 전부 통과.
+#       실측: 「곤드레밥 300g 420kcal」이 「쌀밥 300g 478kcal」로 바뀌어 나물 영양이 소실됐다.
+#     - endswith('탕')            →  대구탕·동태탕·조개탕·홍합탕(food30 에 없는 탕)이 통과.
+#     - endswith('해장국')        →  콩나물해장국·선지해장국이 뼈해장국으로 바뀐다.
+#   엔진의 목적은 「GPT 가 말한 밥/탕의 *종류*를 정정」하는 것이지 「모르는 음식을
+#   아는 음식으로 바꾸는」 것이 아니다. 목록에 없으면 침묵한다(거짓 초록 0).
+# ══════════════════════════════════════════════════════════════════════════
+
+# 밥류 교체 대상 — food30 8종 + gold 등재명 + GPT-4o 가 흔히 쓰는 일반 표현·동의어
+_F30_RICE_ITEMS = {
+    '쌀밥', '기타잡곡밥', '잡곡밥', '콩밥', '보리밥', '돌솥밥', '현미밥', '흑미밥', '감자밥',
+    '밥', '흰밥', '흰쌀밥', '백미밥', '맨밥', '공기밥', '공깃밥', '밥공기', '쌀밥공기',
+    '검은쌀밥', '흑미쌀밥', '현미잡곡밥', '보리쌀밥', '돌솥쌀밥',
+    '서리태콩밥', '완두콩밥', '강낭콩밥', '검은콩밥',
+}
+
+# 탕류 교체 대상 — food30 22종 + 흔한 동의어/표기 흔들림
+# ⚠ 여기 없는 탕(대구탕·동태탕·조개탕·어묵탕…)과 여기 없는 해장국(콩나물·선지·황태)은
+#   food30 클래스가 아니다. 엔진이 뭘 검출했든 교체하지 않는다.
+# ★ 찌개는 통째로 없다: v4 잔존 오탐 2건이 김치찌개(닭볶음탕 0.93)·순두부찌개(0.91)다.
+_F30_SOUP_ITEMS = {
+    '갈비탕', '감자탕', '곰탕', '매운탕', '꼬리곰탕', '꽃게탕', '낙지탕', '내장탕',
+    '닭곰탕', '닭볶음탕', '지리탕', '도가니탕', '삼계탕', '설렁탕', '알탕', '연포탕',
+    '오리탕', '추어탕', '해물탕', '닭개장', '육개장', '뼈해장국',
+    '닭도리탕',                      # 닭볶음탕 동의어
+    '소꼬리곰탕', '꼬리탕',           # 꼬리곰탕
+    '왕갈비탕',                      # 갈비탕
+    '설농탕',                        # 설렁탕 표기 흔들림
+    '육계장',                        # 육개장 오기
+    '뼈다귀해장국', '뼈해장국탕',      # 뼈해장국
+    '소내장탕',                      # 내장탕
+    '미꾸라지탕',                    # 추어탕
+}
+
+# 이름 뒤에 붙는 수량·크기 표현. GPT-4o 가 "쌀밥 1공기", "갈비탕 (대)" 처럼 붙인다.
+_F30_TRAILING = re.compile(
+    r'\s*(?:\d+(?:\.\d+)?\s*(?:g|kg|ml|l|인분|공기|그릇|개|접시|볼)'
+    r'|한|두|세|네)?\s*(?:공기|그릇|인분|접시|볼|대|중|소)?\s*$')
+
+
+def _f30_norm(name):
+    """GPT 응답 음식명을 허용목록 조회용으로 정규화.
+
+    '쌀밥 (210g)' · '쌀밥 210g' · '현미밥 1공기' · '갈비탕 (대)' → '쌀밥' · '현미밥' · '갈비탕'
+    """
+    if not isinstance(name, str):
+        return ''
+    n = _normalize_food_name(name)
+    n = re.sub(r'\([^)]*\)', ' ', n)          # 괄호 안은 전부 제거 (수량·크기·설명)
+    n = re.sub(r'\s+', ' ', n).strip()
+    prev = None
+    while prev != n:                           # '갈비탕 1인분' 처럼 겹쳐 붙은 경우
+        prev = n
+        n = _F30_TRAILING.sub('', n).strip()
+    return n.replace(' ', '')
+
+
+def _f30_is_rice(nm):
+    return _f30_norm(nm) in _F30_RICE_ITEMS
+
+
+def _f30_is_soup(nm):
+    return _f30_norm(nm) in _F30_SOUP_ITEMS
+
+
+_F30_CATEGORY_TEST = {'rice': _f30_is_rice, 'soup': _f30_is_soup}
+
+
+def apply_food30_override(analysis, hits):
+    """엔진 판정을 GPT 응답의 음식명에 덮어쓴다. match_with_db 호출 *전에* 부를 것.
+
+    - 카테고리(밥류/탕류)당 최대 1건만 교체한다. 폭주 방지.
+    - 없는 음식을 추가하지 않는다(IP/166 §2). 엔진은 검출했는데 GPT 응답에 해당 계열
+      항목이 없으면 disagreement 로 기록만 하고 넘어간다.
+    - 이름만 바꾼다. 칼로리·영양소는 뒤따르는 match_with_db 가 새 이름으로 재계산한다.
+    - 이름이 겹치는 항목을 만들지 않는다(§중복 방지). 같은 이름이 두 개면
+      meal_summary 가 이중계상된다.
+    """
+    hits = hits or {}
+    info = {'model': 'food30_detection_v4', 'tau': FOOD30_CONF_TAU,
+            'detected': {}, 'applied': [], 'disagreement': [],
+            'no_db_key': [], 'preempted': []}
+    # 루프 도중 예외가 나도 텔레메트리가 남도록 먼저 붙인다.
+    if isinstance(analysis, dict):
+        analysis['food30_engine'] = info
+    else:
+        return analysis
+
+    for slot in ('rice', 'soup'):
+        hit = hits.get(slot) if isinstance(hits, dict) else None
+        if not isinstance(hit, dict) or 'class' not in hit:
+            continue
+        conf = hit.get('confidence')
+        info['detected'][slot] = {
+            'class': hit['class'],
+            'confidence': round(conf, 2) if isinstance(conf, (int, float)) else None}
+        db_name = FOOD30_DB_KEY.get(hit['class'])
+        if db_name is None:                            # DB 근거 없음 — 교체가 오히려 손해
+            info['no_db_key'].append(hit['class'])
+            continue
+
+        test = _F30_CATEGORY_TEST[slot]
+        foods = analysis.get('foods') or []
+        if not isinstance(foods, list):
+            foods = []
+
+        # 1차: 이미 정답인 항목이 있는가. 있으면 아무것도 바꾸지 않는다.
+        #      (이 단계를 건너뛰고 다른 항목을 db_name 으로 바꾸면 같은 이름이 둘 생긴다)
+        matched = []
+        exact = None
+        for f in foods:
+            if not isinstance(f, dict):
+                continue
+            nm = _f30_norm(f.get('name_ko') or f.get('name') or '')
+            if not test(nm):
+                continue
+            matched.append((f, nm))
+            if nm == db_name and exact is None:
+                exact = (f, nm)
+        if exact is not None:
+            info['applied'].append({'slot': slot, 'from': exact[1], 'to': db_name,
+                                    'changed': False})
+            continue
+
+        # 2차: 첫 후보를 교체. 단 다른 슬롯이 이미 손댄 항목은 건드리지 않는다.
+        done = False
+        preempted_here = False
+        for f, nm in matched:
+            src = f.get('name_source')
+            if isinstance(src, str) and src.startswith('food30'):
+                info['preempted'].append({'slot': slot, 'item': nm})
+                preempted_here = True
+                continue
+            f['name_ko'] = db_name                     # ★ 엔진 클래스명이 아니라 DB 키로 쓴다
+            f['name_source'] = 'food30_v4'             # 텔레메트리·롤백 추적용
+            info['applied'].append({'slot': slot, 'from': nm, 'to': db_name,
+                                    'changed': True})
+            done = True
+            break
+        if not done and not preempted_here:
+            # 엔진은 검출했는데 GPT 응답에 해당 계열이 없다 → 추가하지 않고 기록만.
+            # 선점 때문에 못 바꾼 것은 disagreement 가 아니다 — preempted 에 따로 남긴다.
+            info['disagreement'].append({'slot': slot, 'class': hit['class']})
+
+    return analysis
+
+
 def calculate_ppcm(detections):
     """가장 신뢰도 높은 reference로 픽셀-cm 환산 정보 계산.
 
@@ -549,7 +842,7 @@ NutriLens 자체 비전 모델이 이 사진에서 reference 객체를 검출했
     return hint
 
 
-def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
+def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=False):
     """
     음식 사진을 GPT-4o Vision으로 분석
 
@@ -557,10 +850,19 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
         image_path: 이미지 파일 경로
         api_key: OpenAI API 키 (없으면 환경변수에서 가져옴)
         model: 사용할 모델 (기본: gpt-4o)
+        allow_raw: True일 때만 동작. 이 경로는 원본 이미지를 최소화(crop/EXIF 제거) 없이
+                   전송하므로 프로덕션에서 사용 금지. CLI/오프라인 용도로만 명시 허용.
 
     Returns:
         dict: 분석 결과 (JSON)
     """
+    # [R3 방어적 심층] 프로덕션 전송은 test_server.call_openai_vision(=image_minimize 강제)만 사용.
+    # 이 함수는 원본 프레임을 그대로 전송하므로 명시적 allow_raw 없이는 차단(재연결 원천 방지).
+    if not allow_raw:
+        raise RuntimeError(
+            "analyze_food_image()는 원본 이미지를 최소화 없이 전송합니다. "
+            "프로덕션에서는 call_openai_vision을 쓰고, 오프라인 CLI에서만 allow_raw=True로 호출하세요."
+        )
     try:
         import httpx
     except ImportError:
@@ -633,17 +935,54 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
         "store": False,
     }
 
-    try:
-        import httpx
-        response = httpx.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=30.0,
-        )
-        result = response.json()
-    except Exception as e:
-        return {"error": f"API 호출 실패: {str(e)}"}
+    # ══════════════════════════════════════════════════════════════════════
+    # 타임아웃 — 2026-08-21 `tools/diagnose_openai.py` 실측으로 확정한 값.
+    # ──────────────────────────────────────────────────────────────────────
+    # 이 함수는 **오프라인 CLI 전용**이고 원본을 축소 없이 `detail:"high"` 로 보냅니다.
+    # 프로덕션(`test_server.call_openai_vision`)은 image_minimize 로 768px·detail:low 라
+    # 페이로드가 수십 배 작습니다. 즉 이 타임아웃은 평가 경로에만 해당합니다.
+    #
+    # 실측 (제이 PC, 2026-08-21):
+    #   DNS 59ms · TCP 36ms · TLS 134ms · 텍스트호출 2.8s      ← 네트워크·인증 정상
+    #   base64 121KB  detail=high →  2.4s
+    #   base64 9440KB detail=high → 44.5s   ← 업로드 처리율 약 224 KB/s (~1.75 Mbps)
+    # 기준선 32장의 base64 총량은 133 MB, 최대 12.8 MB(71_키위 ≈ 60s).
+    # → **30초로는 9/32 장이 물리적으로 불가능합니다.** 값을 늘리는 것이 미봉책이 아니라
+    #   측정으로 확정된 교정입니다. 여유 2배를 둡니다.
+    _timeout = float(os.environ.get('OPENAI_TIMEOUT', '150'))
+
+    # 타임아웃 재시도 — 32장 중 한 장의 일시적 실패가 실행 전체를 버리지 않게 합니다.
+    # 2026-08-21 G4 에서 `01_김치`(base64 121KB, 예상 2.9s)까지 timeout 났는데,
+    # 같은 사진이 진단에서는 2.4s 에 성공했습니다. 즉 **일시적 실패가 실재합니다.**
+    # 재시도는 무엇을 재는지를 바꾸지 않습니다 — 재는 데 성공할 확률만 올립니다.
+    _attempts = int(os.environ.get('OPENAI_RETRIES', '2'))
+    _kb = len(base64_image) / 1024
+    _last = None
+    for _i in range(1, _attempts + 1):
+        try:
+            import httpx
+            response = httpx.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=_timeout,
+            )
+            result = response.json()
+            break
+        except Exception as e:
+            # ★ 예외 **클래스명**을 반드시 남깁니다(2026-08-21).
+            #   초판은 str(e) 만 남겨 httpx.ConnectTimeout(연결 실패) · ReadTimeout(응답 지연) ·
+            #   ConnectError(경로 없음) 가 전부 「timed out」이라는 같은 문자열이 됐습니다.
+            #   32장이 죽었는데 네트워크인지 페이로드인지 구분할 수 없었습니다.
+            _last = e
+            if _i < _attempts:
+                print(f"    [재시도 {_i}/{_attempts-1}] {type(e).__name__} "
+                      f"— {_kb:.0f}KB, timeout={_timeout}s")
+                time.sleep(2)
+    else:
+        return {"error": f"API 호출 실패: {type(_last).__name__}: {_last} "
+                         f"(timeout={_timeout}s×{_attempts}회, "
+                         f"image_b64={_kb:.0f}KB, detail=high)"}
 
     if "error" in result:
         return {"error": f"OpenAI API 에러: {result['error'].get('message', str(result['error']))}"}
@@ -671,6 +1010,13 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o"):
         "type": ppcm_info["reference"] if ppcm_info else None,
         "confidence": round(ppcm_info["confidence"], 2) if ppcm_info else 0,
     }
+
+    # food30 엔진 판정 반영 (IP/166 v2) — 프로덕션(test_server)과 같은 순서로 둔다.
+    # 여기서 넣지 않으면 accuracy_test.py 회귀 측정이 프로덕션과 달라진다.
+    try:
+        analysis = apply_food30_override(analysis, detect_food30(image_path))
+    except Exception as _fe:
+        print(f"[food30] 스킵: {_fe}")
 
     return analysis
 
@@ -2667,7 +3013,7 @@ if __name__ == "__main__":
     print("GPT-4o Vision API에 요청 중...")
 
     # 1. AI 분석
-    analysis = analyze_food_image(args.image, api_key=args.api_key, model=args.model)
+    analysis = analyze_food_image(args.image, api_key=args.api_key, model=args.model, allow_raw=True)
 
     # 2. DB 매칭 (선택)
     if not args.no_db and "error" not in analysis:

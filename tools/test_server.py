@@ -4067,6 +4067,12 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 analysis["is_after_meal"] = True
 
             # DB 매칭
+            # ★ food30 엔진을 여기에 붙이지 않는다 (2026-08-16 세션45 · IP/166 v2 §3-3).
+            #   이 경로는 「남은 음식」 사진이고, 엔진은 온전한 1인분으로만 학습·측정됐다.
+            #   식후 사진에 대한 G1(오탐)·G2(정탐) 측정이 없다 → IP/165 §8
+            #   「측정 안 한 조건을 프로덕션에 내보내지 않는다」.
+            #   또한 음식명은 before_foods_map(식전 결과)에서 이어받으므로, 식전 /analyze 에서
+            #   이미 엔진 교체가 반영된 이름이 넘어온다. 여기서 또 바꾸면 이중 교체가 된다.
             if FOODS_DB and "foods" in analysis:
                 analysis = match_with_db(analysis, FOODS_DB)
 
@@ -4197,7 +4203,8 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 self._json_response(400, {"error": "이미지가 업로드되지 않았습니다."})
                 return
 
-            base64_image, media_type = self._image_to_base64(image_file)
+            # [R3 데드코드 제거] base64_image/media_type는 이 경로에서 미사용.
+            # OpenAI 전송은 call_openai_vision(image_data) 내부의 image_minimize(크롭+EXIF제거)만 수행한다.
             filename = image_file['filename']
             image_data = image_file['data']
 
@@ -4235,6 +4242,30 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             except Exception as _re:
                 print(f"[Reference] 검출 스킵: {_re}")
 
+            # 0-B. food30 엔진 판정 (원칙5 · IP/166 v2) — 로컬 추론이라 GPT 호출과 무관하게 먼저 돌린다.
+            #      끄기: Railway 환경변수 FOOD30_ENGINE=0
+            _f30_hits = {'rice': None, 'soup': None}
+            _f30_path = None
+            try:
+                import tempfile
+                from food_analyzer import detect_food30
+                _ff = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                _f30_path = _ff.name          # write/close 가 실패해도 지울 수 있게 먼저 잡는다
+                try:
+                    _ff.write(image_data)
+                finally:
+                    _ff.close()
+                _f30_hits = detect_food30(_f30_path)
+                for _slot, _h in _f30_hits.items():
+                    if _h:
+                        print(f"[food30] {_slot}: {_h['class']} 판정 ({_h['confidence']:.2f})")
+            except Exception as _fe:
+                print(f"[food30] 스킵: {_fe}")
+            finally:
+                if _f30_path:
+                    try: os.unlink(_f30_path)
+                    except Exception: pass
+
             # 1. AI 분석 (원본 미전송 — call_openai_vision 내부에서 최소화)
             analysis = call_openai_vision(image_data, api_key, ref_hint=ref_hint)
 
@@ -4244,6 +4275,14 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 return
 
             analysis["reference"] = ref_info  # reference 검출 결과를 응답에 포함
+
+            # 1-B. ★ 엔진 판정 반영 — 반드시 match_with_db 앞.
+            #      이름을 바꿔야 match_with_db 가 그 이름으로 칼로리·영양소를 재계산한다.
+            try:
+                from food_analyzer import apply_food30_override
+                analysis = apply_food30_override(analysis, _f30_hits)
+            except Exception as _fe:
+                print(f"[food30] 교체 스킵: {_fe}")
 
             # 2. DB 매칭
             if FOODS_DB:

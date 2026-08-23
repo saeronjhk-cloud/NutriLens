@@ -254,12 +254,38 @@ def kcal_accuracy(expected_kcal_val, actual_kcal):
     return "BAD"
 
 
-def run_photo_test():
-    """전체 파이프라인으로 사진 정확도 측정."""
+# ══════════════════════════════════════════════════════════════════════════
+# 기준선 v1 평가셋 (32장) — 세션46 신설
+# ──────────────────────────────────────────────────────────────────────────
+# ★ 왜 명시 목록이 필요한가 (2026-08-19 실측으로 발견):
+#   IP/165 §5 의 G4 게이트는 「32장 EXACT 59.4% ±6pt 유지」다. 그런데 세션43(2026-08-04)에
+#   `.tmp/test_images/` 에 59장이 추가되어 지금은 **91장**이다(IP/170 §자산표).
+#   폴더를 전수 스캔하면 91장이 돌아가고, 그 EXACT% 는 59.4% 와 비교할 수 있는 수가 아니다.
+#   (분모도 구성도 다르다. 비용도 ~$0.16 → ~$0.46 으로 3배)
+#   → 게이트 판정은 반드시 이 32장으로만 한다. 목록은 기준선 정본
+#     `IP/nutrilens_baseline_v1_2026-07-23.md` 및 2026-07-24 재측정 결과와 일치한다.
+BASELINE_V1_32 = [
+    '01_김치', '02_비빔밥', '101_콘치즈', '102_조기구이', '103_쭈꾸미볶음',
+    '104_등갈비강정', '105_갈비탕', '106_황태구이', '107_양배추샐러드', '108_고등어구이',
+    '109_김치전골', '110_돌솥비빔밥', '111_라면', '32_샐러드', '38_아보카도',
+    '40_바나나', '44_브로콜리', '50_햄버거', '51_피자', '59_타코',
+    '63_핫도그', '64_감자튀김', '68_사과', '69_오렌지', '70_블루베리',
+    '71_키위', '72_딸기', '78_아이스크림', '79_와플', '92_카페라떼',
+    '97_초콜릿', '98_쿠키',
+]
+
+
+def run_photo_test(photo_set="baseline32"):
+    """전체 파이프라인으로 사진 정확도 측정.
+
+    photo_set:
+      'baseline32' — IP/165 G4 게이트용. 기준선 v1 과 직접 비교 가능한 32장. (기본값)
+      'all'        — 폴더 전수(91장). 탐색용. G4 판정에 쓰지 말 것.
+    """
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         print("  OPENAI_API_KEY가 설정되지 않았습니다.")
-        return None
+        return None, True
 
     if not TEST_DIR.exists():
         TEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -268,6 +294,24 @@ def run_photo_test():
         [f for f in TEST_DIR.iterdir() if f.suffix.lower() in ('.jpg', '.jpeg', '.png')]
     )
 
+    if photo_set == "baseline32":
+        want = set(BASELINE_V1_32)
+        picked = [f for f in images if f.stem in want]
+        missing = sorted(want - {f.stem for f in picked})
+        if missing:
+            # 게이트 셋이 깨졌으면 조용히 적은 장수로 돌리지 않는다.
+            # 분모가 달라진 EXACT% 를 59.4% 와 비교하는 것이 이 게이트의 유일한 실패 방식이다.
+            print()
+            print("=" * 60)
+            print(f"  ★ 기준선 v1 32장 중 {len(missing)}장이 없습니다 — 중단합니다.")
+            print("=" * 60)
+            for m in missing:
+                print(f"    없음: {m}.jpg")
+            print("\n  G4 판정은 32장 전체가 있어야 성립합니다(IP/165 §5).")
+            print("  탐색만 하려면: python tools/accuracy_test.py --photo --set all")
+            return None, True
+        images = picked
+
     if not images:
         print()
         print("=" * 60)
@@ -275,7 +319,7 @@ def run_photo_test():
         print("=" * 60)
         print(f"\n  {TEST_DIR} 폴더에 음식 사진을 넣으세요.")
         print("  파일명 = 정답 음식명 (예: 01_김치.jpg, 비빔밥.jpg)")
-        return None
+        return None, True
 
     # food_analyzer 임포트 (전체 파이프라인 사용)
     from food_analyzer import analyze_food_image, match_with_db, load_food_db
@@ -284,6 +328,9 @@ def run_photo_test():
     print("=" * 60)
     print("  NutriLens 사진 인식 테스트 (전체 파이프라인)")
     print("=" * 60)
+    print(f"  평가셋: {photo_set}"
+          + ("  (IP/165 G4 게이트 · 기준선 v1 과 비교 가능)" if photo_set == "baseline32"
+             else "  ⚠ 탐색용 — 59.4% 기준선과 비교하지 말 것"))
     print(f"  테스트 이미지: {len(images)}장")
     print(f"  모델: GPT-4o Vision")
     print(f"  파이프라인: GPT 인식 → match_with_db (Gold/DB/AI)")
@@ -301,6 +348,21 @@ def run_photo_test():
     by_source = {"GOLD_REF": 0, "GOLD_DB": 0, "DB_MATCHED": 0, "AI_ESTIMATED": 0, "?": 0}
     kcal_dist = {"GOOD": 0, "OK": 0, "BAD": 0, "UNKNOWN": 0}
 
+    # ── food30 엔진 텔레메트리 (세션46 신설, IP/166 v2) ──────────────────────
+    # ★ 이게 없으면 G4 를 돌려도 「엔진이 몇 건을 바꿨는가」를 알 수 없다.
+    #   EXACT% 만 보면 «교체 0건이라 그대로»와 «교체는 됐는데 우연히 같음»이
+    #   구분되지 않는다 — IP/172 §3-1 의 진단 순서가 성립하지 않는다.
+    f30 = {
+        "photos_with_engine_field": 0,   # apply_food30_override 가 실제로 돈 사진 수
+        "detected_rice": 0, "detected_soup": 0,
+        "changed": 0,                    # 이름이 실제로 바뀐 건수
+        "already_correct": 0,            # 엔진과 GPT 가 일치 (changed=False)
+        "disagreement": 0,               # 엔진은 검출, GPT 응답에 해당 계열 없음
+        "no_db_key": 0, "preempted": 0,
+        "to_class": {},                  # 교체 도착지 분포 — 「혼동 흡수처」 감시 (IP/172 결정1)
+        "events": [],                    # 사진별 원본 기록
+    }
+
     for i, img_path in enumerate(images, 1):
         # 파일명에서 정답 추출 (예: "01_김치" → "김치")
         expected_name = img_path.stem
@@ -310,13 +372,20 @@ def run_photo_test():
         print(f"  [{i:02d}/{len(images)}] {expected_name}...", end=" ", flush=True)
 
         # 전체 파이프라인 호출
-        analysis = analyze_food_image(str(img_path), api_key=api_key)
+        # allow_raw=True: 오프라인 CLI 평가 전용(가드 설계 참조). 평가 이미지는
+        # 사용자 데이터가 아닌 자체 테스트셋이므로 최소화 미적용 전송 허용.
+        # 사진별 소요시간을 남깁니다 — 2026-08-21 타임아웃 사고 때 「어느 사진이 얼마나
+        # 걸리는가」를 알 수 없어 원인 규명이 늦어졌습니다.
+        _t_start = time.time()
+        analysis = analyze_food_image(str(img_path), api_key=api_key, allow_raw=True)
+        _elapsed = time.time() - _t_start
 
         if "error" in analysis:
-            print(f"에러: {analysis['error'][:60]}")
+            print(f"[{_elapsed:5.1f}s] 에러: {analysis['error'][:110]}")
             results.append({
                 "expected": expected_name, "result": "ERROR",
-                "error": analysis['error'][:200],
+                "error": analysis['error'][:300],
+                "elapsed_s": round(_elapsed, 1),
             })
             errors += 1
             time.sleep(1)
@@ -354,9 +423,56 @@ def run_photo_test():
         kcal_dist[kcal_status] = kcal_dist.get(kcal_status, 0) + 1
 
         ai_name_str = (best.get("name_ko", "?") if best else "인식 없음")
-        print(f"{tag} (AI:{ai_name_str}, src:{source}, {actual_kcal}kcal vs {exp_kcal})")
+
+        # ── food30 엔진 기록 ──────────────────────────────────────────────
+        # analysis 는 match_with_db 가 제자리 수정하므로 top-level 키가 보존된다.
+        # 엔진이 비활성(모델 없음·FOOD30_ENGINE=0)이면 이 키 자체가 없다 → 그것도 신호다.
+        eng = analysis.get("food30_engine")
+        eng_note = ""
+        if isinstance(eng, dict):
+            # 타입 가드 — 이 페이로드는 apply_food30_override 가 만들지만,
+            # 유료 실행이 집계 한 줄 때문에 통째로 죽고 아무것도 저장되지 않는
+            # 사태를 막습니다(2026-08-19 독립감사 경-1: 크래시 3종 · 오집계 1종 실측).
+            f30["photos_with_engine_field"] += 1
+            det = eng.get("detected")
+            det = det if isinstance(det, dict) else {}
+            for _slot in ("rice", "soup"):
+                if isinstance(det.get(_slot), dict):
+                    f30[f"detected_{_slot}"] += 1
+            applied = eng.get("applied")
+            applied = applied if isinstance(applied, list) else []
+            for a in applied:
+                if not isinstance(a, dict):
+                    continue
+                if a.get("changed"):
+                    f30["changed"] += 1
+                    _to = a.get("to")
+                    if not isinstance(_to, str):
+                        _to = "(이름없음)"        # dict 면 unhashable, None 이면 JSON 에 "null"
+                    f30["to_class"][_to] = f30["to_class"].get(_to, 0) + 1
+                else:
+                    f30["already_correct"] += 1
+            for _k in ("disagreement", "no_db_key", "preempted"):
+                _v = eng.get(_k)
+                # 문자열은 len() 이 돌지만 글자 수를 세게 됩니다 — 조용한 오집계.
+                f30[_k] += len(_v) if isinstance(_v, list) else 0
+            _chg = [f"{a.get('from')}->{a.get('to')}"
+                    for a in applied if isinstance(a, dict) and a.get("changed")]
+            if _chg:
+                eng_note = "  [food30] " + ", ".join(_chg)
+            f30["events"].append({
+                "photo": img_path.stem,
+                "detected": det,
+                "applied": applied,
+                "disagreement": eng.get("disagreement") or [],
+                "preempted": eng.get("preempted") or [],
+            })
+
+        print(f"[{_elapsed:5.1f}s] {tag} (AI:{ai_name_str}, src:{source}, "
+              f"{actual_kcal}kcal vs {exp_kcal}){eng_note}")
 
         results.append({
+            "food30_engine": eng if isinstance(eng, dict) else None,
             "expected": expected_name,
             "ai_name": ai_name_str,
             "match": strictness,
@@ -364,7 +480,11 @@ def run_photo_test():
             "kcal_actual": actual_kcal,
             "kcal_expected": exp_kcal,
             "kcal_status": kcal_status,
+            "elapsed_s": round(_elapsed, 1),
             "confidence": best.get("confidence", 0) if best else 0,
+            # 세션36: MISS 원인 분석용 — 엔진이 실제로 감지한 음식명 전체를 기록.
+            # "인식 없음" = 감지 0이 아니라 기대명과 매칭 실패(오인식 포함)일 수 있음.
+            "ai_foods_detected": [f.get("name_ko", "?") for f in ai_foods],
         })
         time.sleep(1)
 
@@ -378,7 +498,7 @@ def run_photo_test():
     print(f"  사진 인식 결과")
     print("=" * 60)
     print(f"  총 테스트:        {total}장")
-    print(f"  ✓ EXACT 일치:     {correct_exact}장 ({correct_exact/total*100:.1f}%)")
+    print(f"  ✓ EXACT 일치:     {correct_exact}장 ({strict_accuracy:.1f}%)")
     print(f"  △ CONTAINS 일치:  {correct_loose}장")
     print(f"  ✗ 오답:           {wrong}장")
     print(f"  ! 에러:           {errors}장")
@@ -398,12 +518,93 @@ def run_photo_test():
     print(f"  칼로리 정확도 (GOOD 비율): {kcal_accuracy_pct:.1f}%")
     print("=" * 60)
 
+    # ── food30 엔진 요약 (세션46 신설) ──────────────────────────────────────
+    print()
+    print("=" * 60)
+    print("  food30 엔진 (IP/166 v2 · tau=0.70)")
+    print("=" * 60)
+    if f30["photos_with_engine_field"] == 0:
+        print("  ★ 엔진이 한 번도 돌지 않았습니다 (food30_engine 필드 0건).")
+        print("    → 모델 미로드 / FOOD30_ENGINE=0 / 배선 누락 중 하나입니다.")
+        print("    → 이 상태의 EXACT% 는 '엔진 적용 전 기준선'이지 G4 결과가 아닙니다.")
+    else:
+        print(f"  엔진이 돈 사진:      {f30['photos_with_engine_field']}/{total}장")
+        print(f"  검출 (밥류):         {f30['detected_rice']}건")
+        print(f"  검출 (탕류):         {f30['detected_soup']}건")
+        print(f"  ★ 이름 교체:         {f30['changed']}건")
+        print(f"  이미 정답 (무변경):   {f30['already_correct']}건")
+        print(f"  불일치 (추가 안 함):  {f30['disagreement']}건")
+        print(f"  DB 키 없음:          {f30['no_db_key']}건")
+        print(f"  선점으로 미교체:      {f30['preempted']}건")
+        if f30["to_class"]:
+            print()
+            print("  교체 도착지 분포 (혼동 흡수처 감시 — IP/172 결정1):")
+            for k, v in sorted(f30["to_class"].items(), key=lambda x: -x[1]):
+                print(f"    {k}: {v}건")
+        if f30["changed"] == 0:
+            print()
+            print("  ※ 교체 0건입니다. 배선은 살아 있으나 아무것도 바꾸지 않았습니다.")
+            print("    disagreement 가 크면 허용목록 커버리지를 의심하십시오(IP/172 미결).")
+    print("=" * 60)
+
+    # ── G4 게이트 판정 (세션46 신설) ────────────────────────────────────────
+    # IP/165 §5: 「통합 후 32장 EXACT 59.4% ±6pt 유지」. ±6pt 는 알려진 런투런 노이즈
+    # (07-23 59.4 vs 07-24 53.1, 같은 32장 · IP/nutrilens_miss5_진단_2026-07-24).
+    gate_failed = False
+    if photo_set == "baseline32":
+        # ── ★ 왜 %가 아니라 '장수'로 판정하는가 (2026-08-19 독립감사 치명-1) ──
+        # IP/165 §5 는 「59.4% ±6pt」라고 적혀 있고, 그 ±6pt 의 근거는
+        # 「07-23 19/32=59.4% vs 07-24 17/32=53.1%, 같은 32장」입니다
+        # (IP/nutrilens_miss5_진단_2026-07-24).
+        #
+        # 그런데 59.4 - 6.0 = 53.4 이고, 근거가 된 17/32 는 53.125% 입니다.
+        # **±6pt 를 그대로 %로 적용하면 그 근거 자체가 FAIL 합니다.** 0.275pt 차이로.
+        # 분모가 32 라 가능한 값이 3.125pt 간격이기 때문입니다 — 53.4 는
+        # 애초에 도달할 수 없는 수이고, 실질 컷은 18/32(56.25%)가 됩니다.
+        # 즉 문서가 「6pt 허용」이라 말하는 동안 코드는 「1장 허용」이 됩니다.
+        #
+        # → 알려진 노이즈(19→17, 2장)를 그대로 허용합니다. 이게 설계 의도입니다.
+        #   장수로 적으면 분모 격자와 어긋날 일이 없습니다.
+        G4_BASE_EXACT, G4_TOTAL = 19, 32
+        G4_NOISE_PHOTOS = 2          # 07-23 19장 → 07-24 17장 (실측된 런투런 폭)
+        G4_MIN_EXACT = G4_BASE_EXACT - G4_NOISE_PHOTOS      # = 17
+        print()
+        print("=" * 60)
+        print("  G4 게이트 판정 (IP/165 §5)")
+        print("=" * 60)
+        print(f"  기준선 v1 (2026-07-23): EXACT {G4_BASE_EXACT}/{G4_TOTAL}  (59.4%)")
+        print(f"  재측정   (2026-07-24): EXACT 17/{G4_TOTAL}  (53.1%)  ← 노이즈 하단")
+        print(f"  이번 실행:             EXACT {correct_exact}/{total}  "
+              f"({strict_accuracy:.1f}%)")
+        print(f"  허용 하한:             {G4_MIN_EXACT}/{G4_TOTAL}  "
+              f"(기준선 -{G4_NOISE_PHOTOS}장 = 실측 런투런 폭)")
+        print()
+        if total != G4_TOTAL:
+            gate_failed = True
+            print(f"  ▶ 판정 불가 — 32장이 아니라 {total}장입니다.")
+        elif correct_exact >= G4_MIN_EXACT:
+            print(f"  ▶ PASS — 하락 폭이 알려진 런투런 노이즈 안입니다.")
+            print(f"    다음: IP/165 §7 기록표에 append (덮어쓰기 금지).")
+            print(f"    반드시 함께 적을 것: 평가셋 이름 · 교체 건수 · disagreement 건수")
+        else:
+            gate_failed = True
+            print(f"  ▶ FAIL — 기준선 대비 {G4_BASE_EXACT - correct_exact}장 하락 "
+                  f"(허용 {G4_NOISE_PHOTOS}장).")
+            print(f"    1) Railway 환경변수 FOOD30_ENGINE=0 (재배포 불필요)")
+            print(f"    2) 위 '이름 교체' 건수를 먼저 보십시오 —")
+            print(f"       0건이면 배선 문제, 0건 초과면 판별 규칙 문제 (IP/172 §3-1)")
+        print("=" * 60)
+
     # 리포트 저장
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     report = {
         "test_type": "photo_recognition_full_pipeline",
         "date": datetime.now().isoformat(),
         "model": "gpt-4o",
+        # 세션46: 어느 평가셋인지 반드시 남긴다. 32장/91장 결과가 같은 파일명으로
+        # 덮어써지면 나중에 어느 쪽 숫자였는지 알 수 없다.
+        "photo_set": photo_set,
+        "gate_comparable": photo_set == "baseline32",
         "total": total,
         "correct_exact": correct_exact,
         "correct_loose": correct_loose,
@@ -414,20 +615,68 @@ def run_photo_test():
         "kcal_accuracy_pct": round(kcal_accuracy_pct, 1),
         "by_source": by_source,
         "kcal_distribution": kcal_dist,
+        "food30_engine_summary": f30,
         "details": results,
     }
 
-    json_path = RESULT_DIR / "photo_test_results.json"
+    # 세션46: 평가셋별로 파일을 나눈다. 예전에는 32장·91장 결과가 같은 파일을
+    # 덮어써서 「이 숫자가 어느 셋이었나」를 사후에 알 수 없었다.
+    _sfx = "" if photo_set == "baseline32" else f"_{photo_set}"
+    json_path = RESULT_DIR / f"photo_test_results{_sfx}.json"
+
+    # ★ 덮어쓰기 전에 이전 실행을 보관한다 (세션46 신설).
+    #   2026-08-19 에 실제로 사고가 났습니다 — 스모크 테스트 1회가 2026-07-24
+    #   재측정 기록을 통째로 덮어썼고, 그 파일이 유일본이었습니다(.tmp 는 gitignore).
+    #
+    #   ⚠ 2026-08-19 독립감사 중-1/2/3 반영 — 초판에 구멍이 셋 있었습니다:
+    #     · date 에 '/' 가 들어가거나 JSON 이 깨져 있으면 보관에 실패했고,
+    #       그때 **새 결과도 저장하지 않고 return** 했습니다. 깨진 파일은 그대로 남으니
+    #       그 뒤 모든 실행이 같은 지점에서 실패 = 영구 락. 막으려던 사고와 결과가 같습니다.
+    #     · 같은 날 3회차부터 2회차가 무경고 소실 (`if not exists` 가 조용히 skip).
+    #     · 텍스트 리포트는 아예 보관 대상이 아니었습니다.
+    #   → 보관은 **절대 새 결과 저장을 막지 않습니다.** 실패하면 경고만 남깁니다.
+    def _archive(path):
+        """덮어쓰기 전 보관. 실패해도 새 결과 저장을 막지 않는다."""
+        if not path.exists():
+            return
+        stamp = None
+        if path.suffix == '.json':
+            try:
+                _d = json.load(open(path, encoding='utf-8')).get('date')
+                if isinstance(_d, str) and len(_d) >= 10:
+                    stamp = _d[:10].replace('/', '-').replace(':', '-')
+            except Exception:
+                stamp = None                      # 깨진 파일도 버리지 않는다
+        if not stamp:
+            # date 를 못 읽으면 파일 수정시각으로. '알 수 없음'이 곧 '버림'이 되지 않게.
+            stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d')
+        arch = path.with_name(f"{path.stem}_{stamp}{path.suffix}")
+        if arch.exists():
+            # 같은 날 여러 번 돌 때 앞선 보관본을 덮지 않는다(감사 중-2).
+            arch = path.with_name(
+                f"{path.stem}_{stamp}_{datetime.now().strftime('%H%M%S')}{path.suffix}")
+        try:
+            arch.write_bytes(path.read_bytes())
+            print(f"\n  이전 기록 보관: {arch.name}")
+        except Exception as e:
+            print(f"\n  [경고] 이전 기록 보관 실패 (새 결과는 정상 저장합니다): {e}")
+
+    _archive(json_path)
+    _archive(RESULT_DIR / f"accuracy_report{_sfx}.txt")
+
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     print(f"\n  결과 저장: {json_path}")
 
     # 텍스트 리포트
-    report_path = RESULT_DIR / "accuracy_report.txt"
+    report_path = RESULT_DIR / f"accuracy_report{_sfx}.txt"
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write("NutriLens 정확도 테스트 리포트 (전체 파이프라인)\n")
         f.write(f"테스트 일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
         f.write(f"모델: GPT-4o Vision + match_with_db\n")
+        f.write(f"평가셋: {photo_set}"
+                + ("  (IP/165 G4 게이트)\n" if photo_set == "baseline32"
+                   else "  (탐색용 — 기준선과 비교 불가)\n"))
         f.write("=" * 60 + "\n\n")
         f.write(f"총 테스트: {total}장\n")
         f.write(f"음식명 정확도 (엄격): {strict_accuracy:.1f}%\n")
@@ -446,7 +695,10 @@ def run_photo_test():
                     f"{r.get('kcal_status', '?')})\n")
     print(f"  텍스트 리포트: {report_path}")
 
-    return strict_accuracy
+    # (정확도, 게이트 실패 여부) — 호출부가 종료코드를 정할 수 있게 한다.
+    # 초판은 accuracy 만 돌려줘서 G4 FAIL 이어도 exit 0 이었고,
+    # bat 의 "STOPPED. Do not deploy." 가 파이썬 예외에만 걸렸습니다(감사 중-4).
+    return strict_accuracy, gate_failed
 
 
 # ══════════════════════════════════════════════════════════
@@ -459,6 +711,10 @@ def main():
     parser.add_argument("--db", action="store_true", help="DB 매칭 테스트 (무료, 즉시)")
     parser.add_argument("--photo", action="store_true", help="사진 인식 테스트 (~$0.005/장)")
     parser.add_argument("--all", action="store_true", help="둘 다")
+    parser.add_argument("--set", dest="photo_set", default="baseline32",
+                        choices=["baseline32", "all"],
+                        help="사진 평가셋. baseline32=IP/165 G4 게이트(기본), "
+                             "all=폴더 전수(탐색용, 기준선과 비교 불가)")
     args = parser.parse_args()
 
     if not (args.db or args.photo or args.all):
@@ -467,7 +723,8 @@ def main():
         print()
         print("사용법:")
         print("  python tools/accuracy_test.py --db      # DB 매칭 (무료)")
-        print("  python tools/accuracy_test.py --photo   # 사진 인식 (~$0.005/장)")
+        print("  python tools/accuracy_test.py --photo   # 사진 인식, 기준선 32장 (~$0.16)")
+        print("  python tools/accuracy_test.py --photo --set all   # 전수 91장 (~$0.46, 탐색용)")
         print("  python tools/accuracy_test.py --all     # 둘 다")
         print()
         print(f"사진 위치: {TEST_DIR}")
@@ -481,10 +738,20 @@ def main():
             print(f"\n  {mark} DB 매칭 커버리지: {cov:.1f}%")
 
     if args.photo or args.all:
-        acc = run_photo_test()
+        acc, gate_failed = run_photo_test(photo_set=args.photo_set)
         if acc is not None:
-            mark = "✓" if acc >= 80 else "△" if acc >= 60 else "✗"
-            print(f"\n  {mark} 음식명 정확도(엄격): {acc:.1f}%")
+            # ★ 절대 기준(80/60)이 아니라 게이트 판정으로 표시한다.
+            #   초판은 G4 PASS 인 19/32(59.4%)에도 마지막 줄에 '✗' 를 찍어
+            #   G4 블록의 PASS 와 정면으로 모순됐습니다(감사 경-5).
+            if args.photo_set == "baseline32":
+                mark = "✗ G4 FAIL" if gate_failed else "✓ G4 PASS"
+                print(f"\n  {mark} — 음식명 정확도(엄격): {acc:.1f}%")
+            else:
+                print(f"\n  · 음식명 정확도(엄격): {acc:.1f}%  "
+                      f"(탐색용 셋 — 게이트 판정 아님)")
+        # G4 FAIL 을 종료코드로도 알린다. bat 의 errorlevel 검사가 이걸 봅니다.
+        if gate_failed and args.photo_set == "baseline32":
+            sys.exit(1)
 
 
 if __name__ == "__main__":
