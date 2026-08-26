@@ -842,7 +842,8 @@ NutriLens 자체 비전 모델이 이 사진에서 reference 객체를 검출했
     return hint
 
 
-def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=False):
+def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=False,
+                       preprocess="raw"):
     """
     음식 사진을 GPT-4o Vision으로 분석
 
@@ -852,9 +853,20 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
         model: 사용할 모델 (기본: gpt-4o)
         allow_raw: True일 때만 동작. 이 경로는 원본 이미지를 최소화(crop/EXIF 제거) 없이
                    전송하므로 프로덕션에서 사용 금지. CLI/오프라인 용도로만 명시 허용.
+        preprocess: GPT-4o 로 보내는 이미지의 전처리 모드. **엔진 입력에는 영향 없음.**
+            "raw"        — (기본, 기존 동작) 원본 바이트 · detail:"high" · 무크롭.
+                           IP/165 §7 의 회귀 기준선(59.4%)이 이 조건에서 측정됐다.
+            "production" — image_minimize.minimize_to_data_url() 적용.
+                           768px · center-crop 10% · JPEG q80 · detail:"low".
+                           test_server.call_openai_vision(994~995행)과 **같은 함수**를 탄다.
+                           IP/174 §4 「평가가 GPT-4o 만 편들고 있다」의 교정용.
+
+        ⚠ preprocess 를 바꾼 결과를 59.4% 와 같은 표에 올리지 말 것(IP/174 §4-3 · 규칙34).
+          별도 기준선으로 기록한다.
 
     Returns:
-        dict: 분석 결과 (JSON)
+        dict: 분석 결과 (JSON). preprocess="production" 이면 analysis["preprocess"] 에
+              최소화 메타(원본 미전송 증거)가 부착된다.
     """
     # [R3 방어적 심층] 프로덕션 전송은 test_server.call_openai_vision(=image_minimize 강제)만 사용.
     # 이 함수는 원본 프레임을 그대로 전송하므로 명시적 allow_raw 없이는 차단(재연결 원천 방지).
@@ -887,14 +899,42 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
     if not Path(image_path).exists():
         return {"error": f"이미지 파일을 찾을 수 없습니다: {image_path}"}
 
-    # 이미지 인코딩
-    base64_image = encode_image(image_path)
-    ext = Path(image_path).suffix.lower()
-    media_type = {
-        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-        '.png': 'image/png', '.gif': 'image/gif',
-        '.webp': 'image/webp',
-    }.get(ext, 'image/jpeg')
+    # ── 이미지 인코딩 (GPT-4o 전송분 전용) ──────────────────────────────────
+    # 아래 분기는 **GPT-4o 페이로드에만** 적용된다. 이 함수 뒤쪽의 엔진 호출
+    # (detect_reference_objects / detect_food30)은 두 모드 모두 원본 image_path 를
+    # 그대로 받는다 — 프로덕션(test_server 4224·4255행)과 동일하다. 건드리지 말 것.
+    if preprocess not in ("raw", "production"):
+        return {"error": f"preprocess 는 'raw' 또는 'production' 이어야 합니다: {preprocess!r}"}
+
+    _prep_meta = None
+    if preprocess == "production":
+        # 프로덕션과 **같은 함수**를 탄다(test_server.call_openai_vision 994~995행).
+        # 여기서 별도 구현을 만들면 두 경로가 갈라져 비교가 무의미해진다.
+        try:
+            from image_minimize import minimize_to_data_url
+        except ImportError:
+            from tools.image_minimize import minimize_to_data_url
+        try:
+            _img_url, _prep_meta = minimize_to_data_url(Path(image_path).read_bytes())
+        except Exception as _me:
+            return {"error": f"image_minimize 실패({type(_me).__name__}): {_me}",
+                    "image": str(image_path)}
+        _img_detail = _prep_meta["detail"]          # "low"
+        # 축 A 자기검증 — 최소화가 실제로 걸렸는지 여기서 확인한다(규칙40: 실패 방향도 잰다).
+        if _prep_meta.get("original_frame_sent") is not False:
+            return {"error": "축A 위반: original_frame_sent 가 False 가 아닙니다."}
+        if not (_prep_meta.get("crop_bounds_area_ratio", 1.0) < 0.90):
+            return {"error": f"축A 위반: crop 면적비 {_prep_meta.get('crop_bounds_area_ratio')} >= 0.90"}
+    else:
+        base64_image = encode_image(image_path)
+        ext = Path(image_path).suffix.lower()
+        media_type = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.png': 'image/png', '.gif': 'image/gif',
+            '.webp': 'image/webp',
+        }.get(ext, 'image/jpeg')
+        _img_url = f"data:{media_type};base64,{base64_image}"
+        _img_detail = "high"
 
     # ── Reference 객체 자동 검출 (Phase 2 자체 모델) ──
     ref_detections = detect_reference_objects(image_path)
@@ -923,8 +963,8 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:{media_type};base64,{base64_image}",
-                            "detail": "high"
+                            "url": _img_url,
+                            "detail": _img_detail
                         }
                     }
                 ]
@@ -934,6 +974,24 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
         "temperature": 0.2,
         "store": False,
     }
+
+    # ★ 2026-08-24 독립감사 중-3.
+    # 「프로덕션 조건」은 이미지 전처리만이 아닙니다. test_server.call_openai_vision
+    # (1029행)은 `response_format={"type":"json_object"}` 를 보내는데 이 함수는
+    # 보내지 않았습니다. detail:"low" 로 화질이 떨어진 상태에서 그게 빠지면
+    # GPT-4o 가 산문·코드펜스로 답할 확률이 올라가고, 1044행대 파싱 실패가
+    # EXACT 하락으로 계상됩니다. 그 하락은 「프로덕션 핸디캡」이 아니라
+    # **평가 경로에만 있는 결함**인데, IP/174 §4-3 트랙은 그걸 프로덕션 조건
+    # 값으로 기록하게 됩니다. 즉 재려는 것과 다른 것을 재게 됩니다.
+    #
+    # ⚠ raw 모드에는 넣지 않습니다. 59.4% 기준선이 이 필드 **없이** 측정됐고,
+    #   추가하면 기준선과 비교할 수 없게 됩니다(규칙34).
+    #
+    # ⚠ correction hints(test_server 998~1002행)는 **일부러 넣지 않습니다.**
+    #   프로덕션 피드백 DB 상태에 의존하므로 평가에 넣으면 실행마다 조건이
+    #   달라져 재현성이 깨집니다. 이건 남아 있는 비대칭이고, 알고 남기는 것입니다.
+    if preprocess == "production":
+        payload["response_format"] = {"type": "json_object"}
 
     # ══════════════════════════════════════════════════════════════════════
     # 타임아웃 — 2026-08-21 `tools/diagnose_openai.py` 실측으로 확정한 값.
@@ -956,7 +1014,11 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
     # 같은 사진이 진단에서는 2.4s 에 성공했습니다. 즉 **일시적 실패가 실재합니다.**
     # 재시도는 무엇을 재는지를 바꾸지 않습니다 — 재는 데 성공할 확률만 올립니다.
     _attempts = int(os.environ.get('OPENAI_RETRIES', '2'))
-    _kb = len(base64_image) / 1024
+    # 세션48: base64_image 는 preprocess="raw" 에서만 존재한다. production 에서는
+    # _img_url 만 있다. 실제로 UnboundLocalError 가 났고, **타임아웃 로그 안에서만**
+    # 터지기 때문에 정상 경로 테스트로는 안 잡혔다 — 네트워크가 죽었을 때
+    # 진단 메시지가 죽는 형태였다. _img_url 에서 재계산한다.
+    _kb = len(_img_url) / 1024
     _last = None
     for _i in range(1, _attempts + 1):
         try:
@@ -982,7 +1044,8 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
     else:
         return {"error": f"API 호출 실패: {type(_last).__name__}: {_last} "
                          f"(timeout={_timeout}s×{_attempts}회, "
-                         f"image_b64={_kb:.0f}KB, detail=high)"}
+                         f"image_b64={_kb:.0f}KB, detail={_img_detail}, "
+                         f"preprocess={preprocess})"}
 
     if "error" in result:
         return {"error": f"OpenAI API 에러: {result['error'].get('message', str(result['error']))}"}
@@ -1004,6 +1067,17 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
             "raw_response": content
         }
 
+    # ★ 2026-08-24 독립감사 경-8.
+    # json.loads 는 배열·문자열·숫자도 성공적으로 파싱합니다. 그 경우 아래
+    # `analysis["reference"] = ...` 가 TypeError 로 함수를 죽입니다 —
+    # 32장 평가 중 한 장이 그러면 실행 전체가 traceback 으로 끝납니다.
+    # 1088행의 isinstance 가드는 이 줄보다 **뒤**에 있어 소용이 없었습니다.
+    if not isinstance(analysis, dict):
+        return {
+            "error": f"AI 응답이 객체가 아닙니다({type(analysis).__name__})",
+            "raw_response": content[:2000],
+        }
+
     # reference(숟가락/포크/동전) 자동 검출 결과를 응답에 포함 → UI 표시·신뢰도 판단용
     analysis["reference"] = {
         "detected": ppcm_info is not None,
@@ -1017,6 +1091,23 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
         analysis = apply_food30_override(analysis, detect_food30(image_path))
     except Exception as _fe:
         print(f"[food30] 스킵: {_fe}")
+
+    # 어떤 조건에서 잰 값인지 결과에 각인한다. 이게 없으면 다음 세션이
+    # production 결과와 raw 결과를 구별하지 못한다(IP/174 규칙38 · 규칙34).
+    if isinstance(analysis, dict):
+        analysis["preprocess"] = {
+            "mode": preprocess,
+            "gpt_detail": _img_detail,
+            "engine_input": "original",          # 두 모드 공통 — 프로덕션과 동일
+        }
+        if _prep_meta is not None:
+            analysis["preprocess"].update({
+                "original_frame_sent": _prep_meta["original_frame_sent"],
+                "crop_mode": _prep_meta["crop_mode"],
+                "crop_bounds_area_ratio": _prep_meta["crop_bounds_area_ratio"],
+                "out_width": _prep_meta["out_width"],
+                "out_height": _prep_meta["out_height"],
+            })
 
     return analysis
 

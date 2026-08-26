@@ -275,12 +275,18 @@ BASELINE_V1_32 = [
 ]
 
 
-def run_photo_test(photo_set="baseline32"):
+def run_photo_test(photo_set="baseline32", preprocess="raw"):
     """전체 파이프라인으로 사진 정확도 측정.
 
     photo_set:
       'baseline32' — IP/165 G4 게이트용. 기준선 v1 과 직접 비교 가능한 32장. (기본값)
       'all'        — 폴더 전수(91장). 탐색용. G4 판정에 쓰지 말 것.
+
+    preprocess:
+      'raw'        — (기본) 원본·detail:high·무크롭. 59.4% 기준선이 이 조건이다.
+      'production' — GPT-4o 에게 프로덕션과 같은 768px·detail:low·center-crop 을 준다
+                     (IP/174 §4-3). 엔진 입력은 두 모드 모두 원본이다.
+                     ⚠ 결과를 59.4% 와 같은 표에 올리지 말 것. 별도 기준선이다(규칙34).
     """
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -333,6 +339,12 @@ def run_photo_test(photo_set="baseline32"):
              else "  ⚠ 탐색용 — 59.4% 기준선과 비교하지 말 것"))
     print(f"  테스트 이미지: {len(images)}장")
     print(f"  모델: GPT-4o Vision")
+    if preprocess == "production":
+        print(f"  전처리: production — GPT-4o 에 768px·detail:low·center-crop(IP/174 §4-3)")
+        print(f"          엔진 입력은 원본 그대로 (프로덕션과 동일)")
+        print(f"  ⚠ 이 결과를 59.4% 와 같은 표에 올리지 마십시오. 별도 기준선입니다.")
+    else:
+        print(f"  전처리: raw — 원본·detail:high·무크롭 (59.4% 기준선 조건)")
     print(f"  파이프라인: GPT 인식 → match_with_db (Gold/DB/AI)")
     cost_est = len(images) * 0.005
     print(f"  예상 비용: ~${cost_est:.2f}")
@@ -377,7 +389,8 @@ def run_photo_test(photo_set="baseline32"):
         # 사진별 소요시간을 남깁니다 — 2026-08-21 타임아웃 사고 때 「어느 사진이 얼마나
         # 걸리는가」를 알 수 없어 원인 규명이 늦어졌습니다.
         _t_start = time.time()
-        analysis = analyze_food_image(str(img_path), api_key=api_key, allow_raw=True)
+        analysis = analyze_food_image(str(img_path), api_key=api_key, allow_raw=True,
+                                      preprocess=preprocess)
         _elapsed = time.time() - _t_start
 
         if "error" in analysis:
@@ -551,7 +564,49 @@ def run_photo_test(photo_set="baseline32"):
     # IP/165 §5: 「통합 후 32장 EXACT 59.4% ±6pt 유지」. ±6pt 는 알려진 런투런 노이즈
     # (07-23 59.4 vs 07-24 53.1, 같은 32장 · IP/nutrilens_miss5_진단_2026-07-24).
     gate_failed = False
-    if photo_set == "baseline32":
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ★ 0단계 — 측정이 성립했는가. 2026-08-24 세션48 신설.
+    # ══════════════════════════════════════════════════════════════════════
+    # 실제로 이 사고가 났습니다: 32장 전부 API 호출 실패(프록시 차단)인데
+    # `errors=32`, `EXACT 0.0%` 로 결과 파일이 **정상 저장되고 exit 0** 이었습니다.
+    # 그리고 그 0.0% 가 「프로덕션 조건 새 기준선」이라는 이름을 달았습니다.
+    #
+    # errors 는 이미 세고 있었지만 **어디에서도 판정에 쓰이지 않았습니다.**
+    # 세는 것과 판정에 쓰는 것은 다른 일입니다.
+    #
+    # 임계: 절반. 32장 중 1~2장의 일시적 타임아웃은 재시도로 흡수되는 알려진
+    # 현상이고(IP/173, 2026-08-21), 그걸 실패로 만들면 게이트가 너무 잘 깨집니다.
+    # 절반이 죽었다면 그건 네트워크·키·페이로드 문제이고 측정이 아닙니다.
+    measurement_broken = (total > 0 and errors >= total / 2)
+    if measurement_broken:
+        print()
+        print("=" * 60)
+        print(f"  ★ 측정 실패 — {total}장 중 {errors}장이 에러입니다.")
+        print("=" * 60)
+        print("  이 실행의 숫자는 모델 성능이 아니라 **호출 실패**를 반영합니다.")
+        print("  기준선으로 기록하지 마십시오. IP 문서에 append 하지 마십시오.")
+        print()
+        print("  먼저 볼 것:")
+        print("   1) OPENAI_API_KEY 가 유효한가 (.env 또는 환경변수)")
+        print("   2) 네트워크에서 api.openai.com 에 닿는가")
+        print("   3) 위 개별 에러 메시지의 예외 클래스명 (ProxyError / ConnectTimeout /")
+        print("      ReadTimeout 은 원인이 다릅니다 — 2026-08-21 사고 참조)")
+        print("=" * 60)
+
+    if photo_set == "baseline32" and preprocess != "raw":
+        # 세션48: 전처리를 바꾸면 기준선(19/32)과 비교할 수 없다. 게이트를 아예 돌리지
+        # 않고, 대신 왜 안 도는지 화면에 남긴다 — 조용히 건너뛰면 다음 사람이
+        # 「PASS 였겠지」로 읽는다(규칙34 · IP/174 §4-3).
+        print()
+        print("=" * 60)
+        print(f"  G4 게이트 판정 — 건너뜀 (preprocess={preprocess})")
+        print("=" * 60)
+        print("  G4 기준선 19/32 는 raw(원본·detail:high·무크롭) 조건의 값입니다.")
+        print("  전처리가 다른 실행을 그 기준으로 판정하면 게이트가 무의미해집니다.")
+        print("  이 실행은 별도 기준선으로 기록하십시오(IP/165 §7 에 append).")
+        print("=" * 60)
+    elif photo_set == "baseline32":
         # ── ★ 왜 %가 아니라 '장수'로 판정하는가 (2026-08-19 독립감사 치명-1) ──
         # IP/165 §5 는 「59.4% ±6pt」라고 적혀 있고, 그 ±6pt 의 근거는
         # 「07-23 19/32=59.4% vs 07-24 17/32=53.1%, 같은 32장」입니다
@@ -604,7 +659,18 @@ def run_photo_test(photo_set="baseline32"):
         # 세션46: 어느 평가셋인지 반드시 남긴다. 32장/91장 결과가 같은 파일명으로
         # 덮어써지면 나중에 어느 쪽 숫자였는지 알 수 없다.
         "photo_set": photo_set,
-        "gate_comparable": photo_set == "baseline32",
+        # 세션48: 전처리 조건도 반드시 남긴다. IP/174 §4 로 「엔진과 GPT-4o 가
+        # 서로 다른 입력을 받고 있었다」가 드러났고, 그걸 모르면 두 실행의 숫자를
+        # 같은 표에 올리게 된다(규칙34).
+        "preprocess": preprocess,
+        "gate_comparable": (photo_set == "baseline32" and preprocess == "raw"
+                            and not measurement_broken),
+        # ★ 세션48: 이 파일을 나중에 읽는 사람이 「쓸 수 있는 측정인가」를
+        #   숫자를 해석하기 전에 알 수 있어야 합니다. errors 를 세어 두기만 하면
+        #   다음 세션이 0.0% 를 성능으로 읽습니다(실제로 그럴 뻔했습니다).
+        "usable": not measurement_broken,
+        "measurement_broken_reason": (f"{errors}/{total} photos errored"
+                                      if measurement_broken else None),
         "total": total,
         "correct_exact": correct_exact,
         "correct_loose": correct_loose,
@@ -621,7 +687,11 @@ def run_photo_test(photo_set="baseline32"):
 
     # 세션46: 평가셋별로 파일을 나눈다. 예전에는 32장·91장 결과가 같은 파일을
     # 덮어써서 「이 숫자가 어느 셋이었나」를 사후에 알 수 없었다.
+    #   세션48: 전처리 모드도 파일명에 넣는다. production 결과가 59.4% 파일을
+    #   덮으면 회귀 기준선이 사라진다 — IP/174 §4-3 이 명시적으로 금지한 사고다.
     _sfx = "" if photo_set == "baseline32" else f"_{photo_set}"
+    if preprocess != "raw":
+        _sfx += f"_{preprocess}"
     json_path = RESULT_DIR / f"photo_test_results{_sfx}.json"
 
     # ★ 덮어쓰기 전에 이전 실행을 보관한다 (세션46 신설).
@@ -677,6 +747,15 @@ def run_photo_test(photo_set="baseline32"):
         f.write(f"평가셋: {photo_set}"
                 + ("  (IP/165 G4 게이트)\n" if photo_set == "baseline32"
                    else "  (탐색용 — 기준선과 비교 불가)\n"))
+        f.write(f"전처리: {preprocess}"
+                + ("  (59.4% 기준선 조건)\n" if preprocess == "raw"
+                   else "  (프로덕션 조건 — 별도 기준선, 59.4%와 비교 불가)\n"))
+        if measurement_broken:
+            f.write("\n" + "!" * 60 + "\n")
+            f.write(f"★ 측정 실패 — {total}장 중 {errors}장 에러.\n")
+            f.write("  이 파일의 숫자는 모델 성능이 아니라 호출 실패를 반영합니다.\n")
+            f.write("  기준선으로 인용하지 마십시오.\n")
+            f.write("!" * 60 + "\n")
         f.write("=" * 60 + "\n\n")
         f.write(f"총 테스트: {total}장\n")
         f.write(f"음식명 정확도 (엄격): {strict_accuracy:.1f}%\n")
@@ -698,6 +777,14 @@ def run_photo_test(photo_set="baseline32"):
     # (정확도, 게이트 실패 여부) — 호출부가 종료코드를 정할 수 있게 한다.
     # 초판은 accuracy 만 돌려줘서 G4 FAIL 이어도 exit 0 이었고,
     # bat 의 "STOPPED. Do not deploy." 가 파이썬 예외에만 걸렸습니다(감사 중-4).
+    #
+    # ★ 세션48: 측정이 깨졌으면 정확도를 돌려주지 않는다.
+    #   숫자를 돌려주면 호출부가 그걸 출력하고, 화면에 「0.0% (새 기준선)」이 찍힙니다.
+    #   None 을 돌려주면 main 의 `acc is None` 경로가 exit 1 로 잡습니다.
+    #   결과 파일은 이미 저장됐지만 `usable: false` 가 박혀 있습니다 —
+    #   저장을 막지는 않습니다(세션46: 보관 실패가 저장을 막지 않게 한 것과 같은 이유).
+    if measurement_broken:
+        return None, True
     return strict_accuracy, gate_failed
 
 
@@ -715,6 +802,12 @@ def main():
                         choices=["baseline32", "all"],
                         help="사진 평가셋. baseline32=IP/165 G4 게이트(기본), "
                              "all=폴더 전수(탐색용, 기준선과 비교 불가)")
+    parser.add_argument("--preprocess", dest="preprocess", default="raw",
+                        choices=["raw", "production"],
+                        help="GPT-4o 로 보내는 이미지의 전처리. raw=원본·detail:high(기본, "
+                             "59.4% 기준선 조건), production=768px·detail:low·center-crop "
+                             "(IP/174 §4-3). 엔진 입력은 두 모드 모두 원본. "
+                             "production 결과는 별도 파일에 저장되고 G4 판정 대상이 아님")
     args = parser.parse_args()
 
     if not (args.db or args.photo or args.all):
@@ -727,6 +820,12 @@ def main():
         print("  python tools/accuracy_test.py --photo --set all   # 전수 91장 (~$0.46, 탐색용)")
         print("  python tools/accuracy_test.py --all     # 둘 다")
         print()
+        print("  # 프로덕션 조건 재측정 (IP/174 §4-3, 세션48 신설)")
+        print("  python tools/accuracy_test.py --photo --preprocess production")
+        print("    → GPT-4o 에도 768px·detail:low·center-crop 을 준다(프로덕션과 동일).")
+        print("    → 결과는 photo_test_results_production.json 에 별도 저장.")
+        print("    → G4 게이트 판정 대상이 아니다. 59.4% 와 비교하지 말 것.")
+        print()
         print(f"사진 위치: {TEST_DIR}")
         print("파일명 = 정답 (예: 01_김치.jpg → 정답 '김치')")
         sys.exit(0)
@@ -738,19 +837,53 @@ def main():
             print(f"\n  {mark} DB 매칭 커버리지: {cov:.1f}%")
 
     if args.photo or args.all:
-        acc, gate_failed = run_photo_test(photo_set=args.photo_set)
+        acc, gate_failed = run_photo_test(photo_set=args.photo_set,
+                                          preprocess=args.preprocess)
+        # 세션48: 전처리를 바꾼 실행은 G4 판정 대상이 아니다. 기준선이 다르다(규칙34).
+        _gate_applicable = (args.photo_set == "baseline32" and args.preprocess == "raw")
         if acc is not None:
             # ★ 절대 기준(80/60)이 아니라 게이트 판정으로 표시한다.
             #   초판은 G4 PASS 인 19/32(59.4%)에도 마지막 줄에 '✗' 를 찍어
             #   G4 블록의 PASS 와 정면으로 모순됐습니다(감사 경-5).
-            if args.photo_set == "baseline32":
+            if _gate_applicable:
                 mark = "✗ G4 FAIL" if gate_failed else "✓ G4 PASS"
                 print(f"\n  {mark} — 음식명 정확도(엄격): {acc:.1f}%")
+            elif args.preprocess == "production":
+                print(f"\n  · 음식명 정확도(엄격): {acc:.1f}%  "
+                      f"(프로덕션 전처리 — 게이트 판정 아님 · 새 기준선)")
+                print(f"    ★ 볼 것은 EXACT% 가 아니라 위의 food30 엔진 교체 건수입니다.")
+                print(f"      IP/174 §4-3: 「프로덕션 조건에서 GPT-4o 가 놓치는 만큼")
+                print(f"      엔진이 메우는가」가 이 트랙의 질문입니다.")
             else:
                 print(f"\n  · 음식명 정확도(엄격): {acc:.1f}%  "
                       f"(탐색용 셋 — 게이트 판정 아님)")
-        # G4 FAIL 을 종료코드로도 알린다. bat 의 errorlevel 검사가 이걸 봅니다.
-        if gate_failed and args.photo_set == "baseline32":
+        # ══════════════════════════════════════════════════════════════════
+        # 종료코드 — .bat 의 errorlevel 검사가 이걸 봅니다.
+        # ══════════════════════════════════════════════════════════════════
+        # ★ 2026-08-24 독립감사 치명-1 수정.
+        #   초판은 `gate_failed and _gate_applicable` 이었습니다. 그런데
+        #   run_photo_test 는 **측정을 시작조차 못한 경우에도** (None, True) 를
+        #   돌려줍니다 — API 키 없음 / 기준선 32장 결손 / 이미지 0장.
+        #   production 실행은 _gate_applicable=False 이므로 그 세 경우가 전부
+        #   **exit 0** 이 됐고, .bat 은 "DONE. Saved: ..._production.json" 을
+        #   출력했습니다. 그 파일은 만들어진 적이 없고, 이전 실행의 낡은 파일이
+        #   그 자리에 남아 있으면 다음 세션이 그걸 이번 측정으로 인용합니다.
+        #   → IP/174 §2 사고와 정확히 같은 형태입니다.
+        #
+        #   두 실패를 분리합니다:
+        #     acc is None      = 측정 자체가 안 됨 → 전처리·평가셋과 무관하게 실패
+        #     gate_failed      = 측정은 됐고 G4 기준 미달 → 게이트 적용 시에만 실패
+        if acc is None:
+            print("\n  ✗ 쓸 수 있는 측정이 나오지 않았습니다 — 위 메시지를 보십시오.")
+            print("    두 경우가 있습니다:")
+            print("     · 시작조차 못함(키 없음 / 32장 결손 / 이미지 0장)")
+            print("       → 결과 파일이 생성되지 않았습니다. 같은 이름의 파일이 있다면")
+            print("         그건 이전 실행의 것입니다 — 이번 측정으로 인용하지 마십시오.")
+            print("     · 절반 이상 에러")
+            print("       → 파일은 저장됐지만 `\"usable\": false` 가 박혀 있습니다.")
+            print("         숫자를 인용하기 전에 그 필드를 확인하십시오.")
+            sys.exit(1)
+        if gate_failed and _gate_applicable:
             sys.exit(1)
 
 

@@ -991,8 +991,44 @@ def call_openai_vision(image_bytes, api_key, model="gpt-4o", ref_hint=""):
     image_minimize로 crop+다운스케일+JPEG 재인코딩(EXIF 제거) 후 detail:low만 전송."""
     url = "https://api.openai.com/v1/chat/completions"
     # ── 서버 강제 최소화(원본 미전송) ──
-    from image_minimize import minimize_to_data_url
+    from image_minimize import minimize_to_data_url, AREA_RATIO_MAX
     _img_url, _mmeta = minimize_to_data_url(image_bytes)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ★ 축 A 런타임 검증 — 2026-08-24 세션48 신설 (제이 확정)
+    # ══════════════════════════════════════════════════════════════════════
+    # IP/174 §4-2 는 「outbound wrapper 가 original_frame_sent=False 와
+    # crop_bounds_area_ratio < 0.90 을 검증한다」고 적었습니다.
+    # 세션48이 전수 확인한 결과 **그 검증은 런타임에 없었습니다.**
+    # 두 값을 생성하는 곳(image_minimize.py:96-97)과 리포팅하는 곳
+    # (leftover_engine.py:323-328)은 있었지만, 실제 assert 는
+    # eval/minimization_axis_a_eval.py 와 eval/verify_minimize_p03.py 라는
+    # **오프라인 스크립트에만** 있었습니다. 즉 법무 통제에 런타임 보증이
+    # 없는 상태로 배포돼 있었습니다.
+    #
+    # 왜 지금 넣는가: 최소화가 「예외 없이 조용히 이상한 값을 돌려주는」 경우를
+    # 지금 구조는 잡지 못합니다. CropFailed 는 예외를 던지므로 fail-closed 지만,
+    # 그건 «크롭 자체가 실패한» 경우만입니다.
+    #
+    # fail-closed 로 둡니다 — 통제가 깨졌으면 **보내지 않습니다.**
+    # 사용자에겐 분석 실패가 되지만, 원본 프레임이 나가는 것보다 낫습니다.
+    # (IP/128 · IP/141 · 변호사 검토분 IP/117·118·120·125)
+    if _mmeta.get("original_frame_sent") is not False:
+        raise RuntimeError(
+            "축A 위반: original_frame_sent 가 False 가 아닙니다. "
+            "원본 프레임이 OpenAI 로 나갈 수 있어 전송을 중단합니다."
+        )
+    _ratio = _mmeta.get("crop_bounds_area_ratio")
+    if not (isinstance(_ratio, (int, float)) and _ratio < AREA_RATIO_MAX):
+        raise RuntimeError(
+            f"축A 위반: 크롭 면적비 {_ratio} 가 {AREA_RATIO_MAX} 미만이 아닙니다. "
+            "크롭이 실제로 걸렸는지 확인할 수 없어 전송을 중단합니다."
+        )
+    if _mmeta.get("detail") != "low":
+        raise RuntimeError(
+            f"축A 위반: detail 이 'low' 가 아닙니다({_mmeta.get('detail')!r}). "
+            "L2 통제가 깨졌으므로 전송을 중단합니다."
+        )
 
     # 피드백 학습 힌트 반영
     hints = _get_correction_hints()

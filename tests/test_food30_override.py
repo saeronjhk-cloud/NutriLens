@@ -636,5 +636,365 @@ class TestEndToEndWithMatchDb(unittest.TestCase):
         self.assertEqual(len(set(names)), 2, f"같은 이름이 둘 생겼다: {names}")
 
 
+# ══════════════════════════════════════════════════════════════════
+# 구체성 등급(Specificity Rank) — IP/176 §4-1 평가 셋 20케이스
+# 세션48(2026-08-24) 신설. ★ 구현보다 **먼저** 들어왔습니다 (원칙4 Eval-First).
+# ══════════════════════════════════════════════════════════════════
+#
+# 무엇을 지키려는가
+# ─────────────────────────────────────────────────────────────────
+# 엔진이 `기타잡곡밥`(→DB '잡곡밥')을 τ 이상으로 낼 때, GPT 가 이미
+# **현미밥**이라고 맞혔다면 교체는 정답을 오답으로 바꾸는 것입니다.
+# `applied changed=True` 로 「엔진이 기여함」으로 집계되기까지 합니다.
+#
+# 지금 안 터지는 이유는 설계가 막아서가 아니라 **τ 가 우연히 그 위에 있어서**입니다.
+# IP/174 §1-2 실측: 흑미밥2 는 기타잡곡밥 **0.690** — τ=0.70 에 0.010 부족.
+# τ 를 0.68 로만 내려도 「흑미밥 → 잡곡밥」이 실제로 뒤집힙니다.
+#
+# ★ expectedFailure 를 쓰는 이유 (읽고 지나가지 마십시오)
+# ─────────────────────────────────────────────────────────────────
+# 구현 전이므로 신규 규칙 케이스는 **반드시 FAIL 해야 합니다.**
+# 실패하지 않는 테스트는 아무것도 증명하지 않습니다(규칙30).
+# 그렇다고 생으로 FAIL 시키면 STEP 1 회귀가 깨져 배포 게이트를 막습니다.
+#
+# → `@unittest.expectedFailure` 로 둡니다. 그러면:
+#     구현 전 : expected failure  → 스위트는 OK. 게이트를 막지 않음
+#     구현 후 : UNEXPECTED SUCCESS → **스위트가 실패**. 데코레이터를 지우라는 신호
+#   즉 이 테스트들은 구현이 되는 순간 스스로 손을 듭니다. 잊혀지지 않습니다.
+#
+# ⛔ 구현했다면 아래 데코레이터를 **전부 지우십시오.** 남겨 두면
+#   「통과했는데 실패로 보이는」 상태가 되고, 다음 사람이 게이트를 불신하게 됩니다.
+#
+# ⛔ τ 를 내리면서 이 규칙을 같이 넣지 마십시오(IP/176 §5-1).
+#   두 변경을 한 번에 하면 어느 쪽이 무엇을 했는지 분리되지 않습니다.
+
+def _kept(analysis):
+    """specificity_kept 텔레메트리. 구현 전에는 키가 없다."""
+    return (analysis.get('food30_engine') or {}).get('specificity_kept', [])
+
+
+# ══════════════════════════════════════════════════════════════════
+# 축 A 런타임 게이트 — 세션48(2026-08-24) 제이 확정으로 신설
+# ══════════════════════════════════════════════════════════════════
+class TestAxisARuntimeGate(unittest.TestCase):
+    """프로덕션 전송 직전에 「원본 미전송」이 실제로 보증되는지.
+
+    왜 있는가
+    ─────────────────────────────────────────────────────────────
+    IP/174 §4-2 는 「outbound wrapper 가 original_frame_sent 와
+    crop_bounds_area_ratio 를 검증한다」고 적었지만, 세션48이 전수 확인한 결과
+    **런타임에는 그 검증이 없었습니다.** assert 는 eval/ 아래 오프라인
+    스크립트 2개에만 있었고, 그건 배포된 코드를 지키지 못합니다.
+
+    세션48이 `call_openai_vision` 에 fail-closed 게이트를 넣었습니다.
+    이 테스트는 **그 게이트가 지워지거나 약해지는 것**을 잡습니다.
+
+    소스 문자열 검사인 이유: test_server 를 import 하면 음식 DB 238,054종을
+    로드해 STEP 1 회귀가 몇 초씩 느려집니다. 실제 동작(위반 6종 차단 · 정상 통과)은
+    2026-08-24 에 실측했고 IP/175 §7-B 에 기록돼 있습니다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        src = (_NUTRILENS / 'tools' / 'test_server.py').read_text(
+            encoding='utf-8', errors='replace')
+        lines = src.splitlines()
+        start = next((n for n, ln in enumerate(lines)
+                      if ln.startswith('def call_openai_vision')), None)
+        assert start is not None, 'call_openai_vision 을 찾지 못했다'
+        # 함수 끝 = **들여쓰기 0 인 비어있지 않은 첫 줄.**
+        #   초판1: `\ndef ` 로 찾다 못 찾으면 파일 끝까지 → 전체가 검사 대상
+        #   초판2: 「다음 최상위 def/class」 → test_server.py 는 이 함수 뒤로
+        #          2,600줄 동안 최상위 def/class 가 없다(HTML 문자열·상수 구간).
+        #   실측(2026-08-24): 함수는 988행, 다음 최상위 줄은 1105행. 117줄.
+        end = next((n for n in range(start + 1, len(lines))
+                    if lines[n].strip() and not lines[n].startswith((' ', '\t'))),
+                   len(lines))
+        cls.lines = lines[start:end]
+        cls.fn = '\n'.join(cls.lines)
+        # 주석을 걷어낸 «실행되는 코드»만. 주석의 0.90 을 하드코딩으로 오인하지 않게.
+        cls.code = '\n'.join(ln.split('#', 1)[0] for ln in cls.lines)
+
+    def test_gate_exists_in_call_openai_vision(self):
+        for token, why in [
+            ('original_frame_sent', '원본 프레임 전송 여부를 확인하지 않는다'),
+            ('crop_bounds_area_ratio', '크롭이 실제로 걸렸는지 확인하지 않는다'),
+            ('AREA_RATIO_MAX', '면적비 한계를 모듈 상수에서 가져오지 않는다'),
+        ]:
+            self.assertIn(token, self.fn, f"축A 게이트가 사라졌다 — {why}")
+
+    def test_gate_is_fail_closed(self):
+        """위반 시 전송을 **중단**해야 한다. 경고만 찍고 보내면 통제가 아니다."""
+        self.assertIn('raise RuntimeError', self.fn,
+                      "축A 위반이 예외가 아니다 — 경고만 하고 전송하면 통제가 아니다")
+        self.assertGreaterEqual(self.fn.count('raise RuntimeError'), 3,
+                                "축A 검사 3종(원본·크롭·detail) 중 일부가 예외를 던지지 않는다")
+
+    def test_gate_precedes_payload(self):
+        """게이트가 payload 조립보다 앞에 있어야 한다.
+
+        뒤에 있으면 「막았지만 이미 만들어진」 상태가 되고,
+        나중에 누가 순서를 바꿀 때 조용히 무력화된다.
+        """
+        g = self.fn.find('original_frame_sent')
+        p = self.fn.find('payload = {')
+        self.assertGreater(g, 0, '게이트를 찾지 못했다')
+        self.assertGreater(p, 0, 'payload 조립을 찾지 못했다')
+        self.assertLess(g, p, '축A 게이트가 payload 조립보다 뒤에 있다')
+
+    def test_area_ratio_max_is_not_hardcoded(self):
+        """0.90 을 하드코딩하면 image_minimize 가 바뀔 때 조용히 어긋난다.
+
+        주석은 검사에서 뺀다 — 설명문의 0.90 은 하드코딩이 아니다.
+        실패 메시지에 함수 전체를 덤프하지 않는다(초판이 그래서 출력이 19만 자였다).
+        """
+        bad = [n for n, ln in enumerate(self.code.splitlines())
+               if '0.90' in ln or '0.9 ' in ln.replace('AREA_RATIO_MAX', '')]
+        self.assertEqual(bad, [],
+                         f'면적비 한계가 하드코딩된 줄 {bad} — AREA_RATIO_MAX 를 쓰라')
+
+    def test_function_slice_is_sane(self):
+        """이 클래스의 검사들이 «함수 하나»를 보고 있는지.
+
+        초판은 슬라이싱이 빗나가 test_server.py 전체(4천여 줄)를 검사 대상으로
+        삼았고, 그래서 무관한 곳의 문자열에 걸려 FAIL 했습니다.
+        검사기 자신이 멀쩡한지 먼저 확인합니다.
+        """
+        self.assertLess(len(self.lines), 200,
+                        f'함수 슬라이스가 {len(self.lines)}줄 — 범위가 빗나갔다')
+        self.assertTrue(self.lines[0].startswith('def call_openai_vision'))
+        self.assertIn('payload = {', self.fn)
+
+
+class TestSpecificityRankCurrent(unittest.TestCase):
+    """구현 전에도 **반드시 통과해야 하는** 현행 동작 (회귀 방어).
+
+    구체성 등급을 넣을 때 이 8건이 깨지면 그 구현은 틀렸습니다.
+    변경 범위는 「엔진 rank1 + GPT covers 안」 한 줄뿐이어야 합니다.
+    """
+
+    # 케이스 1
+    def test_c01_exact_match_not_changed(self):
+        a = _mk('잡곡밥')
+        fa.apply_food30_override(a, {'rice': {'class': '기타잡곡밥', 'confidence': 0.9}})
+        self.assertEqual(_names(a), ['잡곡밥'])
+        ap = a['food30_engine']['applied']
+        self.assertEqual(len(ap), 1)
+        self.assertFalse(ap[0]['changed'])
+
+    # 케이스 2
+    def test_c02_self_exact(self):
+        a = _mk('쌀밥')
+        fa.apply_food30_override(a, {'rice': {'class': '쌀밥', 'confidence': 0.95}})
+        self.assertEqual(_names(a), ['쌀밥'])
+        self.assertFalse(a['food30_engine']['applied'][0]['changed'])
+
+    # 케이스 3 — 일반 → 구체 = 정보 이득. 반드시 교체
+    def test_c03_general_to_specific_replaces(self):
+        a = _mk('잡곡밥')
+        fa.apply_food30_override(a, {'rice': {'class': '현미밥', 'confidence': 0.88}})
+        self.assertEqual(_names(a), ['현미밥'])
+        self.assertTrue(a['food30_engine']['applied'][0]['changed'])
+
+    # 케이스 4 — 형제 혼동 정정
+    def test_c04_sibling_correction(self):
+        a = _mk('쌀밥')
+        fa.apply_food30_override(a, {'rice': {'class': '현미밥', 'confidence': 0.9}})
+        self.assertEqual(_names(a), ['현미밥'])
+
+    # 케이스 10 — ★ covers 밖: 쌀밥은 010110 쌀밥류로 다른 중분류. 교체해야 함
+    def test_c10_ssalbap_is_not_covered_still_replaced(self):
+        a = _mk('쌀밥')
+        fa.apply_food30_override(a, {'rice': {'class': '기타잡곡밥', 'confidence': 0.9}})
+        self.assertEqual(_names(a), ['잡곡밥'],
+                         "쌀밥은 잡곡밥류 형제가 아니다 — 교체가 유지돼야 한다")
+        self.assertTrue(a['food30_engine']['applied'][0]['changed'])
+        self.assertEqual(_kept(a), [])
+
+    # 케이스 11 — ★ 감자밥은 010130 채소밥류. covers 밖
+    def test_c11_gamjabap_is_not_covered_still_replaced(self):
+        a = _mk('감자밥')
+        fa.apply_food30_override(a, {'rice': {'class': '기타잡곡밥', 'confidence': 0.9}})
+        self.assertEqual(_names(a), ['잡곡밥'])
+        self.assertEqual(_kept(a), [])
+
+    # 케이스 12 — rank0 ↔ rank0 는 현행 유지
+    def test_c12_rank0_to_rank0(self):
+        a = _mk('현미밥')
+        fa.apply_food30_override(a, {'rice': {'class': '흑미밥', 'confidence': 0.9}})
+        self.assertEqual(_names(a), ['흑미밥'])
+
+    # 케이스 13 — 허용목록 밖은 침묵 (v4 잔존 오탐 2건의 방어선)
+    def test_c13_stew_stays_silent(self):
+        a = _mk('김치찌개')
+        fa.apply_food30_override(a, {'soup': {'class': '닭볶음탕', 'confidence': 0.93}})
+        self.assertEqual(_names(a), ['김치찌개'])
+        self.assertEqual(len(a['food30_engine']['disagreement']), 1)
+
+    # 케이스 14 — 탕류 현행 동작
+    def test_c14_soup_replacement_unaffected(self):
+        a = _mk('갈비탕')
+        fa.apply_food30_override(a, {'soup': {'class': '설렁탕', 'confidence': 0.9}})
+        self.assertEqual(_names(a), ['설렁탕'])
+
+    # 케이스 15 — 빈 응답
+    def test_c15_empty_foods(self):
+        a = {'foods': []}
+        fa.apply_food30_override(a, {'rice': {'class': '기타잡곡밥', 'confidence': 0.9}})
+        self.assertEqual(len(a['food30_engine']['disagreement']), 1)
+
+    # 케이스 17 — 무검출
+    def test_c17_no_detection(self):
+        a = _mk('현미밥')
+        fa.apply_food30_override(a, {'rice': None, 'soup': None})
+        self.assertEqual(_names(a), ['현미밥'])
+        self.assertEqual(a['food30_engine']['applied'], [])
+
+    # 케이스 20 — exact 가 구체성보다 먼저 이긴다
+    def test_c20_exact_wins_first(self):
+        a = _mk('잡곡밥', '현미밥')
+        fa.apply_food30_override(a, {'rice': {'class': '기타잡곡밥', 'confidence': 0.9}})
+        self.assertEqual(_names(a), ['잡곡밥', '현미밥'],
+                         "exact 후보가 있으면 아무것도 바꾸지 않는다")
+        self.assertFalse(a['food30_engine']['applied'][0]['changed'])
+
+
+class TestSpecificityRankNew(unittest.TestCase):
+    """★ 구현 전에는 전부 FAIL 해야 하는 신규 규칙 케이스.
+
+    IP/176 §3-2 첫 줄: 엔진이 rank1(기타잡곡밥)을 냈고 GPT 가 covers 안의
+    rank0(현미밥·흑미밥·콩밥·보리밥·돌솥밥)을 냈으면 **교체하지 않는다.**
+
+    구현하면 이 클래스가 UNEXPECTED SUCCESS 로 스위트를 실패시킵니다.
+    그때 데코레이터를 지우십시오.
+    """
+
+    def _assert_kept(self, gpt_name):
+        a = _mk(gpt_name)
+        fa.apply_food30_override(a, {'rice': {'class': '기타잡곡밥', 'confidence': 0.72}})
+        # ① 이름이 그대로여야 한다 (정답 보존)
+        self.assertEqual(_names(a), [gpt_name],
+                         f"{gpt_name} 이 잡곡밥으로 덮였다 — 정보 손실")
+        # ② 아무것도 교체하지 않았어야 한다
+        self.assertEqual(a['food30_engine']['applied'], [])
+        # ③ 침묵을 텔레메트리에 남겨야 한다 (조용히 넘어가면 안 됨)
+        kept = _kept(a)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]['engine'], '기타잡곡밥')
+        self.assertIn(gpt_name, kept[0]['kept'])
+        self.assertEqual(kept[0]['reason'], 'gpt_more_specific')
+        # ④ disagreement 와 섞이면 안 된다 — 「놓쳤다」와 「양보했다」는 다른 사건
+        self.assertEqual(a['food30_engine']['disagreement'], [])
+        return a
+
+    @unittest.expectedFailure
+    def test_c05_hyeonmibap_kept(self):        # 케이스 5
+        self._assert_kept('현미밥')
+
+    @unittest.expectedFailure
+    def test_c06_heukmibap_kept(self):         # 케이스 6
+        self._assert_kept('흑미밥')
+
+    @unittest.expectedFailure
+    def test_c07_kongbap_kept(self):           # 케이스 7
+        self._assert_kept('콩밥')
+
+    @unittest.expectedFailure
+    def test_c08_boribap_kept(self):           # 케이스 8
+        self._assert_kept('보리밥')
+
+    @unittest.expectedFailure
+    def test_c09_dolsotbap_kept(self):         # 케이스 9
+        self._assert_kept('돌솥밥')
+
+    @unittest.expectedFailure
+    def test_c16_slot_independence(self):
+        """케이스 16 — 슬롯 독립성.
+
+        밥은 양보하고, 탕은 정상 교체돼야 한다.
+        한쪽 규칙이 다른 슬롯을 마비시키면 안 된다.
+        """
+        a = _mk('현미밥', '갈비탕')
+        fa.apply_food30_override(a, {
+            'rice': {'class': '기타잡곡밥', 'confidence': 0.72},
+            'soup': {'class': '설렁탕', 'confidence': 0.9},
+        })
+        self.assertEqual(_names(a), ['현미밥', '설렁탕'])
+        self.assertEqual(len(_kept(a)), 1)
+        self.assertEqual(len(a['food30_engine']['applied']), 1)
+
+    @unittest.expectedFailure
+    def test_c18_multiple_specific_candidates(self):
+        """케이스 18 — 후보가 둘이면 둘 다 보존하고 둘 다 기록한다."""
+        a = _mk('현미밥', '흑미밥')
+        fa.apply_food30_override(a, {'rice': {'class': '기타잡곡밥', 'confidence': 0.72}})
+        self.assertEqual(_names(a), ['현미밥', '흑미밥'])
+        kept = _kept(a)
+        self.assertEqual(len(kept), 1)
+        self.assertCountEqual(kept[0]['kept'], ['현미밥', '흑미밥'])
+
+    @unittest.expectedFailure
+    def test_c19_specificity_checked_before_preempted(self):
+        """케이스 19 — ★ 제이 확정 2026-08-24: **구체성 검사가 먼저다.**
+
+        상황: GPT 가 낸 '현미밥' 에 이미 name_source='food30_v4' 가 붙어 있고
+              (= 다른 슬롯이 손댄 항목), 엔진이 기타잡곡밥을 냈다.
+
+        두 검사가 모두 「교체하지 않음」을 낳지만 **남는 기록이 다르다**:
+            preempted          "다른 슬롯이 이미 가져갔다"      — 기계적 사정
+            specificity_kept   "GPT 가 더 구체적이라 양보했다"  — 의미적 판단
+
+        제이 확정: 의미적 판단이 기계적 사정보다 앞선다.
+        그래야 나중에 로그를 읽을 때 **왜 안 바꿨는지**가 남는다.
+        preempted 로 기록되면 「슬롯 충돌이었나 보다」로 읽히고,
+        구체성 규칙이 실제로 몇 번 일했는지 셀 수 없게 된다.
+
+        → 구현 시 구체성 블록을 preempted 검사(L764~768)보다 **앞에** 두십시오.
+        """
+        a = {'foods': [{'name_ko': '현미밥', 'name_source': 'food30_v4',
+                        'estimated_serving_g': 210}]}
+        fa.apply_food30_override(a, {'rice': {'class': '기타잡곡밥', 'confidence': 0.72}})
+        self.assertEqual(_names(a), ['현미밥'])
+        kept = _kept(a)
+        self.assertEqual(len(kept), 1, "구체성 검사가 먼저 걸려야 한다")
+        self.assertEqual(kept[0]['reason'], 'gpt_more_specific')
+        self.assertEqual(a['food30_engine']['preempted'], [],
+                         "preempted 가 아니라 specificity_kept 로 기록돼야 한다")
+
+
+class TestSpecificityRankTable(unittest.TestCase):
+    """구현이 들어왔을 때 상수 테이블이 IP/176 §3-1 과 일치하는지.
+
+    테이블이 없으면(구현 전) 통과합니다 — 이건 구현 후를 위한 계약입니다.
+    """
+
+    def test_covers_matches_aihub_taxonomy(self):
+        spec = getattr(fa, '_F30_SPECIFICITY', None)
+        if spec is None:
+            self.skipTest('_F30_SPECIFICITY 미구현 — IP/176 §3-1')
+        self.assertIn('기타잡곡밥', spec)
+        e = spec['기타잡곡밥']
+        self.assertEqual(e['rank'], 1)
+        # AI Hub 010120 잡곡밥류의 형제. 쌀밥(010110)·감자밥(010130)은 제외.
+        self.assertEqual(set(e['covers']),
+                         {'콩밥', '보리밥', '돌솥밥', '현미밥', '흑미밥'})
+        self.assertNotIn('쌀밥', e['covers'])
+        self.assertNotIn('감자밥', e['covers'])
+
+    def test_only_gitajapgokbap_is_rank1(self):
+        """탕류에 rank1 을 임의로 넣지 않았는지 — IP/176 §5-4.
+
+        food30 30종 중 이름에 「기타」가 있는 것은 기타잡곡밥 하나뿐이고,
+        탕류 22종은 전부 AI Hub 040130 곰국/탕류의 구체 음식명이다.
+        시각적 흡수는 taxonomy 와 다른 문제이고, 실측 전에는 넣지 않는다.
+        """
+        spec = getattr(fa, '_F30_SPECIFICITY', None)
+        if spec is None:
+            self.skipTest('_F30_SPECIFICITY 미구현')
+        rank1 = {k for k, v in spec.items() if v.get('rank') == 1}
+        self.assertEqual(rank1, {'기타잡곡밥'},
+                         f"실측 없이 rank1 이 추가됐다: {rank1 - {'기타잡곡밥'}}")
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
