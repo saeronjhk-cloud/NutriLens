@@ -37,6 +37,18 @@ PROJECT_DIR = Path(__file__).parent.parent
 TOOLS_DIR = Path(__file__).parent
 TEST_DIR = PROJECT_DIR / ".tmp" / "test_images"
 RESULT_DIR = PROJECT_DIR / ".tmp"
+
+# 세션49(2026-08-28): AI Hub Validation holdout 평가셋.
+#   `build_aihub_val_evalset.py` 가 <음식명>/ 폴더 구조로 만든 1,800장(30종×60).
+#   ⛔ 이 폴더를 `.tmp/test_images` 로 병합하지 마십시오 — 그 폴더는 G4 게이트 32장이
+#      사는 곳이고, 분모가 바뀌면 59.4% 와 비교할 수 없게 됩니다(IP/175 §1-4, 제이 판단④).
+#      여기서는 **원래 위치에서 직접 읽습니다.**
+#   ⚠ in-domain 셋입니다. 학습과 같은 촬영 조건이므로 실사용 성능의 **상한**이지
+#      실사용 성능이 아닙니다(IP/175 §7-D-10 · 규칙47).
+ROOT_DIR = PROJECT_DIR.parent.parent                # D:\서박사의 영양공식
+AIHUB_VAL_DIR = ROOT_DIR / "Images" / "aihub_val"
+AIHUB_PER_CLASS = 10                                # 30종 × 10 = 300장 (~$1.5)
+
 sys.path.insert(0, str(TOOLS_DIR))
 
 
@@ -45,7 +57,7 @@ def load_env():
     env_paths = [PROJECT_DIR / '.env', Path.cwd() / '.env']
     for p in env_paths:
         if p.exists():
-            with open(p) as f:
+            with open(p, encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith('#') and '=' in line:
@@ -275,12 +287,28 @@ BASELINE_V1_32 = [
 ]
 
 
-def run_photo_test(photo_set="baseline32", preprocess="raw"):
+def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run=False):
     """전체 파이프라인으로 사진 정확도 측정.
 
     photo_set:
       'baseline32' — IP/165 G4 게이트용. 기준선 v1 과 직접 비교 가능한 32장. (기본값)
       'all'        — 폴더 전수(91장). 탐색용. G4 판정에 쓰지 말 것.
+      'aihub300'   — AI Hub Validation holdout 에서 30종 × 10장 = 300장. (세션49)
+                     GT 는 **폴더명**이다 — 파일명(`04_043_04013002_...`)에서는
+                     유도할 수 없다. 정렬 후 앞 N장을 뽑으므로 매번 같은 300장이다.
+                     ★ 이 셋의 목적: baseline32 에는 food30 30클래스 사진이
+                       105_갈비탕 **1장뿐**이고 그마저 엔진이 검출에 실패해서,
+                       「GPT 가 놓치는 만큼 엔진이 메우는가」(IP/174 §4-3)를
+                       구조적으로 물을 수 없었다(IP/175 세션49 실측).
+
+    run_tag:
+      결과 파일명에 붙는 접미사. 반복 측정(run-to-run 분산)에서 **기준선 파일을
+      덮어쓰지 않기 위한 것**이다. 비우면 기존 동작 그대로.
+      예: run_tag='run2' → photo_test_results_run2.json
+      ⚠ 이름이 `tag` 가 아닌 이유: 이 함수의 사진 루프가 `tag = "✓ EXACT"` 로
+        같은 이름을 재할당한다. 파라미터를 `tag` 로 두면 마지막 사진의 판정
+        문자열이 파일명이 되어 `photo_test_results_✗ MISS.json` 이 생긴다.
+        2026-08-28 감사에서 실측으로 잡혔다(세션48 `out` 섀도잉과 같은 사고).
 
     preprocess:
       'raw'        — (기본) 원본·detail:high·무크롭. 59.4% 기준선이 이 조건이다.
@@ -288,17 +316,107 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
                      (IP/174 §4-3). 엔진 입력은 두 모드 모두 원본이다.
                      ⚠ 결과를 59.4% 와 같은 표에 올리지 말 것. 별도 기준선이다(규칙34).
     """
+    # run_tag 는 파일명이 된다. 경로 구분자나 공백이 들어오면 저장이 깨지거나
+    # 폴더를 탈출한다 — 조용히 이상한 곳에 쓰기 전에 여기서 막는다.
+    if run_tag:
+        import re as _re
+        if not _re.fullmatch(r"[A-Za-z0-9_-]{1,32}", run_tag):
+            print()
+            print("  ★ --tag 는 영문/숫자/밑줄/하이픈 1~32자만 됩니다 — 중단합니다.")
+            print(f"    받은 값: {run_tag!r}")
+            return None, True
+        # 파일명은 `photo_test_results[_평가셋][_전처리][_태그].json` 이다.
+        # 태그가 평가셋/전처리 이름과 같으면 서로 다른 조건이 **같은 파일**을 쓴다.
+        #   예: --set baseline32 --tag production  →  photo_test_results_production.json
+        #       = --preprocess production 의 파일. 조건이 통째로 뒤바뀐다.
+        _RESERVED = {"raw", "production", "baseline32", "all", "aihub300"}
+        if run_tag in _RESERVED:
+            print()
+            print(f"  ★ --tag 로 {run_tag!r} 는 쓸 수 없습니다 — 중단합니다.")
+            print("    평가셋·전처리 이름과 같으면 다른 조건의 결과 파일과")
+            print("    이름이 겹칩니다(2026-08-28 감사 중-5).")
+            print(f"    예약어: {', '.join(sorted(_RESERVED))}")
+            print("    run2 · run3 · v2 처럼 회차를 뜻하는 이름을 쓰십시오.")
+            return None, True
+
     api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
+    if not api_key and not dry_run:
         print("  OPENAI_API_KEY가 설정되지 않았습니다.")
         return None, True
 
     if not TEST_DIR.exists():
         TEST_DIR.mkdir(parents=True, exist_ok=True)
 
-    images = sorted(
-        [f for f in TEST_DIR.iterdir() if f.suffix.lower() in ('.jpg', '.jpeg', '.png')]
-    )
+    # gt_map: 파일 경로 → 정답 음식명.
+    #   비어 있으면 기존대로 **파일명 stem** 에서 유도한다(01_김치 → 김치).
+    #   aihub300 은 파일명이 `04_043_04013002_160293077496393_1.jpg` 라서
+    #   stem 파싱이 통째로 틀린다 — 그래서 폴더명을 여기에 실어 보낸다.
+    gt_map = {}
+
+    _EXTS = ('.jpg', '.jpeg', '.png')
+
+    if photo_set == "aihub300":
+        if not AIHUB_VAL_DIR.exists():
+            print()
+            print("=" * 60)
+            print("  aihub300 — 평가셋 폴더가 없습니다. 중단합니다.")
+            print("=" * 60)
+            print(f"\n  없음: {AIHUB_VAL_DIR}")
+            print("  먼저 run-aihub-val-evalset.bat 으로 holdout 을 추출하십시오.")
+            return None, True
+
+        images = []
+        classes = sorted(d for d in AIHUB_VAL_DIR.iterdir() if d.is_dir())
+        short = []
+        for d in classes:
+            fs = sorted(f for f in d.iterdir() if f.suffix.lower() in _EXTS)
+            picked = fs[:AIHUB_PER_CLASS]
+            if len(picked) < AIHUB_PER_CLASS:
+                short.append(f"{d.name} {len(picked)}/{AIHUB_PER_CLASS}")
+            for f in picked:
+                gt_map[f] = d.name
+            images.extend(picked)
+
+        # ★ 무엇을 몇 장 셌는지 추론 전에 출력한다(규칙38·42).
+        print()
+        print("=" * 60)
+        print("  aihub300 인벤토리 — AI Hub Validation holdout")
+        print("=" * 60)
+        print(f"  클래스 {len(classes)}종 · 클래스당 최대 {AIHUB_PER_CLASS}장 "
+              f"· 합계 {len(images)}장")
+        print(f"  출처: {AIHUB_VAL_DIR}")
+        print("  GT = 폴더명 (파일명에서는 유도 불가)")
+        print("  샘플링 = 파일명 정렬 후 앞 N장 → 매 실행 같은 사진 (재현 가능)")
+        # ★ 경고를 «출력만» 하면 안 된다(규칙44). 셋이 깨진 채로 $1.5 가 나간다.
+        #   2026-08-28 감사 실측: 3종 14장짜리 셋에서도 exit 0 이었고, .bat 은
+        #   그 뒤에 "30 classes, 300 total" 이라는 하드코딩 문구를 출력했다.
+        _broken = []
+        if short:
+            print(f"  [경고] 목표 미달 클래스 {len(short)}종: {', '.join(short)}")
+            _broken.append(f"클래스당 {AIHUB_PER_CLASS}장을 못 채운 클래스 {len(short)}종")
+        if len(classes) != 30:
+            print(f"  [경고] 클래스가 30종이 아니라 {len(classes)}종입니다 — "
+                  "셋 구성이 바뀌었는지 확인하십시오.")
+            _broken.append(f"클래스가 30종이 아니라 {len(classes)}종")
+        print("=" * 60)
+        if _broken:
+            print()
+            print("  ★ 평가셋이 예상과 다릅니다 — 중단합니다.")
+            for b in _broken:
+                print(f"    · {b}")
+            print()
+            print("  이대로 돌리면 분모가 달라진 정확도가 나오고, 나중에 30종×10장")
+            print("  결과와 나란히 놓이게 됩니다(규칙34). 먼저 확인하십시오:")
+            print("   1) run-aihub-val-evalset.bat 이 완주했는가")
+            print(f"   2) {AIHUB_VAL_DIR} 아래 폴더가 30개인가")
+            print(f"   3) 각 폴더에 사진이 {AIHUB_PER_CLASS}장 이상인가")
+            return None, True
+
+    else:
+        # baseline32 / all — 기존 경로. `.tmp/test_images` 평면 폴더를 스캔한다.
+        images = sorted(
+            [f for f in TEST_DIR.iterdir() if f.suffix.lower() in _EXTS]
+        )
 
     if photo_set == "baseline32":
         want = set(BASELINE_V1_32)
@@ -323,8 +441,12 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
         print("=" * 60)
         print("  사진 테스트 — 이미지 없음")
         print("=" * 60)
-        print(f"\n  {TEST_DIR} 폴더에 음식 사진을 넣으세요.")
-        print("  파일명 = 정답 음식명 (예: 01_김치.jpg, 비빔밥.jpg)")
+        if photo_set == "aihub300":
+            print(f"\n  {AIHUB_VAL_DIR} 아래에 <음식명>/ 폴더와 사진이 없습니다.")
+            print("  run-aihub-val-evalset.bat 으로 holdout 을 먼저 추출하십시오.")
+        else:
+            print(f"\n  {TEST_DIR} 폴더에 음식 사진을 넣으세요.")
+            print("  파일명 = 정답 음식명 (예: 01_김치.jpg, 비빔밥.jpg)")
         return None, True
 
     # food_analyzer 임포트 (전체 파이프라인 사용)
@@ -337,6 +459,12 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
     print(f"  평가셋: {photo_set}"
           + ("  (IP/165 G4 게이트 · 기준선 v1 과 비교 가능)" if photo_set == "baseline32"
              else "  ⚠ 탐색용 — 59.4% 기준선과 비교하지 말 것"))
+    if photo_set == "aihub300":
+        print("          AI Hub Validation holdout · 학습 누수 0 검증됨(IP/175 §7-D-7)")
+        print("          ⚠ in-domain 입니다 — 실사용 성능의 **상한**이지 실사용 성능이")
+        print("             아닙니다(규칙47). 「앱에서 이만큼 나온다」로 인용 금지.")
+    if run_tag:
+        print(f"  태그: {run_tag}  (결과가 별도 파일로 저장됩니다 — 기준선 파일 무손상)")
     print(f"  테스트 이미지: {len(images)}장")
     print(f"  모델: GPT-4o Vision")
     if preprocess == "production":
@@ -349,6 +477,31 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
     cost_est = len(images) * 0.005
     print(f"  예상 비용: ~${cost_est:.2f}")
     print()
+
+    # ★ 세션49: 돈을 쓰기 전에 «무엇을 잴 것인지»를 확인할 수 있어야 한다.
+    #   aihub300 은 300장 ~$1.5 다. 클래스가 빠졌거나 GT 매핑이 틀린 채로
+    #   전부 돌고 나서 알아차리면 그 돈은 돌아오지 않는다.
+    if dry_run:
+        print("=" * 60)
+        print("  --dry-run — API 를 호출하지 않고 여기서 멈춥니다 (비용 $0)")
+        print("=" * 60)
+        _by_gt = {}
+        for _p in images:
+            _g = gt_map.get(_p)
+            if _g is None:
+                _g = _p.stem
+                if "_" in _g and _g.split("_")[0].isdigit():
+                    _g = _g.split("_", 1)[1]
+            _by_gt[_g] = _by_gt.get(_g, 0) + 1
+        print(f"  정답(GT) 종류 {len(_by_gt)}종 · 사진 {len(images)}장")
+        print(f"  GT 결정 방식: {'폴더명 (gt_map)' if gt_map else '파일명 stem 파싱'}")
+        print()
+        for _g in sorted(_by_gt):
+            print(f"    {_g:<14s} {_by_gt[_g]}장")
+        print()
+        print("  ★ 위 정답 이름이 실제 음식과 맞는지 눈으로 확인하십시오.")
+        print("    맞으면 --dry-run 을 빼고 다시 실행하면 됩니다.")
+        return None, False
 
     foods_db = load_food_db()
 
@@ -376,10 +529,15 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
     }
 
     for i, img_path in enumerate(images, 1):
-        # 파일명에서 정답 추출 (예: "01_김치" → "김치")
-        expected_name = img_path.stem
-        if "_" in expected_name and expected_name.split("_")[0].isdigit():
-            expected_name = expected_name.split("_", 1)[1]
+        # 정답(GT) 결정. gt_map 에 있으면 그게 우선 — aihub300 은 **폴더명**이 GT다.
+        #   파일명이 `04_043_04013002_160293077496393_1` 이라 아래 stem 파싱을 태우면
+        #   `043_04013002_160293077496393_1` 이라는 엉뚱한 정답이 나온다(세션49 실측).
+        expected_name = gt_map.get(img_path)
+        if expected_name is None:
+            # 파일명에서 정답 추출 (예: "01_김치" → "김치")
+            expected_name = img_path.stem
+            if "_" in expected_name and expected_name.split("_")[0].isdigit():
+                expected_name = expected_name.split("_", 1)[1]
 
         print(f"  [{i:02d}/{len(images)}] {expected_name}...", end=" ", flush=True)
 
@@ -536,10 +694,20 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
     print("=" * 60)
     print("  food30 엔진 (IP/166 v2 · tau=0.70)")
     print("=" * 60)
-    if f30["photos_with_engine_field"] == 0:
+    engine_never_ran = (f30["photos_with_engine_field"] == 0)
+    if engine_never_ran:
         print("  ★ 엔진이 한 번도 돌지 않았습니다 (food30_engine 필드 0건).")
         print("    → 모델 미로드 / FOOD30_ENGINE=0 / 배선 누락 중 하나입니다.")
         print("    → 이 상태의 EXACT% 는 '엔진 적용 전 기준선'이지 G4 결과가 아닙니다.")
+        if photo_set == "aihub300":
+            # ★ aihub300 은 «엔진이 GPT 를 메우는가»를 재려고 300장 $1.5 를 쓰는 셋이다.
+            #   엔진이 안 돌았으면 그 질문에 대한 답이 아니라 «GPT 단독 성능»이다.
+            #   화면에만 적어 두면 다음 세션이 changed:0 을 「엔진은 아무것도
+            #   바꾸지 않는다」로 읽는다 — 정반대 결론이다(2026-08-28 감사 치명-3).
+            print()
+            print("  ⛔ 이 실행(aihub300)의 목적은 엔진 기여 측정입니다.")
+            print("     엔진이 돌지 않았으므로 이 결과로 그 질문에 답할 수 없습니다.")
+            print("     결과 파일은 저장하되 종료코드 1 로 알립니다.")
     else:
         print(f"  엔진이 돈 사진:      {f30['photos_with_engine_field']}/{total}장")
         print(f"  검출 (밥류):         {f30['detected_rice']}건")
@@ -663,12 +831,20 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
         # 서로 다른 입력을 받고 있었다」가 드러났고, 그걸 모르면 두 실행의 숫자를
         # 같은 표에 올리게 된다(규칙34).
         "preprocess": preprocess,
+        # 세션49: 반복 측정(run-to-run 분산)에서 어느 회차인지. 비우면 "".
+        "tag": run_tag,
+        # 세션49: aihub300 은 클래스당 장수가 결과의 성격을 정한다. 나중에
+        # 다른 N 으로 잰 값과 나란히 놓지 않도록 파일에 박아 둔다(규칙34).
+        "aihub_per_class": AIHUB_PER_CLASS if photo_set == "aihub300" else None,
         "gate_comparable": (photo_set == "baseline32" and preprocess == "raw"
                             and not measurement_broken),
         # ★ 세션48: 이 파일을 나중에 읽는 사람이 「쓸 수 있는 측정인가」를
         #   숫자를 해석하기 전에 알 수 있어야 합니다. errors 를 세어 두기만 하면
         #   다음 세션이 0.0% 를 성능으로 읽습니다(실제로 그럴 뻔했습니다).
         "usable": not measurement_broken,
+        # 세션49: 엔진이 실제로 돌았는가. changed:0 에는 두 가지 뜻이 있다 —
+        #   「돌았는데 바꿀 게 없었다」와 「아예 안 돌았다」. 파일만 보고 구별되어야 한다.
+        "engine_ran": not engine_never_ran,
         "measurement_broken_reason": (f"{errors}/{total} photos errored"
                                       if measurement_broken else None),
         "total": total,
@@ -689,10 +865,22 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
     # 덮어써서 「이 숫자가 어느 셋이었나」를 사후에 알 수 없었다.
     #   세션48: 전처리 모드도 파일명에 넣는다. production 결과가 59.4% 파일을
     #   덮으면 회귀 기준선이 사라진다 — IP/174 §4-3 이 명시적으로 금지한 사고다.
+    #   세션49: tag 도 넣는다. 같은 조건을 여러 번 재는 분산 측정에서, 태그가 없으면
+    #   2회차가 1회차를 덮고 **기준선 파일(photo_test_results.json)까지 밀어낸다.**
+    #   보관 로직이 데이터는 지켜 주지만, 「59.4% = 이 파일」이라는 정체성은 못 지킨다.
     _sfx = "" if photo_set == "baseline32" else f"_{photo_set}"
     if preprocess != "raw":
         _sfx += f"_{preprocess}"
+    if run_tag:
+        _sfx += f"_{run_tag}"
     json_path = RESULT_DIR / f"photo_test_results{_sfx}.json"
+
+    # 태그 없이 기준선 파일을 덮어쓰는 경우, 조용히 넘어가지 않는다.
+    if not _sfx:
+        print()
+        print("  ⚠ 이 실행은 기준선 파일 photo_test_results.json 을 덮어씁니다.")
+        print("    (이전 기록은 아래에 자동 보관됩니다)")
+        print("    분산 측정처럼 기준선을 남겨야 하면 --tag 를 쓰십시오.")
 
     # ★ 덮어쓰기 전에 이전 실행을 보관한다 (세션46 신설).
     #   2026-08-19 에 실제로 사고가 났습니다 — 스모크 테스트 1회가 2026-07-24
@@ -785,6 +973,10 @@ def run_photo_test(photo_set="baseline32", preprocess="raw"):
     #   저장을 막지는 않습니다(세션46: 보관 실패가 저장을 막지 않게 한 것과 같은 이유).
     if measurement_broken:
         return None, True
+    # 세션49: aihub300 에서 엔진이 안 돌았으면 «측정은 됐지만 재려던 것을 못 쟀다».
+    #   acc 는 돌려준다(GPT 단독 성능으로는 유효하다). 다만 실패로 알린다.
+    if engine_never_ran and photo_set == "aihub300":
+        return strict_accuracy, True
     return strict_accuracy, gate_failed
 
 
@@ -799,13 +991,29 @@ def main():
     parser.add_argument("--photo", action="store_true", help="사진 인식 테스트 (~$0.005/장)")
     parser.add_argument("--all", action="store_true", help="둘 다")
     parser.add_argument("--set", dest="photo_set", default="baseline32",
-                        choices=["baseline32", "all"],
+                        choices=["baseline32", "all", "aihub300"],
+                        # ⚠ help 안의 %는 %%로 (아래 --preprocess 주석 참조)
                         help="사진 평가셋. baseline32=IP/165 G4 게이트(기본), "
-                             "all=폴더 전수(탐색용, 기준선과 비교 불가)")
+                             "all=폴더 전수(탐색용, 기준선과 비교 불가), "
+                             "aihub300=AI Hub holdout 30종x10장(~$1.5, in-domain 상한)")
+    parser.add_argument("--dry-run", dest="dry_run", action="store_true",
+                        help="API 를 호출하지 않고 «무엇을 잴 것인지»만 출력 "
+                             "(비용 $0). 사진 수와 정답 매핑을 돈 쓰기 전에 확인")
+    parser.add_argument("--tag", dest="tag", default="",
+                        help="결과 파일명 접미사. 반복 측정에서 기준선 파일을 "
+                             "덮지 않기 위한 것. 예: --tag run2 → "
+                             "photo_test_results_run2.json")
     parser.add_argument("--preprocess", dest="preprocess", default="raw",
                         choices=["raw", "production"],
+                        # ★ 2026-08-26: help 안의 %는 반드시 %%로 이스케이프한다.
+                        #   argparse 는 help 를 `help_string % params` 로 포맷한다.
+                        #   「59.4% 기준선」의 `% 기` 를 포맷 지정자로 읽어
+                        #   ValueError: unsupported format character '기' 로 죽었다.
+                        #   Python 3.14 부터 add_argument 시점에 검사하므로
+                        #   --help 를 안 쳐도 **파서 생성만으로 즉시** 터진다.
+                        #   제이 PC 에서 실측(2026-08-26): STEP 2 진입 직후 크래시.
                         help="GPT-4o 로 보내는 이미지의 전처리. raw=원본·detail:high(기본, "
-                             "59.4% 기준선 조건), production=768px·detail:low·center-crop "
+                             "59.4%% 기준선 조건), production=768px·detail:low·center-crop "
                              "(IP/174 §4-3). 엔진 입력은 두 모드 모두 원본. "
                              "production 결과는 별도 파일에 저장되고 G4 판정 대상이 아님")
     args = parser.parse_args()
@@ -826,7 +1034,18 @@ def main():
         print("    → 결과는 photo_test_results_production.json 에 별도 저장.")
         print("    → G4 게이트 판정 대상이 아니다. 59.4% 와 비교하지 말 것.")
         print()
+        print("  # 실행 간 분산 측정 (세션49 신설) — 기준선 파일을 덮지 않는다")
+        print("  python tools/accuracy_test.py --photo --tag run2")
+        print("    → photo_test_results_run2.json 으로 저장.")
+        print("    → 여러 회차를 모아 비교: python tools/compare_runs.py .tmp/photo_test_results*.json")
+        print()
+        print("  # AI Hub holdout 300장 (세션49 신설, ~$1.5)")
+        print("  python tools/accuracy_test.py --photo --set aihub300")
+        print("    → 30종 x 10장. GT 는 폴더명. 엔진이 실제로 일하는 셋이다.")
+        print("    → ⚠ in-domain — 실사용 성능의 상한이지 실사용 성능이 아니다(규칙47).")
+        print()
         print(f"사진 위치: {TEST_DIR}")
+        print(f"           {AIHUB_VAL_DIR}  (--set aihub300)")
         print("파일명 = 정답 (예: 01_김치.jpg → 정답 '김치')")
         sys.exit(0)
 
@@ -838,7 +1057,24 @@ def main():
 
     if args.photo or args.all:
         acc, gate_failed = run_photo_test(photo_set=args.photo_set,
-                                          preprocess=args.preprocess)
+                                          preprocess=args.preprocess,
+                                          run_tag=args.tag,
+                                          dry_run=args.dry_run)
+        # 세션49: --dry-run 은 «측정 실패»가 아니라 «측정하지 않기로 한 것»이다.
+        #   acc is None 이라는 점은 같지만 종료코드가 달라야 한다 — 아래 exit 1 은
+        #   .bat 이 「측정이 깨졌다」로 읽는 신호이고, dry-run 에 그걸 붙이면
+        #   정상 확인 절차가 실패로 보인다.
+        if args.dry_run:
+            # ⚠ 초판은 무조건 exit 0 이었습니다. 그러면 --tag 오타 · 평가셋 폴더 없음 ·
+            #   32장 결손 같은 **중단 사유가 전부 exit 0** 이 되어, 확인하려고 만든
+            #   절차가 실패를 숨깁니다(규칙44 — 세는 것과 판정에 쓰는 것은 다르다).
+            #   실측으로 잡았습니다: `--tag '../evil hack'` 이 거부됐는데 EXIT=0.
+            if gate_failed:
+                print("\n  ✗ --dry-run 확인이 실패했습니다 — 위 메시지를 보십시오.")
+                print("    이 상태로 본 실행을 걸면 같은 지점에서 멈춥니다.")
+                sys.exit(1)
+            print("\n  (--dry-run 이므로 여기서 정상 종료합니다. 비용 $0)")
+            sys.exit(0)
         # 세션48: 전처리를 바꾼 실행은 G4 판정 대상이 아니다. 기준선이 다르다(규칙34).
         _gate_applicable = (args.photo_set == "baseline32" and args.preprocess == "raw")
         if acc is not None:
@@ -883,7 +1119,11 @@ def main():
             print("       → 파일은 저장됐지만 `\"usable\": false` 가 박혀 있습니다.")
             print("         숫자를 인용하기 전에 그 필드를 확인하십시오.")
             sys.exit(1)
-        if gate_failed and _gate_applicable:
+        # 세션49: G4 게이트가 아닌 실행에도 «실패»가 있다. aihub300 에서 엔진이
+        #   안 돌면 재려던 것을 못 잰 것이므로 실패로 알린다(감사 치명-3).
+        #   _gate_applicable 만 보면 그 신호가 통째로 사라진다 — 세션48 치명-1 과
+        #   같은 구조의 구멍이다.
+        if gate_failed and (_gate_applicable or args.photo_set == "aihub300"):
             sys.exit(1)
 
 

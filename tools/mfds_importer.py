@@ -33,7 +33,7 @@ def load_env():
     ]
     for p in env_paths:
         if p.exists():
-            with open(p) as f:
+            with open(p, encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith('#') and '=' in line:

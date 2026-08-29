@@ -38,6 +38,10 @@ torch/ultralytics 없이 돌아간다 — 순수 함수와 모듈 상수만 검�
   python -m pytest tests/test_food30_override.py -v
   또는  python tests/test_food30_override.py
 """
+import ast          # ★ 세션49: 모듈 최상위에 둔다. 여러 테스트가 함수 안에서
+                    #   `import ast as _ast` 를 하는데, 그러면 같은 함수 안에서
+                    #   `ast.` 를 쓰는 순간 NameError 가 난다. 실제로 세션49에서
+                    #   두 번 그랬다(규칙46 계열). 여기 두면 둘 다 동작한다.
 import os
 import sys
 import unittest
@@ -994,6 +998,269 @@ class TestSpecificityRankTable(unittest.TestCase):
         rank1 = {k for k, v in spec.items() if v.get('rank') == 1}
         self.assertEqual(rank1, {'기타잡곡밥'},
                          f"실측 없이 rank1 이 추가됐다: {rank1 - {'기타잡곡밥'}}")
+
+
+class TestArgparseHelpStrings(unittest.TestCase):
+    """argparse help 안의 % 가 이스케이프됐는지.
+
+    2026-08-26 제이 PC 실측 사고
+    ─────────────────────────────────────────────────────────────
+    `--preprocess` 의 help 에 「59.4% 기준선」이라고 썼습니다.
+    argparse 는 help 를 `help_string % params` 로 포맷하므로
+    `% 기` 를 포맷 지정자로 읽고 죽습니다:
+
+        ValueError: unsupported format character '기' (0xae30)
+        ValueError: badly formed help string
+
+    Python 3.14 부터 add_argument 시점에 검사하므로 `--help` 를
+    치지 않아도 **파서 생성만으로 즉시** 터집니다. 제이가
+    run-production-remeasure.bat 을 돌렸을 때 STEP 2 진입 직후
+    크래시했습니다(다행히 API 호출 전이라 비용 0).
+
+    왜 기존 테스트가 못 잡았나
+    ─────────────────────────────────────────────────────────────
+    argparse 는 main() 안에서만 실행됩니다. 유닛 테스트는 순수 함수와
+    모듈 상수만 보므로 main() 에 닿지 않습니다. 79개가 전부 통과하는
+    상태에서 실행 파일이 죽었습니다.
+
+    → import 도 실행도 하지 않고 **소스를 AST 로 읽어** 검사합니다.
+      무거운 DB 로드 없이 STEP 1 회귀에 얹을 수 있습니다.
+    """
+
+    TARGETS = [
+        _NUTRILENS / 'tools' / 'accuracy_test.py',
+        _NUTRILENS / 'tools' / 'food30_diagnose_attractor.py',
+        _NUTRILENS / 'tools' / 'food30_diagnose_rice.py',
+        _NUTRILENS / 'tools' / 'food30_sweep.py',
+    ]
+
+    @staticmethod
+    def _literal(node):
+        """help= 에 들어간 문자열. 암묵적 연결(인접 리터럴)도 이어붙인다."""
+        import ast
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            l = TestArgparseHelpStrings._literal(node.left)
+            r = TestArgparseHelpStrings._literal(node.right)
+            return None if l is None or r is None else l + r
+        return None
+
+    def test_percent_is_escaped_in_help(self):
+        import ast
+        bad = []
+        checked = 0
+        for path in self.TARGETS:
+            if not path.exists():
+                continue
+            tree = ast.parse(path.read_text(encoding='utf-8'))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                if not (isinstance(fn, ast.Attribute) and fn.attr == 'add_argument'):
+                    continue
+                for kw in node.keywords:
+                    if kw.arg != 'help':
+                        continue
+                    s = self._literal(kw.value)
+                    if s is None:
+                        continue
+                    checked += 1
+                    # % 뒤가 % 가 아니고 (, 나 유효 지정자도 아니면 폭탄.
+                    # 한국어 문서에서는 사실상 «%% 로 쓰지 않은 것»이 전부 폭탄이다.
+                    i = 0
+                    while i < len(s):
+                        if s[i] == '%':
+                            if i + 1 < len(s) and s[i + 1] == '%':
+                                i += 2
+                                continue
+                            bad.append((path.name, node.lineno,
+                                        s[max(0, i - 12):i + 6]))
+                        i += 1
+        self.assertEqual(
+            bad, [],
+            "argparse help 안의 %가 이스케이프되지 않았다(%% 로 쓸 것). "
+            f"argparse 가 파서 생성 시점에 죽는다. 문제 위치: {bad}")
+        self.assertGreater(checked, 0, 'help 문자열을 하나도 검사하지 못했다 — 검사기가 고장')
+
+    def test_parser_actually_builds(self):
+        """AST 검사를 통과해도 실제로 만들어지는지 확인한다.
+
+        accuracy_test 를 import 하면 음식 DB 23만종을 로드해 느리므로,
+        add_argument 호출부만 떼어내 같은 인자로 재현합니다.
+        """
+        import ast, argparse
+        src = (_NUTRILENS / 'tools' / 'accuracy_test.py').read_text(encoding='utf-8')
+        tree = ast.parse(src)
+        calls = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute)
+                 and n.func.attr == 'add_argument']
+        self.assertGreaterEqual(len(calls), 4, 'add_argument 를 찾지 못했다')
+        p = argparse.ArgumentParser()
+        built = 0
+        for c in calls:
+            try:
+                args = [ast.literal_eval(a) for a in c.args]
+                kwargs = {kw.arg: ast.literal_eval(kw.value)
+                          for kw in c.keywords if kw.arg}
+            except (ValueError, SyntaxError):
+                continue          # 리터럴이 아닌 인자는 건너뛴다
+            p.add_argument(*args, **kwargs)
+            built += 1
+        self.assertGreater(built, 0, '재현 가능한 add_argument 가 없다')
+        # help 포맷을 실제로 돌려 본다 — 여기서 죽으면 실행 파일도 죽는다.
+        p.format_help()
+
+
+class TestNoParameterShadowing(unittest.TestCase):
+    """★ 세션49 신설 — 함수 파라미터가 자기 함수 안에서 재할당되는가.
+
+    2026-08-28 실측 사고: `run_photo_test(..., tag="")` 의 `tag` 를
+    같은 함수의 사진 루프가 `tag = "✓ EXACT"` 로 덮었다. 그 결과
+    결과 파일이 `photo_test_results_✗ MISS.json` 으로 저장되고,
+    `.bat` 이 약속한 `photo_test_results_run2.json` 은 생기지 않았다.
+    화면에는 "DONE. Saved: ..." 가 그대로 찍힌다.
+
+    세션48의 `out = m["bytes"]` (출력 함수를 지역 변수가 가림)와 같은 사고이고,
+    규칙46 이 「일괄 치환 후 이름 충돌을 보라」고 적어 둔 유형이다.
+    문법 오류가 아니므로 py_compile 도, 기존 81건도 잡지 못했다.
+
+    ⚠ 이 검사는 «파라미터로 받은 값을 함수 안에서 다시 대입하지 않는다»는
+      규율이다. 정당한 재대입(기본값 보정 등)이 필요하면 다른 이름을 쓰라 —
+      그게 읽는 사람에게도 안전하다.
+    """
+
+    # 검사 대상: (파일, 함수명). 값이 파일명·경로가 되는 함수를 우선한다.
+    TARGETS = [
+        ('accuracy_test.py', 'run_photo_test'),
+    ]
+
+    def _params_and_assigns(self, path, func_name):
+        import ast as _ast
+        src = (_NUTRILENS / 'tools' / path).read_text(encoding='utf-8')
+        tree = _ast.parse(src)
+        fns = [n for n in _ast.walk(tree)
+               if isinstance(n, _ast.FunctionDef) and n.name == func_name]
+        self.assertEqual(len(fns), 1,
+                         f'{path} 에서 {func_name} 을 정확히 하나 찾지 못했다')
+        fn = fns[0]
+        a = fn.args
+        params = {x.arg for x in list(a.args) + list(a.kwonlyargs) + list(a.posonlyargs)}
+        if a.vararg:
+            params.add(a.vararg.arg)
+        if a.kwarg:
+            params.add(a.kwarg.arg)
+        assigned = set()
+        for n in _ast.walk(fn):
+            if isinstance(n, _ast.Assign):
+                for t in n.targets:
+                    for x in _ast.walk(t):
+                        if isinstance(x, _ast.Name) and isinstance(x.ctx, _ast.Store):
+                            assigned.add(x.id)
+            elif isinstance(n, (_ast.AugAssign, _ast.AnnAssign)):
+                if isinstance(n.target, _ast.Name):
+                    assigned.add(n.target.id)
+            elif isinstance(n, _ast.For):
+                for x in _ast.walk(n.target):
+                    if isinstance(x, _ast.Name):
+                        assigned.add(x.id)
+        return params, assigned
+
+    def test_run_photo_test_params_not_shadowed(self):
+        for path, func in self.TARGETS:
+            with self.subTest(func=func):
+                params, assigned = self._params_and_assigns(path, func)
+                clash = sorted(params & assigned)
+                self.assertEqual(
+                    clash, [],
+                    f'{func}() 의 파라미터 {clash} 가 함수 안에서 재할당된다. '
+                    '파일명·조건이 조용히 바뀐다 — 다른 이름을 쓰라.')
+
+    def test_detector_itself_is_sane(self):
+        """★ 검사기가 멀쩡한지 먼저 본다(규칙50).
+
+        위 검사가 «아무것도 안 보고 통과»하는 상태면 의미가 없다.
+        파라미터를 실제로 찾았는지, 그리고 일부러 만든 충돌을 잡는지 확인한다.
+        """
+        params, assigned = self._params_and_assigns('accuracy_test.py',
+                                                    'run_photo_test')
+        # 파라미터를 실제로 읽었는가
+        self.assertIn('run_tag', params)
+        self.assertIn('photo_set', params)
+        # 함수 안에 대입문이 실제로 있는가 (파싱 범위가 비어 있지 않다)
+        self.assertGreater(len(assigned), 10)
+        # ★ 루프 변수 tag 는 여전히 존재한다 — 그게 이 검사가 감시하는 이름이다.
+        self.assertIn('tag', assigned)
+        # 반증: 파라미터 이름을 tag 로 되돌리면 충돌이 잡혀야 한다.
+        self.assertTrue({'tag'} & assigned,
+                        '루프 변수 tag 가 사라졌다면 이 회귀 테스트의 전제가 바뀐 것이다')
+
+
+class TestLoadEnvEncoding(unittest.TestCase):
+    """★ 세션49 신설 — load_env() 가 .env 를 UTF-8 로 읽는가.
+
+    2026-08-28 실측 사고: `run-variance-3x.bat` STEP 1 이 시작하자마자
+    `UnicodeDecodeError: 'cp949' codec can't decode byte 0xec in position 567`
+    로 죽었습니다. `.env` 8행에 UTF-8 한글 주석
+    (`# --- 세션42 20260801_101838: ...`, 2026-08-01 작성)이 있는데
+    `open(p)` 가 Windows 기본 인코딩(cp949)으로 읽으려 했기 때문입니다.
+
+    **모듈 최상위에서 load_env() 를 호출하므로 import 단계에서 죽습니다.**
+    즉 그 파일을 쓰는 모든 도구가 한꺼번에 멈춥니다. 실제로 7개 파일 중
+    6개가 같은 코드를 복사해 갖고 있었고, `bap_gate_eval.py` 하나만
+    이미 encoding 을 지정하고 있었습니다 — 누군가 전에 같은 일을 겪었다는 뜻입니다.
+
+    ⚠ 이 사고가 무서운 이유: 같은 날 13:00·13:51 실행은 **성공**했습니다.
+      코드도 .env 도 그대로였습니다. 환경(기본 인코딩)이 바뀌면 터지는
+      **잠복 버그**였고, 언제 터질지 예측할 수 없었습니다.
+    """
+
+    ENV_READERS = [
+        'accuracy_test.py', 'food_analyzer.py', 'test_server.py',
+        'pre_deploy_test.py', 'fetch_mfds_data.py', 'mfds_importer.py',
+        'bap_gate_eval.py',
+    ]
+
+    def _open_calls_in_load_env(self, path):
+        import ast as _ast
+        f = _NUTRILENS / 'tools' / path
+        if not f.exists():
+            return None
+        tree = _ast.parse(f.read_text(encoding='utf-8'))
+        fns = [n for n in _ast.walk(tree)
+               if isinstance(n, _ast.FunctionDef) and n.name == 'load_env']
+        if not fns:
+            return None
+        return [n for n in _ast.walk(fns[0])
+                if isinstance(n, _ast.Call)
+                and isinstance(n.func, _ast.Name) and n.func.id == 'open']
+
+    def test_load_env_opens_utf8(self):
+        checked = 0
+        for path in self.ENV_READERS:
+            calls = self._open_calls_in_load_env(path)
+            if calls is None:
+                continue
+            checked += 1
+            for c in calls:
+                kw = {k.arg: k.value for k in c.keywords}
+                with self.subTest(file=path, line=c.lineno):
+                    self.assertIn(
+                        'encoding', kw,
+                        f'{path}:{c.lineno} load_env() 의 open() 에 encoding 이 없다. '
+                        'Windows 에서 .env 에 한글이 있으면 import 단계에서 죽는다.')
+                    v = kw['encoding']
+                    self.assertTrue(
+                        isinstance(v, ast.Constant)
+                        and str(v.value).lower().replace('-', '') == 'utf8',
+                        f"{path}:{c.lineno} encoding 이 utf-8 이 아니다")
+        # ★ 검사기 자기점검(규칙50): 대상 파일을 실제로 찾았는가.
+        self.assertGreaterEqual(
+            checked, 5,
+            f'load_env 를 가진 파일을 {checked}개밖에 못 찾았다 — '
+            '경로나 함수명이 바뀌었다면 이 검사는 아무것도 지키지 않는다')
 
 
 if __name__ == '__main__':
