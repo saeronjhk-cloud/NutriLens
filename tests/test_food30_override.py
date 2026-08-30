@@ -16,10 +16,27 @@
   - '기타잡곡밥' 은 gold 미등재라 '잡곡밥' 으로 매핑된다
 
   [항목 판별 계약]  ★ 이 프로젝트에서 가장 비싼 부분
-  - 찌개는 탕류 교체 대상이 아니다 — v4 에 남은 오탐 2건이 김치찌개·순두부찌개(→닭볶음탕)다
-  - 된장국·미역국·국수·국밥은 대상이 아니다 ('해장국'만 허용)
-  - 탕수육·설탕은 대상이 아니다
-  - 비빔밥·볶음밥·덮밥류는 대상이 아니다 (IP/165 §3-1 회색지대)
+  ── 세션50 (2026-08-30) 개정 ─────────────────────────────────────────
+  판별에 «두 모드»가 있다. 구분을 흐리지 말 것.
+
+    좁은 모드  _f30_is_soup(nm)                 ← engine_class 없음. 종전 그대로.
+               「이 이름이 food30 30종에 속하는가」. food30_sweep 등이 쓴다.
+    확장 모드  _f30_is_soup(nm, engine_class)   ← apply_food30_override 만 쓴다.
+               「이 이름이 국물 한 그릇인가」. 접미사 탕/국/찌개/전골.
+
+  - 좁은 모드에서는 찌개·된장국·대구탕·콩나물해장국 전부 여전히 False 다 (종전 계약 유지)
+  - 확장 모드에서는 교체 «후보»가 된다. 다만 다음 두 가드가 걸린다:
+      · 엔진 클래스가 _F30_FP_PRONE_CLASSES(현재 닭볶음탕)면 확장을 끈다
+        → 김치찌개·순두부찌개 오탐 2건이 여기서 막힌다 (게이트91 실측)
+      · _F30_SOUP_TRAP(설탕·탕수육·국수류)은 접미사가 맞아도 후보가 아니다
+  - 밥류는 확장하지 않는다. 비빔밥↔돌솥밥이 동전던지기라 손실 표본 n=1 (규칙56)
+  - 비빔밥·볶음밥·덮밥류는 여전히 대상이 아니다 (IP/165 §3-1 회색지대)
+
+  근거: aihub300 재채점 EXACT 137→161 (+24, 신규 오답 0) · 게이트91 거짓 교체 0
+        재현 스크립트 outputs/verify_widening_real.py (프로덕션 함수 직접 호출)
+
+  ⚠ 미결: 콩나물해장국·선지해장국 등 «비-food30 해장국»은 두 평가셋 어디에도
+     사진이 없다. 확장 모드에서 뼈해장국으로 교체될 수 있으나 실측 근거가 없다(규칙57).
 
   [교체 정책 계약]  제이 확정 2026-08-16
   - 카테고리(밥/탕)당 최대 1건 교체. 밥 1건 + 탕 1건 동시 교체 가능
@@ -623,13 +640,77 @@ class TestEndToEndWithMatchDb(unittest.TestCase):
         self.assertEqual(info['applied'], [])
         self.assertEqual(len(info['disagreement']), 1)
 
-    def test_unknown_soup_not_absorbed(self):
-        for name, cls in [('대구탕', '매운탕'), ('콩나물해장국', '뼈해장국'),
-                          ('김치찌개', '닭볶음탕')]:
+    def test_fp_prone_class_never_absorbs(self):
+        """★ 가드의 존재 이유. 게이트91 실측 오탐 2건이 여기서 막혀야 한다.
+
+        김치찌개 0.929 · 순두부찌개 0.907 — 둘 다 닭볶음탕發이고, 정탐 «분포 안»에 있다
+        (정탐 중앙값 0.90 · 최대 0.96). τ=0.93 으로 오탐을 죽이면 확장이 살린 29장 중
+        24장이 같이 죽는다. 그래서 τ 로는 못 막고, 클래스 조건부 가드만 유효하다.
+        """
+        for name in ['김치찌개', '순두부찌개', '된장찌개', '부대찌개']:
             out, info = self._run([{'name_ko': name, 'estimated_serving_g': 500}],
-                                  {'soup': {'class': cls, 'confidence': 0.93}})
-            self.assertEqual(out[0][0], name, f"{name} 이 {cls} 로 바뀌었다")
+                                  {'soup': {'class': '닭볶음탕', 'confidence': 0.93}})
+            self.assertEqual(out[0][0], name, f"{name} 이 닭볶음탕으로 바뀌었다")
             self.assertEqual(info['applied'], [])
+            self.assertEqual(len(info['disagreement']), 1)
+
+    def test_soup_trap_never_absorbed(self):
+        """접미사가 '탕/국'이어도 국물 한 그릇이 아닌 것은 후보가 아니다."""
+        for name in ['설탕', '탕수육', '탕평채', '국수', '칼국수', '콩국수', '수제비']:
+            out, info = self._run([{'name_ko': name, 'estimated_serving_g': 300}],
+                                  {'soup': {'class': '매운탕', 'confidence': 0.93}})
+            self.assertEqual(out[0][0], name, f"{name} 이 매운탕으로 바뀌었다")
+            self.assertEqual(info['applied'], [])
+
+    def test_widened_replacement_recovers_measured_cases(self):
+        """★ 세션50 확장이 실제로 살려낸 케이스. aihub300 실측에서 그대로 뽑았다.
+
+        (GT, GPT 가 낸 이름, 엔진 검출) — 셋 다 종전에는 disagreement 로 버려졌다.
+        """
+        for gt, gpt_name, conf in [('추어탕', '된장찌개', 0.95),
+                                   ('추어탕', '시래기 된장국', 0.93),
+                                   ('지리탕', '대구탕', 0.86),
+                                   ('낙지탕', '문어탕', 0.92),
+                                   ('육개장', '김치찌개', 0.88),
+                                   ('매운탕', '생선찌개', 0.92),
+                                   ('감자탕', '김치찌개', 0.80),
+                                   ('닭곰탕', '닭고기 배추국', 0.89),
+                                   ('낙지탕', '문어 전골', 0.73),
+                                   ('곰탕', '파국', 0.81)]:
+            out, info = self._run([{'name_ko': gpt_name, 'estimated_serving_g': 500}],
+                                  {'soup': {'class': gt, 'confidence': conf}})
+            self.assertEqual(out[0][0], gt, f"{gpt_name} → {gt} 교체가 안 됐다")
+            self.assertEqual(len(info['applied']), 1)
+            self.assertTrue(info['applied'][0]['changed'])
+            self.assertTrue(info['applied'][0]['widened'],
+                            "확장으로 살아난 교체인데 widened 표시가 없다")
+
+    def test_narrow_replacement_is_not_marked_widened(self):
+        """종전부터 되던 교체는 widened=False 여야 한다 — 다음 유료 실행에서
+        «확장분만» 따로 채점하려면 이 구분이 정확해야 한다."""
+        out, info = self._run([{'name_ko': '설렁탕', 'estimated_serving_g': 500}],
+                              {'soup': {'class': '곰탕', 'confidence': 0.9}})
+        self.assertEqual(out[0][0], '곰탕')
+        self.assertFalse(info['applied'][0]['widened'])
+
+    def test_rice_is_not_widened(self):
+        """밥류 확장은 «의도적으로» 안 한다 — 비빔밥↔돌솥밥 동전던지기(규칙56).
+
+        게이트91 실측: 비빔밥 사진에 엔진이 돌솥밥 0.862. 확장하면 여기서 잃는다.
+        """
+        out, info = self._run([{'name_ko': '비빔밥', 'estimated_serving_g': 400}],
+                              {'rice': {'class': '돌솥밥', 'confidence': 0.862}})
+        self.assertEqual(out[0][0], '비빔밥')
+        self.assertEqual(info['applied'], [])
+        self.assertEqual(len(info['disagreement']), 1)
+
+    def test_engine_silent_changes_nothing(self):
+        """확장은 «엔진이 검출했을 때»만 작동한다. 침묵이면 GPT 이름 그대로."""
+        for name in ['대구탕', '콩나물해장국', '미역국', '김치찌개']:
+            out, info = self._run([{'name_ko': name, 'estimated_serving_g': 500}], {})
+            self.assertEqual(out[0][0], name)
+            self.assertEqual(info['applied'], [])
+            self.assertEqual(info['disagreement'], [])
 
     def test_no_double_counting_in_summary(self):
         a = {'foods': [{'name_ko': '잡곡밥', 'estimated_serving_g': 210},
@@ -864,13 +945,24 @@ class TestSpecificityRankCurrent(unittest.TestCase):
 
 
 class TestSpecificityRankNew(unittest.TestCase):
-    """★ 구현 전에는 전부 FAIL 해야 하는 신규 규칙 케이스.
+    """⛔ IP/176 «구체성 등급» — 2026-08-28 aihub300 실측으로 **기각**된 설계.
 
+    ── 상태: 「보류」 아님. 「측정 기각」임 (세션49 확정 · 세션50 주석 갱신) ──
     IP/176 §3-2 첫 줄: 엔진이 rank1(기타잡곡밥)을 냈고 GPT 가 covers 안의
-    rank0(현미밥·흑미밥·콩밥·보리밥·돌솥밥)을 냈으면 **교체하지 않는다.**
+    rank0(현미밥·흑미밥·콩밥·보리밥·돌솥밥)을 냈으면 교체하지 않는다 — 는 설계였다.
+
+    aihub300 300장 실측(IP/177 §15-2): 엔진이 이름을 바꾼 70건 중
+      · 이 설계가 막으려던 사고(엔진이 GPT 의 구체명을 잡곡밥으로 덮음) = **0건**
+      · 반대 방향(GPT 의 뭉뚱그린 '잡곡밥'을 엔진이 구체화해 정답) = **20건 개선**
+        잡곡밥→콩밥 8 · →흑미밥 6 · →보리밥 4 · →돌솥밥 2
+    구현하면 **2건 구하고 20건 잃는다.** IP/176 §5-4 의 자체 기준을 충족해 기각.
+
+    ★ 그래도 테스트를 지우지 않는 이유: v5 재학습으로 엔진의 밥류 판별이 바뀌면
+      이 계산도 바뀐다. 그때 다시 재는 «질문의 형태»로 남겨 둔다.
+      되살릴 조건 = 위 20건이 5건 미만으로 줄어들 때.
 
     구현하면 이 클래스가 UNEXPECTED SUCCESS 로 스위트를 실패시킵니다.
-    그때 데코레이터를 지우십시오.
+    그때는 데코레이터를 지우는 게 아니라 **위 재측정을 먼저** 하십시오.
     """
 
     def _assert_kept(self, gpt_name):

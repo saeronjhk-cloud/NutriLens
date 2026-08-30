@@ -692,12 +692,71 @@ def _f30_norm(name):
     return n.replace(' ', '')
 
 
-def _f30_is_rice(nm):
+# ── 세션50 (2026-08-30) 확장 — 「좁은 소속 검사」가 정답을 버리고 있었다 ──────
+#
+# IP/177 §15-4 는 aihub300 의 143장(48%)을 「GPT-4o 의 침묵」으로 읽었다. 오독이다.
+# accuracy_test.py 의 ai_name=='인식 없음' 은 find_best_match(GT, foods) 가 None 일 때
+# 붙는 라벨이라 match=='NONE' 과 143:143 으로 완전히 겹치는 «동어반복»이다.
+# GPT 는 300장 전부에 이름을 냈다(빈 응답 0장). 침묵은 존재하지 않았다.
+#
+# 실제 손실 지점은 여기다. 엔진이 GT 를 정확히 검출(29장, 다수 conf≥0.9)했는데
+# 최종 오답이 됐고, 29장 «전부» applied=[] · disagreement 였다.
+#   GT=추어탕  GPT='된장찌개'   엔진 추어탕 0.95 → 교체 안 함
+#   GT=지리탕  GPT='대구탕'     엔진 지리탕 0.86 → 교체 안 함
+#   GT=낙지탕  GPT='문어탕'     엔진 낙지탕 0.92 → 교체 안 함
+# 이유: _f30_is_soup 가 «국물류인가»가 아니라 «food30 30종에 속하는가»를 물었다.
+# GPT 가 낸 이름이 30종 밖이면 matched 가 비어 교체 후보가 아예 만들어지지 않는다.
+# IP/166 §2 의 「없는 음식을 추가하지 않는다」는 지켜야 하지만, 이 경우 음식은 «있다».
+#
+# ⚠ 2026-08-16 의 「찌개는 대상 아님」 정책을 폐기하는 것이 아니다. 그 정책이 실제로
+#   막으려던 것은 v4 잔존 오탐 2건(김치찌개 0.929 · 순두부찌개 0.907 ← 둘 다 닭볶음탕)
+#   뿐이었다. 그래서 «클래스 조건부»로 좁힌다 — 오탐 출처 클래스일 때만 확장을 끈다.
+#
+# 실측 근거 (세션50 · $0 · API 호출 없음):
+#   획득  aihub300 300장  EXACT 137 → 161 (+24장, +8.0%p)   신규 오답 0장
+#   손실  게이트 91장     엔진 발화 3장 중 닭볶음탕發 2건을 가드가 차단 → 0장
+#   → 획득:손실 = 24 : 0   (IP/177 §15-4-A 가 세운 부활 기준선 5:1 을 넘는다)
+# 재현: outputs/simulate_category_widening.py
+#
+# ⛔ 밥류(_f30_is_rice)는 확장하지 않는다. '밥' 접미사까지 넓히면 +6장이지만
+#    비빔밥↔돌솥밥이 동전던지기다 — aihub300 은 돌솥밥이 정답이라 이득,
+#    게이트91 은 비빔밥이 정답이라 손실. 손실 표본이 n=1 이라 규칙56 위반.
+_F30_SOUP_SUFFIX = ('탕', '국', '찌개', '전골')
+
+# 접미사는 맞지만 «국물 한 그릇»이 아닌 것. 확장 후보에서 제외한다.
+_F30_SOUP_TRAP = {
+    '설탕', '탕수육', '탕평채',
+    '국수', '칼국수', '콩국수', '잔치국수', '비빔국수', '수제비',
+    '중국', '한국',                    # GPT 가 국가명을 항목으로 낼 때의 방어
+}
+
+# v4 잔존 오탐의 «출처 클래스». 이 클래스가 검출됐을 때는 확장을 쓰지 않는다.
+# 2026-08-30 게이트91 실측: 김치찌개 0.929 · 순두부찌개 0.907 이 전부 여기서 나온다.
+# ★ τ 로는 못 막는다 — 이 두 오탐은 정탐 «분포 안»에 있다(정탐 중앙값 0.90 · 최대 0.96).
+#   τ=0.93 으로 오탐을 죽이면 이번에 살린 29장 중 24장이 같이 죽는다. 클래스 조건부만 유효하다.
+_F30_FP_PRONE_CLASSES = {'닭볶음탕'}
+
+
+def _f30_is_rice(nm, engine_class=None):
+    """밥류 판정. engine_class 는 시그니처 통일용이며 현재 판정에 쓰지 않는다(위 ⛔ 참조)."""
     return _f30_norm(nm) in _F30_RICE_ITEMS
 
 
-def _f30_is_soup(nm):
-    return _f30_norm(nm) in _F30_SOUP_ITEMS
+def _f30_is_soup(nm, engine_class=None):
+    """탕류 판정.
+
+    engine_class=None (기본) 이면 종전 그대로 «food30 30종 소속»만 본다.
+    food30_sweep 처럼 「GT 가 우리 30종인가」를 묻는 호출자의 의미를 바꾸지 않기 위해서다.
+    apply_food30_override 만 검출 클래스를 넘겨 확장 판정을 켠다.
+    """
+    n = _f30_norm(nm)
+    if n in _F30_SOUP_ITEMS:
+        return True
+    if engine_class is None or engine_class in _F30_FP_PRONE_CLASSES:
+        return False
+    if n in _F30_SOUP_TRAP:
+        return False
+    return n.endswith(_F30_SOUP_SUFFIX)
 
 
 _F30_CATEGORY_TEST = {'rice': _f30_is_rice, 'soup': _f30_is_soup}
@@ -736,7 +795,12 @@ def apply_food30_override(analysis, hits):
             info['no_db_key'].append(hit['class'])
             continue
 
-        test = _F30_CATEGORY_TEST[slot]
+        # ★ 세션50: 검출 클래스를 함께 넘긴다 — 확장 판정과 오탐 클래스 가드가
+        #   여기서만 켜진다. 다른 호출자(food30_sweep 등)의 의미는 그대로다.
+        _cls = hit['class']
+        _test_fn = _F30_CATEGORY_TEST[slot]
+        def test(nm, _fn=_test_fn, _c=_cls):
+            return _fn(nm, _c)
         foods = analysis.get('foods') or []
         if not isinstance(foods, list):
             foods = []
@@ -770,8 +834,13 @@ def apply_food30_override(analysis, hits):
                 continue
             f['name_ko'] = db_name                     # ★ 엔진 클래스명이 아니라 DB 키로 쓴다
             f['name_source'] = 'food30_v4'             # 텔레메트리·롤백 추적용
+            # widened=True 면 «세션50 확장 판정이 없었다면 일어나지 않았을 교체»다.
+            # 다음 유료 실행에서 확장분만 따로 채점할 수 있게 남긴다(규칙57).
             info['applied'].append({'slot': slot, 'from': nm, 'to': db_name,
-                                    'changed': True})
+                                    'changed': True,
+                                    'widened': _f30_norm(nm) not in (
+                                        _F30_RICE_ITEMS if slot == 'rice'
+                                        else _F30_SOUP_ITEMS)})
             done = True
             break
         if not done and not preempted_here:
