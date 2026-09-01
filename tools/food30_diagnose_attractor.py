@@ -106,6 +106,13 @@ IMAGES_DIR = ROOT_DIR / "Images"
 RICE_DIR = IMAGES_DIR / "밥류"
 SOUP_DIR = IMAGES_DIR / "탕류"
 SOUP2_DIR = IMAGES_DIR / "탕류_2차"
+
+# 세션48(2026-08-26): AI Hub Validation holdout.
+# `build_aihub_val_evalset.py` 가 <음식명>/ 폴더 구조로 만든다 — 탕류_2차와 같은 모양이라
+# 같은 로직으로 읽는다. 없으면 조용히 건너뛴다.
+# ⚠ 이건 in-domain 평가셋이다. 학습과 같은 촬영 조건이므로 실사용 성능의
+#   **상한**이지 실사용 성능이 아니다(IP/175 §3-5 · 규칙47).
+AIHUB_VAL_DIR = IMAGES_DIR / "aihub_val"
 TEST_DIR = PROJECT_DIR / ".tmp" / "test_images"
 OUT_DIR = PROJECT_DIR / ".tmp" / "diagnose"
 
@@ -225,6 +232,16 @@ def collect():
             for p in sorted(sub.iterdir()):
                 if p.suffix.lower() in (".jpg", ".jpeg", ".png"):
                     items.append((p, gt, _kind(gt), "Images/탕류_2차"))
+
+    # AI Hub Validation holdout — 클래스별 폴더 구조(탕류_2차와 동일)
+    if AIHUB_VAL_DIR.exists():
+        for sub in sorted(AIHUB_VAL_DIR.iterdir()):
+            if not sub.is_dir():
+                continue
+            gt = GT_ALIAS.get(sub.name, sub.name)
+            for p in sorted(sub.iterdir()):
+                if p.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                    items.append((p, gt, _kind(gt), "Images/aihub_val ★holdout"))
 
     if TEST_DIR.exists():
         for p in sorted(TEST_DIR.iterdir()):

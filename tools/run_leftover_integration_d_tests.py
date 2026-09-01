@@ -55,29 +55,53 @@ def sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def supabase_cli(*args: str) -> str:
-    try:
-        if os.name == "nt":
-            cmd = "supabase " + subprocess.list2cmdline(list(args))
-            return subprocess.check_output(
-                cmd,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                cwd=PROJECT_DIR,
-                shell=True,
-            )
+# 일시적 통신 오류(연결 리셋/타임아웃)에만 재시도. 항구적 실패는 즉시 중단.
+_TRANSIENT_MARKERS = (
+    "forcibly closed", "wsarecv", "connection reset", "read tcp",
+    "i/o timeout", "TLS handshake", "EOF", "unexpected EOF",
+    "temporarily unavailable", "no such host",
+)
+
+
+def _run_supabase_once(args: tuple[str, ...]) -> str:
+    if os.name == "nt":
+        cmd = "supabase " + subprocess.list2cmdline(list(args))
         return subprocess.check_output(
-            ["supabase", *args],
+            cmd,
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
             cwd=PROJECT_DIR,
+            shell=True,
         )
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"supabase {' '.join(args)} failed:\n{e.output}") from e
+    return subprocess.check_output(
+        ["supabase", *args],
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=PROJECT_DIR,
+    )
+
+
+def supabase_cli(*args: str, retries: int = 3, delay: float = 2.0) -> str:
+    import time
+
+    last: subprocess.CalledProcessError | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return _run_supabase_once(args)
+        except subprocess.CalledProcessError as e:
+            last = e
+            out = (e.output or "")
+            transient = any(m in out for m in _TRANSIENT_MARKERS)
+            if attempt < retries and transient:
+                print(f"[supabase-cli] transient error (attempt {attempt}/{retries}) - retrying in {delay}s...")
+                time.sleep(delay)
+                continue
+            break
+    raise RuntimeError(f"supabase {' '.join(args)} failed:\n{last.output if last else ''}") from last
 
 
 def parse_secrets_digest(name: str) -> str | None:
