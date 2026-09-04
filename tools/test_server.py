@@ -4323,6 +4323,15 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             # 2. DB 매칭
             if FOODS_DB:
                 analysis = match_with_db(analysis, FOODS_DB)
+                # 2-B. ★ 세션52 — 구별 불가 쌍(설렁탕↔곰탕 · 꽃게탕↔해물탕)의 대안을
+                #      영양까지 계산해 붙인다. 반드시 match_with_db «뒤»다.
+                #      앱에는 음식 DB 가 없으므로 여기서 미리 계산해 주지 않으면
+                #      사용자가 이름을 고쳐도 칼로리를 바꿀 방법이 없다.
+                try:
+                    from food_analyzer import attach_food30_alternates
+                    analysis = attach_food30_alternates(analysis, FOODS_DB)
+                except Exception as _ae:
+                    print(f"[food30] 대안 계산 스킵: {_ae}")
                 matched = sum(1 for f in analysis.get('foods', []) if f.get('db_matched'))
                 total = len(analysis.get('foods', []))
                 print(f"DB 매칭: {matched}/{total}개 음식 매칭됨")

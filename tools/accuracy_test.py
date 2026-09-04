@@ -508,6 +508,7 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
     results = []
     correct_exact = 0
     correct_loose = 0
+    correct_group = 0      # 세션52: 구별 불가 쌍 안에서의 오답. EXACT 와 겹치지 않는다.
     wrong = 0
     errors = 0
     by_source = {"GOLD_REF": 0, "GOLD_DB": 0, "DB_MATCHED": 0, "AI_ESTIMATED": 0, "?": 0}
@@ -582,6 +583,24 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         else:
             wrong += 1
             tag = "✗ MISS"
+
+        # ── 세션52: GROUP — «구별 불가 쌍» 안에서 틀린 것 ────────────────────
+        # ⚠ 위 카운터를 «전혀» 건드리지 않는다. 별도 칼럼으로만 센다.
+        #   EXACT 에 얹으면 세션32~51 의 모든 과거 수치와 비교가 끊기고,
+        #   「병합했더니 정확도가 올랐다」는 거짓 초록이 된다(제이 결정 2026-09-03).
+        group_hit = False
+        if strictness != "EXACT":
+            try:
+                from food_analyzer import food30_same_group
+                group_hit = any(
+                    food30_same_group(expected_name,
+                                      f.get("name_ko") or f.get("name") or "")
+                    for f in ai_foods if isinstance(f, dict))
+            except Exception:
+                group_hit = False
+        if group_hit:
+            correct_group += 1
+            tag += " (계열)"
 
         # 매칭 소스
         source = best.get("source", "?") if best else "?"
@@ -671,6 +690,8 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
     print(f"  총 테스트:        {total}장")
     print(f"  ✓ EXACT 일치:     {correct_exact}장 ({strict_accuracy:.1f}%)")
     print(f"  △ CONTAINS 일치:  {correct_loose}장")
+    # 세션52: 별도 칼럼. 위 EXACT/CONTAINS 수치에 포함되지 «않는다».
+    print(f"  ◇ GROUP(계열):    {correct_group}장  — 설렁탕↔곰탕 · 꽃게탕↔해물탕 (구별 불가 쌍). EXACT 미포함")
     print(f"  ✗ 오답:           {wrong}장")
     print(f"  ! 에러:           {errors}장")
     print()
@@ -850,6 +871,7 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         "total": total,
         "correct_exact": correct_exact,
         "correct_loose": correct_loose,
+        "correct_group": correct_group,   # 세션52 · EXACT 와 겹치지 않음
         "wrong": wrong,
         "errors": errors,
         "name_accuracy_strict_pct": round(strict_accuracy, 1),

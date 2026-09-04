@@ -704,6 +704,100 @@ class TestEndToEndWithMatchDb(unittest.TestCase):
         self.assertEqual(info['applied'], [])
         self.assertEqual(len(info['disagreement']), 1)
 
+    def test_rice_widening_stays_rejected(self):
+        """★ 세션52 최종 기각을 못박는다. 밥류 확장을 되살리면 여기서 깨진다.
+
+        세션50 은 「비빔밥 사진 20장을 모으면 다시 재라」는 조건부 보류였다.
+        세션52 가 실제로 구현해 재 봤고(획득 +4~6 · 게이트91 손실 0), 그런데도 기각했다:
+
+          획득 4~6장이 전부 «고유 영양을 가진 별미밥»의 흡수였다.
+            감자밥 ← 고구마밥 · 현미밥 ← 밤밥 · 돌솥밥 ← 전복돌솥밥/영양밥
+          이건 test_specialty_rice_keeps_its_own_nutrition 이 이미 금지한 것이고,
+          실제로 구현하자마자 그 테스트가 깨졌다.
+
+          그 획득이 나온 것도 평가셋 구조 탓이다 — aihub300 30종에 고구마밥·밤밥·
+          영양밥이 없어서, GPT 가 그 이름을 내면 «반드시» 오답이다. 진짜 고구마밥
+          사진이 존재할 수 없으니 흡수가 항상 이득으로 보인다(규칙47).
+
+        ⇒ 밥류는 접미사가 아니라 허용목록(_F30_RICE_ITEMS)으로만 다룬다.
+        """
+        # 별미밥 — 흡수되면 그 밥 고유의 영양이 사라진다
+        for name, cls in [('고구마밥', '감자밥'), ('밤밥', '현미밥'),
+                          ('영양밥', '돌솥밥'), ('전복 돌솥밥', '돌솥밥')]:
+            out, info = self._run([{'name_ko': name, 'estimated_serving_g': 300}],
+                                  {'rice': {'class': cls, 'confidence': 0.96}})
+            self.assertEqual(out[0][0], name, f'{name} 이 {cls} 로 흡수됐다')
+            self.assertEqual(info['applied'], [], f'{name} 교체됨')
+
+        # '밥' 접미사의 꼬리 — DB(CORE_FOODS)에 실재하는 이름들이다.
+        # '탕/국/찌개/전골' 과 달리 접미사만으로는 «밥 한 그릇»을 못 가린다.
+        for name in ['케밥', '짬뽕밥', '잡탕밥', '묵밥', '컵밥', '돼지국밥',
+                     '회덮밥', '참치김밥', '김치볶음밥']:
+            out, info = self._run([{'name_ko': name, 'estimated_serving_g': 300}],
+                                  {'rice': {'class': '쌀밥', 'confidence': 0.95}})
+            self.assertEqual(out[0][0], name, f'{name} 이 쌀밥으로 흡수됐다')
+
+    # ── 세션52: 구별 불가 쌍의 «대안 제시» ────────────────────────────────
+    def test_merge_pair_offers_sibling_with_nutrition(self):
+        """구별 불가 쌍은 형제 이름을 «영양까지 계산해서» 내려보낸다.
+
+        앱에는 음식 DB 가 없다. 이름만 주면 사용자가 고쳐도 칼로리를 못 바꾼다.
+        """
+        for name, sibling in [('설렁탕', '곰탕'), ('곰탕', '설렁탕'),
+                              ('꽃게탕', '해물탕'), ('해물탕', '꽃게탕')]:
+            a = {'foods': [{'name_ko': name, 'estimated_serving_g': 500}]}
+            fa.match_with_db(a, None)
+            fa.attach_food30_alternates(a, None)
+            f = a['foods'][0]
+            alts = f.get('alternates') or []
+            self.assertEqual([x['name_ko'] for x in alts], [sibling], f'{name}')
+            self.assertGreater(alts[0].get('calories_kcal') or 0, 0,
+                               f'{name} → {sibling} 의 칼로리가 계산되지 않았다')
+            self.assertEqual(f['alternates_reason'], 'indistinguishable_pair')
+
+    def test_non_merge_food_gets_no_alternates(self):
+        """구별 불가 쌍이 «아닌» 음식에는 후보를 달지 않는다. 화면이 시끄러워진다."""
+        for name in ['갈비탕', '쌀밥', '삼계탕', '김치찌개', '감자탕']:
+            a = {'foods': [{'name_ko': name, 'estimated_serving_g': 400}]}
+            fa.match_with_db(a, None)
+            fa.attach_food30_alternates(a, None)
+            self.assertNotIn('alternates', a['foods'][0], name)
+
+    def test_alternates_do_not_touch_the_main_result(self):
+        """★ 대안은 «덧붙이기»다. 본 결과의 이름·영양을 바꾸면 안 된다."""
+        a = {'foods': [{'name_ko': '설렁탕', 'estimated_serving_g': 500}]}
+        fa.match_with_db(a, None)
+        before = {k: v for k, v in a['foods'][0].items()}
+        fa.attach_food30_alternates(a, None)
+        after = a['foods'][0]
+        for k, v in before.items():
+            self.assertEqual(after[k], v, f'{k} 가 바뀌었다')
+
+    def test_same_group_never_overlaps_exact(self):
+        """GROUP 채점은 EXACT 와 겹치면 안 된다 — 같은 장을 두 번 세게 된다."""
+        self.assertFalse(fa.food30_same_group('설렁탕', '설렁탕'))
+        self.assertTrue(fa.food30_same_group('설렁탕', '곰탕'))
+        self.assertTrue(fa.food30_same_group('꽃게탕', '해물탕'))
+        # 서로 다른 그룹끼리는 계열이 아니다
+        self.assertFalse(fa.food30_same_group('설렁탕', '해물탕'))
+        self.assertFalse(fa.food30_same_group('곰탕', '갈비탕'))
+        # kcal 편차가 커서 «기각된» 쌍이 몰래 들어오면 안 된다 (IP/178 §17-7)
+        for a, b in [('감자탕', '뼈해장국'), ('낙지탕', '연포탕'),
+                     ('매운탕', '알탕'), ('육개장', '닭개장'),
+                     ('갈비탕', '곰탕'), ('꼬리곰탕', '도가니탕')]:
+            self.assertFalse(fa.food30_same_group(a, b), f'{a}↔{b} 는 기각된 쌍이다')
+
+    def test_merge_does_not_change_replacement_policy(self):
+        """★ 그룹 내부 교체는 «동전던지기»다(aihub300 3개 실행 전부 2:2). 건드리지 않는다.
+
+        엔진이 곰탕을 검출하고 GPT 가 설렁탕이라 했을 때, 종전처럼 교체가 일어나야 한다.
+        여기서 「같은 그룹이니 양보한다」로 바꾸면 순증 0 짜리 변경으로 동작만 흔든다.
+        """
+        out, info = self._run([{'name_ko': '설렁탕', 'estimated_serving_g': 500}],
+                              {'soup': {'class': '곰탕', 'confidence': 0.9}})
+        self.assertEqual(out[0][0], '곰탕')
+        self.assertTrue(info['applied'][0]['changed'])
+
     def test_engine_silent_changes_nothing(self):
         """확장은 «엔진이 검출했을 때»만 작동한다. 침묵이면 GPT 이름 그대로."""
         for name in ['대구탕', '콩나물해장국', '미역국', '김치찌개']:

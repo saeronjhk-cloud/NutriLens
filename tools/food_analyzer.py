@@ -721,6 +721,7 @@ def _f30_norm(name):
 # ⛔ 밥류(_f30_is_rice)는 확장하지 않는다. '밥' 접미사까지 넓히면 +6장이지만
 #    비빔밥↔돌솥밥이 동전던지기다 — aihub300 은 돌솥밥이 정답이라 이득,
 #    게이트91 은 비빔밥이 정답이라 손실. 손실 표본이 n=1 이라 규칙56 위반.
+#    → 세션52 에서 «비빔밥 계열만 잘라내는» 방식으로 해제했다. 아래 참조.
 _F30_SOUP_SUFFIX = ('탕', '국', '찌개', '전골')
 
 # 접미사는 맞지만 «국물 한 그릇»이 아닌 것. 확장 후보에서 제외한다.
@@ -737,8 +738,35 @@ _F30_SOUP_TRAP = {
 _F30_FP_PRONE_CLASSES = {'닭볶음탕'}
 
 
+# ── 세션52 (2026-09-03) 밥류 확장 «최종 기각». 다시 시도하지 마십시오 ────────────
+#
+# 세션50 §4-3 은 밥류 확장을 「보류」로 뒀다. 근거는 게이트91 비빔밥 1장(n=1)이었고,
+# 그래서 「비빔밥 사진 20장을 모으면 다시 재라」는 조건부 보류였다.
+# 세션52 가 실제로 구현해서 재 봤고, **조건을 채워도 켜면 안 된다**는 결론이 나왔다.
+#
+# 측정 자체는 좋아 보였다 (tools/food30_disagreement_audit.py, $0):
+#   R2(트랩 + 비빔밥계열 제외)  획득 raw +4 · widened +6 · production +4   상실 0
+#   게이트91 거짓 교체 0장
+#
+# ⛔ 그런데 획득 4~6장의 «내용»이 전부 실격이다:
+#     감자밥 ← 고구마밥      현미밥 ← 밤밥 / 고구마밥      돌솥밥 ← 전복돌솥밥 / 영양밥
+#   전부 «고유 영양을 가진 별미밥»이다. 이건 이미 기각된 정책이다 —
+#   tests/test_food30_override.py::test_specialty_rice_keeps_its_own_nutrition
+#   (「곤드레밥이 쌀밥으로 바뀌면 나물 영양이 소실되고 칼로리가 +58 된다」)
+#   구현하자마자 그 테스트가 깨졌다. 테스트가 옳았다.
+#
+# ⛔ 획득이 실측된 것도 «평가셋 구조의 산물»이다. aihub300 의 30종에 고구마밥·밤밥·
+#   영양밥이 없으므로, GPT 가 그 이름을 내면 «반드시» 오답이다. 즉 이 셋에서는
+#   흡수가 항상 이득으로 보인다 — 진짜 고구마밥 사진이 존재할 수 없기 때문이다(규칙47).
+#
+# ⛔ '밥' 접미사는 '탕/국/찌개/전골' 과 신호 품질이 다르다. DB(CORE_FOODS 1,656건)의
+#   '밥' 끝 항목 120종에 케밥·짬뽕밥·잡탕밥·묵밥·컵밥·곤약밥이 섞여 있다.
+#   트랩으로 8종을 막아도 남는 꼬리가 길다. 탕류 확장이 24:0 으로 검증된 것과 대비된다.
+#
+# ⇒ 밥류는 «접미사»가 아니라 «허용목록»(_F30_RICE_ITEMS)으로만 다룬다.
+#   별미밥을 하나씩 넣고 싶으면 그 밥의 DB 영양이 확인된 뒤에 목록에 직접 추가하라.
 def _f30_is_rice(nm, engine_class=None):
-    """밥류 판정. engine_class 는 시그니처 통일용이며 현재 판정에 쓰지 않는다(위 ⛔ 참조)."""
+    """밥류 판정. engine_class 는 시그니처 통일용이며 판정에 쓰지 않는다(위 ⛔ 참조)."""
     return _f30_norm(nm) in _F30_RICE_ITEMS
 
 
@@ -848,6 +876,104 @@ def apply_food30_override(analysis, hits):
             # 선점 때문에 못 바꾼 것은 disagreement 가 아니다 — preempted 에 따로 남긴다.
             info['disagreement'].append({'slot': slot, 'class': hit['class']})
 
+    return analysis
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 세션52 (2026-09-03) — 구별 불가 쌍의 «대안 제시»
+# ══════════════════════════════════════════════════════════════════════════
+#
+# IP/178 §17-5 가 엔진 오답 337건을 대칭/비대칭으로 갈랐다. 대칭(양방향) 혼동은
+# 「흡수」가 아니라 「구별 불가」이고, 교체 정책으로는 못 푼다. 그중 그룹 내 칼로리
+# 편차가 작아 «묶어도 사용자를 속이지 않는» 쌍이 둘뿐이다:
+#
+#   설렁탕 ↔ 곰탕     대칭도 0.58 · 38건 · 300/275 kcal → Δ8%
+#   꽃게탕 ↔ 해물탕    대칭도 1.00 · 8건 · 241/272 kcal → Δ11%
+#
+# ⚠ 이 쌍은 «엔진만» 못 가리는 게 아니다. GPT-4o 도 못 가린다
+#   (IP/178 §2 혼동쌍: 곰탕→설렁탕 4 · 설렁탕→곰탕 2).
+#
+# ★ 그래서 «엔진이 GPT 를 덮는 것»은 답이 아니다 — 실측하면 정확히 동전던지기다.
+#   aihub300 3개 실행 전부에서 그룹 내부 교체가 4건이고, 그중 2건 이득 2건 손실이다
+#   (GT=곰탕에 GPT '설렁탕' 2장 · GT=설렁탕에 GPT '설렁탕' 2장, 엔진은 전부 곰탕).
+#   순증 0. 그러므로 교체 로직은 «건드리지 않는다».
+#
+# ⇒ 제이 결정 (2026-09-03): 화면에는 «가능성 높은 쪽 하나»만 보이고,
+#   틀렸을 때 사용자가 바로 고칠 수 있게 «형제 이름»을 후보로 함께 내려보낸다.
+#   합성 이름(「설렁탕/곰탕」)도, 대표명 강제 통일도 하지 않는다.
+#
+# 채점은 별도 칼럼(GROUP)으로만 집계한다. EXACT 숫자는 손대지 않는다 —
+# 세션32~51 의 모든 과거 수치와 비교 가능해야 하고, 「거짓 초록」을 만들면 안 된다.
+_F30_MERGE_GROUPS = (
+    ('설렁탕', '곰탕'),
+    ('꽃게탕', '해물탕'),
+)
+_F30_MERGE_LOOKUP = {n: g for g in _F30_MERGE_GROUPS for n in g}
+
+
+def food30_alternates(name):
+    """이 음식과 «엔진도 GPT 도 구별하지 못하는» 형제 이름들. 없으면 빈 리스트."""
+    n = _f30_norm(name)
+    g = _F30_MERGE_LOOKUP.get(n)
+    return [m for m in g if m != n] if g else []
+
+
+def food30_same_group(a, b):
+    """두 이름이 같은 구별불가 그룹인가. 평가 채점(GROUP 등급)에서 쓴다."""
+    na, nb = _f30_norm(a), _f30_norm(b)
+    if na == nb:
+        return False                       # EXACT 는 GROUP 이 아니다. 겹치지 않게 한다.
+    return _F30_MERGE_LOOKUP.get(na) is not None and \
+        _F30_MERGE_LOOKUP.get(na) is _F30_MERGE_LOOKUP.get(nb)
+
+
+_ALT_NUTRIENT_KEYS = ('calories_kcal', 'protein_g', 'carbs_g', 'fat_g',
+                      'sugar_g', 'sodium_mg', 'fiber_g')
+
+
+def attach_food30_alternates(analysis, foods_db):
+    """★ match_with_db «뒤»에 부른다. 각 음식에 alternates 를 붙인다.
+
+    형제 이름의 영양까지 «미리 계산해서» 내려보낸다. 그래야 사용자가 화면에서
+    후보를 눌렀을 때 앱이 서버를 다시 부르지 않고 즉시 바꿀 수 있다
+    (앱에는 음식 DB 가 없다 — 클라이언트가 스스로 재계산할 방법이 없다).
+
+    이름·영양만 덧붙인다. 기존 필드는 하나도 바꾸지 않는다.
+    """
+    if not isinstance(analysis, dict) or 'error' in analysis:
+        return analysis
+    foods = analysis.get('foods')
+    if not isinstance(foods, list):
+        return analysis
+
+    for food in foods:
+        if not isinstance(food, dict):
+            continue
+        alts = food30_alternates(food.get('name_ko') or food.get('name') or '')
+        if not alts:
+            continue
+        out = []
+        for alt in alts:
+            probe = {'name_ko': alt}
+            for k in ('estimated_serving_g', 'amount', 'amount_g', 'shape'):
+                if food.get(k) is not None:
+                    probe[k] = food[k]
+            try:
+                match_with_db({'foods': [probe]}, foods_db)
+            except Exception:
+                continue                    # 대안 계산 실패가 본 결과를 망치면 안 된다
+            entry = {'name_ko': alt}
+            for k in _ALT_NUTRIENT_KEYS:
+                if probe.get(k) is not None:
+                    entry[k] = probe[k]
+            if probe.get('estimated_serving_g') is not None:
+                entry['estimated_serving_g'] = probe['estimated_serving_g']
+            entry['source'] = probe.get('source')
+            out.append(entry)
+        if out:
+            # 「구별 불가라서 후보를 준다」는 사실 자체를 화면이 알 수 있게 이유를 남긴다.
+            food['alternates'] = out
+            food['alternates_reason'] = 'indistinguishable_pair'
     return analysis
 
 
