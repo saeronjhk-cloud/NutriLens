@@ -3651,10 +3651,17 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self.wfile.write(html.encode('utf-8'))
         elif path == '/v1/health':
             # API 계약 v1 §5-3 (무인증)
+            # 세션54: food30 모델 상태를 함께 낸다. 로드를 유발하지 않는다(첫 /analyze 전엔 not_loaded).
+            try:
+                from food_analyzer import food30_engine_state
+                _f30 = food30_engine_state()
+            except Exception as _e:
+                _f30 = {'state': 'error', 'reason': f'{type(_e).__name__}:{_e}'}
             self._json_response(200, {"ok": True, "data": {
                 "status": "up", "db_loaded": len(FOODS_DB) > 0,
                 "foods": len(FOODS_DB),
-                "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0")}})
+                "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0"),
+                "food30": _f30}})
         elif path == '/version':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -4281,6 +4288,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             # 0-B. food30 엔진 판정 (원칙5 · IP/166 v2) — 로컬 추론이라 GPT 호출과 무관하게 먼저 돌린다.
             #      끄기: Railway 환경변수 FOOD30_ENGINE=0
             _f30_hits = {'rice': None, 'soup': None}
+            _f30_state = {}               # 세션54: 침묵 «이유» — food30_engine.state 로 저장된다
             _f30_path = None
             try:
                 import tempfile
@@ -4291,12 +4299,13 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                     _ff.write(image_data)
                 finally:
                     _ff.close()
-                _f30_hits = detect_food30(_f30_path)
+                _f30_hits = detect_food30(_f30_path, state=_f30_state)
                 for _slot, _h in _f30_hits.items():
                     if _h:
                         print(f"[food30] {_slot}: {_h['class']} 판정 ({_h['confidence']:.2f})")
             except Exception as _fe:
                 print(f"[food30] 스킵: {_fe}")
+                _f30_state.update(state='server_error', reason=f'{type(_fe).__name__}:{str(_fe)[:120]}')
             finally:
                 if _f30_path:
                     try: os.unlink(_f30_path)
@@ -4316,7 +4325,7 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             #      이름을 바꿔야 match_with_db 가 그 이름으로 칼로리·영양소를 재계산한다.
             try:
                 from food_analyzer import apply_food30_override
-                analysis = apply_food30_override(analysis, _f30_hits)
+                analysis = apply_food30_override(analysis, _f30_hits, state=_f30_state)
             except Exception as _fe:
                 print(f"[food30] 교체 스킵: {_fe}")
 
@@ -4421,6 +4430,10 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 print(f"[세션] {uid}: 사진 {session_snapshot['photo_count']}장, 총 {len(all_foods)}개 음식, {total_cal:.0f}kcal")
 
             # 4. 결과 반환
+            #    세션54: Edge Function 이 rawResult.engine_version 을 analysis_job.engine_version 에
+            #    저장하는데 여태 없어서 전부 'unknown' 이었다. /v1/health 와 같은 값을 준다.
+            if isinstance(analysis, dict) and 'engine_version' not in analysis:
+                analysis['engine_version'] = os.environ.get("ENGINE_VERSION", "nl-4.0")
             print("분석 완료!")
             self._json_response(200, analysis)
 

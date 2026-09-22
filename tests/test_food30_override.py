@@ -590,7 +590,7 @@ class TestWiring(unittest.TestCase):
 
     def test_offline_cli_has_override(self):
         src = (_NUTRILENS / 'tools' / 'food_analyzer.py').read_text(encoding='utf-8')
-        self.assertIn('apply_food30_override(analysis, detect_food30(image_path))', src,
+        self.assertIn('apply_food30_override(analysis, detect_food30(image_path, state=_f30_state)', src,
                       "오프라인 CLI 경로에도 넣어야 accuracy_test 회귀가 프로덕션과 같아진다")
 
     def test_kill_switch_documented_in_code(self):
@@ -1447,6 +1447,64 @@ class TestLoadEnvEncoding(unittest.TestCase):
             checked, 5,
             f'load_env 를 가진 파일을 {checked}개밖에 못 찾았다 — '
             '경로나 함수명이 바뀌었다면 이 검사는 아무것도 지키지 않는다')
+
+
+# ══════════════════════════════════════════════════════════════════
+class TestEngineStateTelemetry(unittest.TestCase):
+    """세션54 (IP/181 §1) — 프로덕션 DB 의 detected:{} 가 «침묵»인지 «엔진 부재»인지
+    구분할 수 있어야 한다. 이전엔 6가지 원인이 전부 같은 결과로 저장됐다."""
+
+    def test_off_switch_reports_state(self):
+        st = {}
+        old = os.environ.get('FOOD30_ENGINE')
+        os.environ['FOOD30_ENGINE'] = '0'
+        try:
+            hits = fa.detect_food30('/nonexistent.jpg', state=st)
+        finally:
+            if old is None:
+                os.environ.pop('FOOD30_ENGINE', None)
+            else:
+                os.environ['FOOD30_ENGINE'] = old
+        self.assertEqual(hits, {'rice': None, 'soup': None})   # 반환 형태 불변
+        self.assertEqual(st['state'], 'off')
+        self.assertEqual(fa.food30_engine_state.__doc__ is not None, True)
+
+    def test_disabled_reports_reason(self):
+        """모델 비활성이면 state=disabled 와 이유가 남는다 (전역을 건드리므로 복원)."""
+        saved = (fa._F30_MODEL, fa._F30_DISABLE_REASON)
+        try:
+            fa._F30_MODEL = False
+            fa._F30_DISABLE_REASON = 'model_file_missing:test'
+            st = {}
+            hits = fa.detect_food30('/nonexistent.jpg', state=st)
+            self.assertEqual(hits, {'rice': None, 'soup': None})
+            self.assertEqual(st, {'state': 'disabled', 'reason': 'model_file_missing:test'})
+            self.assertEqual(fa.food30_engine_state()['state'], 'disabled')
+            a = _mk('설렁탕')
+            fa.apply_food30_override(a, hits, state=st)
+            self.assertEqual(a['food30_engine']['state'], 'disabled')
+            self.assertEqual(a['food30_engine']['state_reason'], 'model_file_missing:test')
+            self.assertEqual(a['food30_engine']['detected'], {})
+        finally:
+            fa._F30_MODEL, fa._F30_DISABLE_REASON = saved
+
+    def test_legacy_callers_get_unknown(self):
+        """state 를 안 넘기는 옛 호출자(sweep·테스트)는 unknown — 깨지지 않는다."""
+        a = _mk('설렁탕')
+        fa.apply_food30_override(a, {'soup': {'class': '설렁탕', 'confidence': 0.9}})
+        self.assertEqual(a['food30_engine']['state'], 'unknown')
+        self.assertIn('state_reason', a['food30_engine'])
+
+    def test_state_key_never_leaks_into_hits(self):
+        """반환 dict 에 키가 늘면 food30_sweep 의 `hits.items()` 순회가 깨진다."""
+        st = {}
+        saved = (fa._F30_MODEL, fa._F30_DISABLE_REASON)
+        try:
+            fa._F30_MODEL = False
+            hits = fa.detect_food30('/nonexistent.jpg', state=st)
+        finally:
+            fa._F30_MODEL, fa._F30_DISABLE_REASON = saved
+        self.assertEqual(set(hits), {'rice', 'soup'})
 
 
 if __name__ == '__main__':

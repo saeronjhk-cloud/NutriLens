@@ -535,6 +535,27 @@ FOOD30_DB_KEY['기타잡곡밥'] = '잡곡밥'      # gold 미등재. '기타'�
 
 
 _F30_LOAD_LOCK = threading.Lock()
+# 세션54: 엔진이 비활성(_F30_MODEL is False)이 된 «이유». 프로덕션 DB 의 detected:{} 가
+# 「침묵」인지 「아예 안 떠 있음」인지 구분하지 못했던 것을 고친다(IP/181 §1).
+_F30_DISABLE_REASON = None
+
+
+def food30_engine_state():
+    """엔진 로드 상태. /v1/health 와 텔레메트리가 쓴다. 로드를 «유발하지 않는다».
+
+    state: 'off'        FOOD30_ENGINE=0 (운영 스위치)
+           'disabled'   로드 시도 후 비활성 — reason 에 이유
+           'not_loaded' 아직 첫 요청이 안 와서 지연 로드 전
+           'loaded'     정상
+    """
+    if os.environ.get('FOOD30_ENGINE', '1') == '0':
+        return {'state': 'off', 'reason': 'FOOD30_ENGINE=0'}
+    if _F30_MODEL is False:
+        return {'state': 'disabled', 'reason': _F30_DISABLE_REASON}
+    if _F30_MODEL is None:
+        return {'state': 'not_loaded', 'reason': None}
+    return {'state': 'loaded', 'reason': None, 'tau': FOOD30_CONF_TAU,
+            'model': _F30_MODEL_PATH.name}
 
 
 def _get_food30_model():
@@ -558,16 +579,18 @@ def _get_food30_model():
 
 
 def _load_food30_model_locked():
-    global _F30_MODEL
+    global _F30_MODEL, _F30_DISABLE_REASON
     if _F30_MODEL is False:
         return None
     if _F30_MODEL is None:
         if FOOD30_CONF_TAU is None or not FOOD30_WHITELIST:
             _F30_MODEL = False
+            _F30_DISABLE_REASON = 'gate_incomplete'
             return None                              # 게이트 미완 = 비활성 (기본 안전)
         if not _F30_MODEL_PATH.exists():
             print(f"[food30] 모델 파일 없음: {_F30_MODEL_PATH}")
             _F30_MODEL = False
+            _F30_DISABLE_REASON = f'model_file_missing:{_F30_MODEL_PATH.name}'
             return None
         try:
             from ultralytics import YOLO
@@ -578,36 +601,48 @@ def _load_food30_model_locked():
                 print(f"          모델: {_names}")
                 print(f"          코드: {FOOD30_CLASS_NAMES}")
                 _F30_MODEL = False
+                _F30_DISABLE_REASON = 'class_order_mismatch'
                 return None
             _F30_MODEL = _m
             print(f"[food30] 로드 완료: {_F30_MODEL_PATH.name} (τ={FOOD30_CONF_TAU}, 30클래스 순서 일치)")
         except Exception as e:
             print(f"[food30] 로드 실패: {e}")
             _F30_MODEL = False
+            _F30_DISABLE_REASON = f'load_failed:{type(e).__name__}:{str(e)[:120]}'
             return None
     return _F30_MODEL
 
 
-def detect_food30(image_path):
+def detect_food30(image_path, state=None):
     """밥류·탕류 판정. 카테고리별 최고 confidence 1건씩, 최대 2건을 돌려준다.
 
     반환: {'rice': {'class','confidence'} | None, 'soup': {...} | None}
     전부 None = '밥·탕이 아니다'가 아니라 '판정하지 않는다'. 호출부는 GPT-4o 로 넘긴다.
 
+    state: dict 를 넘기면 «왜 그 결과인지»를 채워 준다(세션54). 반환 형태는 바꾸지 않는다 —
+      food30_sweep 등이 `hits.items()` 로 순회하므로 키를 늘리면 깨진다.
+      state['state'] ∈ off · disabled · inference_error · silent · hit
+
     한 사진에 밥과 국이 함께 오르는 것이 한식의 기본 상차림이므로 카테고리를 나눈다
     (IP/166 v2 §3 — 제이 확정 2026-08-16).
     """
     out = {'rice': None, 'soup': None}
+    if state is None:
+        state = {}
     if os.environ.get('FOOD30_ENGINE', '1') == '0':   # 운영 중 즉시 끄기(Railway 환경변수)
+        state.update(state='off', reason='FOOD30_ENGINE=0')
         return out
     model = _get_food30_model()
     if model is None:
+        state.update(state='disabled', reason=_F30_DISABLE_REASON)
         return out
     try:
         results = model.predict(str(image_path), conf=FOOD30_CONF_TAU, verbose=False)
     except Exception as e:
         print(f"[food30] 추론 실패: {e}")
+        state.update(state='inference_error', reason=f'{type(e).__name__}:{str(e)[:120]}')
         return out
+    state.update(state='silent', reason=None)   # 아래에서 검출되면 'hit' 로 바뀐다
     for r in results:
         if getattr(r, 'boxes', None) is None or len(r.boxes) == 0:
             continue
@@ -627,6 +662,7 @@ def detect_food30(image_path):
             slot = 'rice' if cid in _F30_RICE_IDX else 'soup'
             if out[slot] is None or conf > out[slot]['confidence']:
                 out[slot] = {'class': name, 'confidence': conf}
+                state['state'] = 'hit'
     return out
 
 
@@ -790,7 +826,7 @@ def _f30_is_soup(nm, engine_class=None):
 _F30_CATEGORY_TEST = {'rice': _f30_is_rice, 'soup': _f30_is_soup}
 
 
-def apply_food30_override(analysis, hits):
+def apply_food30_override(analysis, hits, state=None):
     """엔진 판정을 GPT 응답의 음식명에 덮어쓴다. match_with_db 호출 *전에* 부를 것.
 
     - 카테고리(밥류/탕류)당 최대 1건만 교체한다. 폭주 방지.
@@ -803,7 +839,10 @@ def apply_food30_override(analysis, hits):
     hits = hits or {}
     info = {'model': 'food30_detection_v4', 'tau': FOOD30_CONF_TAU,
             'detected': {}, 'applied': [], 'disagreement': [],
-            'no_db_key': [], 'preempted': []}
+            'no_db_key': [], 'preempted': [],
+            # 세션54: detect_food30(state=) 가 채운 «왜». 없으면 unknown(옛 호출자·테스트).
+            'state': (state or {}).get('state', 'unknown'),
+            'state_reason': (state or {}).get('reason')}
     # 루프 도중 예외가 나도 텔레메트리가 남도록 먼저 붙인다.
     if isinstance(analysis, dict):
         analysis['food30_engine'] = info
@@ -1283,7 +1322,9 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
     # food30 엔진 판정 반영 (IP/166 v2) — 프로덕션(test_server)과 같은 순서로 둔다.
     # 여기서 넣지 않으면 accuracy_test.py 회귀 측정이 프로덕션과 달라진다.
     try:
-        analysis = apply_food30_override(analysis, detect_food30(image_path))
+        _f30_state = {}
+        analysis = apply_food30_override(analysis, detect_food30(image_path, state=_f30_state),
+                                         state=_f30_state)
     except Exception as _fe:
         print(f"[food30] 스킵: {_fe}")
 
