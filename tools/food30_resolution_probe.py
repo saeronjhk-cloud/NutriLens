@@ -168,11 +168,27 @@ def main():
     print(f'  {"합계":<20}{tot_a:>8}{tot_b:>8}{tot_b - tot_a:>+8}')
 
     d_acc = b['hit'] / max(b['seen'], 1) - a['hit'] / max(a['seen'], 1)
+
+    # ★ 세션55 수정 — 쌍 혼동의 «절대 건수»만 보면 판정이 뒤집힌다.
+    #   1280 에서 정확도가 무너지면 오답이 «아무 클래스»로 흩어지고(스케일 불일치),
+    #   그 결과 주목 쌍 건수가 «희석»되어 줄어든 것처럼 보인다. 세션55 실측:
+    #   top1 73.7→57.3%(-16.3%p) · 오분류 76→111 · 미검출 3→17 인데 쌍 혼동 34→25 라서
+    #   옛 판정식(`tot_b < tot_a or …`)이 «값어치 있다»를 찍었다. 틀린 판정이다.
+    #   → 쌍 혼동은 «오분류 중 비중»으로 보고, 정확도가 떨어지면 유리 판정을 금지한다.
+    def _wrong(s): return sum(s['pairs'].values())
+    def _miss(s):  return sum(1 for _g, pr, _c in s['rows'] if pr is None)
+    wa, wb = _wrong(a), _wrong(b)
+    sha, shb = tot_a / max(wa, 1), tot_b / max(wb, 1)
     print(f'\n{"=" * 68}\n판정\n{"=" * 68}')
     print(f'  top1 정확도 Δ  {d_acc * 100:+.1f}%p')
-    print(f'  주목 쌍 혼동 Δ {tot_b - tot_a:+d}건')
-    if tot_b < tot_a or d_acc > 0.01:
-        print('\n  ▶ 해상도가 «무언가»를 바꾼다. 1280 재학습에 값어치가 있다.')
+    print(f'  오분류         {wa} → {wb}   미검출 {_miss(a)} → {_miss(b)}')
+    print(f'  주목 쌍 혼동 Δ {tot_b - tot_a:+d}건  (오분류 중 비중 {sha:.0%} → {shb:.0%})')
+    if d_acc > 0.01 or (d_acc >= -0.01 and tot_b < tot_a):
+        print('\n  ▶ 해상도가 «무언가»를 바꾼다. 원본 재추출(1280 재학습) 검토 값어치가 있다.')
+    elif d_acc < -0.05:
+        print('\n  ▶ 1280 추론에서 정확도가 무너졌다 — 640 학습 모델의 스케일 불일치.')
+        print('    쌍 혼동 감소는 오답이 흩어진 «희석»이지 구별력 증가가 아니다.')
+        print('    ⇒ 이 프로브는 해상도 가설을 지지하지 않는다. 재추출 근거로 쓰지 마라.')
     else:
         print('\n  ▶ 추론 해상도만으로는 안 움직인다.')
         print('    ⚠ 이것은 «약한» 반증이다. 640 으로 학습된 특징만 보고 있기 때문이다.')
