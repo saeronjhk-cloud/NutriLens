@@ -12,3 +12,6 @@ verify_jwt = false
 
 [functions.meal-leftover]
 verify_jwt = false
+
+[functions.beta-feedback-notify]
+verify_jwt = false
