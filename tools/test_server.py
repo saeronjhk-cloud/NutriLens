@@ -3926,6 +3926,10 @@ class NutriLensHandler(BaseHTTPRequestHandler):
             self._handle_v1_report_weekly()
         elif path == '/adjust':
             self._handle_adjust()
+        elif path == '/v1/food/search':
+            self._handle_v1_food_lookup('search')
+        elif path == '/v1/food/resolve':
+            self._handle_v1_food_lookup('resolve')
         else:
             self.send_response(404)
             self.end_headers()
@@ -4959,6 +4963,39 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                                   "schema_version": "report.v1",
                                   "engine_version": os.environ.get("ENGINE_VERSION", "nl-4.0"),
                                   "request_id": request_id})
+
+    def _handle_v1_food_lookup(self, action):
+        """식사 결과 «음식 편집» v1 — 음식 검색(search) / 영양 확정(resolve).
+        순수 로직은 food_lookup.py (match_with_db 단일 규칙). OpenAI 미진입.
+        설계 IP/integration/meal_food_edit_design_v1.md §3-2 · 평가 L01~L12."""
+        request_id = self.headers.get('X-Request-Id') or str(uuid.uuid4())
+        if not self._check_engine_key(request_id):
+            return
+        try:
+            n = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(n).decode('utf-8') if n > 0 else '{}'
+            body = json.loads(raw) if raw.strip() else {}
+            if not isinstance(body, dict):
+                raise ValueError('body must be object')
+        except (ValueError, UnicodeDecodeError):
+            self._json_response(400, {"ok": False, "error": {
+                "code": "VALIDATION_ERROR", "message": "invalid json body",
+                "retryable": False}, "request_id": request_id})
+            return
+        try:
+            import food_lookup
+            if action == 'search':
+                items = food_lookup.search_foods(body.get('q'), body.get('limit', food_lookup.DEFAULT_LIMIT))
+                self._json_response(200, {"ok": True, "data": {"items": items}, "request_id": request_id})
+            else:
+                food = food_lookup.resolve_food(body.get('name'), body.get('serving_g'))
+                self._json_response(200, {"ok": True, "data": {"matched": food is not None, "food": food},
+                                          "request_id": request_id})
+        except Exception as e:  # noqa: BLE001
+            print(f"[food-lookup] {action} 오류: {e}")
+            self._json_response(500, {"ok": False, "error": {
+                "code": "INTERNAL", "message": "food lookup failed",
+                "retryable": True}, "request_id": request_id})
 
     def _json_response(self, code, data):
         self.send_response(code)
