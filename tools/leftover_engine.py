@@ -15,7 +15,9 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-NUTRIENT_KEYS = ("calories_kcal", "protein_g", "carbs_g", "fat_g", "sodium_mg")
+# 2026-10-04 당류·식이섬유 추가(계약 27 v2.1.2 해당 — IP/integration/leftover_sugar_fiber_design_v1.md).
+# _food_originals 는 «있는 키만» 계산하므로 당류·섬유가 없는 옛 입력은 5개 키 그대로 동작한다.
+NUTRIENT_KEYS = ("calories_kcal", "protein_g", "carbs_g", "fat_g", "sodium_mg", "sugar_g", "fiber_g")
 TOL = 0.05
 # Path B(식후사진 AI): confidence가 이 값 미만이면 사용자 확인을 요구한다(계약 27 R3/P1-2).
 CONFIRM_THRESHOLD = 0.70

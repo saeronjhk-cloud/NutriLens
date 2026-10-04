@@ -70,6 +70,9 @@ function foodToEngineItem(f: Record<string, unknown>, foodItemId: string, mealLo
     carbs_g: Number(f.carbs_g ?? f.carbs ?? 0),
     fat_g: Number(f.fat_g ?? f.fat ?? 0),
     sodium_mg: Number(f.sodium_mg ?? f.sodium ?? 0),
+    // 2026-10-04 당류·식이섬유(엔진 NUTRIENT_KEYS 7개 — leftover_sugar_fiber_design_v1)
+    sugar_g: Number(f.sugar_g ?? 0),
+    fiber_g: Number(f.fiber_g ?? 0),
   };
   const serving = f.estimated_serving_g ?? f.serving_g;
   if (serving != null) item.estimated_serving_g = Number(serving);
@@ -87,6 +90,8 @@ function buildOriginalFoodsSnapshot(foods: EngineFood[]): Record<string, unknown
       carbs_g: f.carbs_g,
       fat_g: f.fat_g,
       sodium_mg: f.sodium_mg,
+      sugar_g: f.sugar_g,
+      fiber_g: f.fiber_g,
       ...(f.estimated_serving_g != null ? { estimated_serving_g: f.estimated_serving_g } : {}),
     };
   }
@@ -100,6 +105,9 @@ function engineSummaryToMealLog(summary: Record<string, unknown>): Record<string
     total_carbs_g: summary.carbs_g ?? 0,
     total_fat_g: summary.fat_g ?? 0,
     total_sodium_mg: summary.sodium_mg ?? 0,
+    // 엔진이 계산한 경우에만 기록(배포 순서가 어긋나도 0 을 써넣지 않는다)
+    ...(summary.sugar_g != null ? { total_sugar_g: summary.sugar_g } : {}),
+    ...(summary.fiber_g != null ? { total_fiber_g: summary.fiber_g } : {}),
   };
 }
 
@@ -111,6 +119,8 @@ function mealLogSummaryToPre(summary: Record<string, unknown> | null): Record<st
     carbs_g: Number(summary.total_carbs_g ?? summary.carbs_g ?? 0),
     fat_g: Number(summary.total_fat_g ?? summary.fat_g ?? 0),
     sodium_mg: Number(summary.total_sodium_mg ?? summary.sodium_mg ?? 0),
+    sugar_g: Number(summary.total_sugar_g ?? summary.sugar_g ?? 0),
+    fiber_g: Number(summary.total_fiber_g ?? summary.fiber_g ?? 0),
   };
 }
 
@@ -477,7 +487,7 @@ Deno.serve(async (req) => {
     }
     enginePayload.pre_meal_session_id = preMealSessionId;
 
-    const agg = { calories: 0, protein: 0, carbs: 0, fat: 0, sodium: 0 };
+    const agg = { calories: 0, protein: 0, carbs: 0, fat: 0, sodium: 0, sugar: 0, fiber: 0 };
     for (const log of sessionLogs) {
       const s = (log.original_summary ?? log.summary) as Record<string, unknown> | null;
       if (!s) continue;
@@ -486,6 +496,8 @@ Deno.serve(async (req) => {
       agg.carbs += Number(s.total_carbs_g ?? 0);
       agg.fat += Number(s.total_fat_g ?? 0);
       agg.sodium += Number(s.total_sodium_mg ?? 0);
+      agg.sugar += Number(s.total_sugar_g ?? 0);
+      agg.fiber += Number(s.total_fiber_g ?? 0);
     }
     originalSummaryCanonical = {
       total_calories_kcal: agg.calories,
@@ -493,6 +505,8 @@ Deno.serve(async (req) => {
       total_carbs_g: agg.carbs,
       total_fat_g: agg.fat,
       total_sodium_mg: agg.sodium,
+      total_sugar_g: agg.sugar,
+      total_fiber_g: agg.fiber,
     };
   }
 
@@ -546,6 +560,10 @@ Deno.serve(async (req) => {
             carbs_g: logEngineFoods.reduce((s, f) => s + Number(f.carbs_g ?? 0), 0),
             fat_g: logEngineFoods.reduce((s, f) => s + Number(f.fat_g ?? 0), 0),
             sodium_mg: logEngineFoods.reduce((s, f) => s + Number(f.sodium_mg ?? 0), 0),
+            sugar_g: logEngineFoods.some((f) => f.sugar_g != null)
+              ? Math.round(logEngineFoods.reduce((s, f) => s + Number(f.sugar_g ?? 0), 0) * 10) / 10 : undefined,
+            fiber_g: logEngineFoods.some((f) => f.fiber_g != null)
+              ? Math.round(logEngineFoods.reduce((s, f) => s + Number(f.fiber_g ?? 0), 0) * 10) / 10 : undefined,
           })
           : adjustedCanonical;
         return {
