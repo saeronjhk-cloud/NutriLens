@@ -1,6 +1,8 @@
 // =====================================================================
 // meal-leftover — 정찬·잔반 Path A Edge (계약 34 §B)
-// 흐름: JWT → can_process → 멱등 → canonical 조회 → 엔진 /v1/analyze → 저장
+// 흐름: JWT → (동의: 앱 게이트) → 멱등 → canonical 조회 → 엔진 /v1/analyze → 저장  [라이브 각색본]
+// ⚠ 운영 프로젝트(lrnuqhpgyuizfggxgxpl)에는 public.can_process 가 없다(73·85 SQL). can_process 호출을 넣으면 모든 보정이 500 —
+//   2026-10-04 d8454d3 배포에서 실제 장애. 이 파일 = IP/통합앱_P1/85_meal-leftover_live각색본_index.ts (동일 유지).
 // 신뢰경계·소유권·세션상태·멱등은 전부 Edge. 엔진은 순수 산술만.
 // =====================================================================
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -363,10 +365,7 @@ Deno.serve(async (req) => {
   if (authErr || !userData?.user) return err(401, "UNAUTHORIZED", "invalid or missing JWT", requestId);
   const uid = userData.user.id;
 
-  // 2) 동의 (slider — intl_transfer 불필요)
-  const { data: allowed, error: cpErr } = await admin.rpc("can_process", { p_user: uid, p_domain: "meal_log" });
-  if (cpErr) return err(500, "INTERNAL", `can_process failed: ${cpErr.message}`, requestId, true);
-  if (!allowed) return err(403, "VALIDATION_ERROR", "consent required (meal_log)", requestId);
+  // 2) 동의 게이트 — 라이브 각색본: can_process 미도입 프로젝트라 제거. 동의는 앱(MealConsentGate)에서 강제.
 
   // 3) Idempotency-Key + request_hash
   const idemKey = req.headers.get("x-idempotency-key");
