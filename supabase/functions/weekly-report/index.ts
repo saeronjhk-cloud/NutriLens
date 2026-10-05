@@ -1,7 +1,16 @@
 // =====================================================================
-// weekly-report — 주간 리포트 어댑터 (API 계약 v1 §5-2)
-// 흐름: JWT 인증 → can_process(meal_log, weekly_report) 게이트
-//       → 캐시(weekly_report) 조회(force=1이면 재생성)
+// weekly-report — 주간 리포트 어댑터 (API 계약 v1 §5-2) · live 각색본
+// 각색점(구 프로젝트 → 현 live lrnuqhpgyuizfggxgxpl):
+//   · can_process(meal_log, weekly_report) 동의 게이트 제거
+//     → 현 live는 동의=앱레이어(IP73: has_consent/can_process 미도입). meal-analysis-jobs 각색과 동일 원칙.
+//   · 그 외 불변: 엔진 URL 기본값이 이미 현 엔진(web-production-0cbc5), ENGINE_API_KEY Edge Secret 사용,
+//     user_goal 없으면 기본 타깃으로 폴백(테이블 없어도 무해).
+// 2026-10-05 누적 v1 (영양공식 IP/integration/weekly_accumulation_design_v1.md D1·D2·D4 · 평가 G1~G6):
+//   · 실섭취 우선 — 엔진 summary = adjusted_summary ?? summary (앱 다른 화면과 같은 규칙)
+//   · 캐시 재사용 조건 = calc_version 일치 + 그 주 식사 updated_at ≤ generated_at + 끼니 수 일치
+//   · foods 슬림에 barcode·missing_nutrients, 끼니에 adjusted·eaten_ratio·original_summary 전달
+//   ⚠ 저장소 supabase/functions/weekly-report/index.ts 는 이 파일과 «바이트 동일»해야 한다(규칙 61).
+// 흐름: JWT 인증 → 캐시(weekly_report) 조회(force=1이면 재생성)
 //       → meal_log 주간 조회 → canonical 슬리밍(§5-2 A6, jsonb 통째 전송 금지)
 //       → targets(user_goal, 없으면 기본값) → 엔진 /v1/report/weekly 호출
 //       → 구조 게이트(guardrail_passed 아니면 안전 폴백) → weekly_report upsert → 반환
@@ -22,6 +31,7 @@ const ENGINE_TIMEOUT_MS = 10_000; // 계약 §7: report는 10s 동기
 const SCHEMA_VERSION = "report.v1";
 const KST_OFFSET_MS = 9 * 3600 * 1000;
 const FALLBACK_SAFE = "이번 주는 일반적인 식생활 균형을 참고해 주세요."; // 03 §7 사전 승인 문구
+const CALC_VERSION = "weekly.v2"; // 엔진 report_weekly.CALC_VERSION 과 같아야 캐시를 재사용
 const DEFAULT_TARGETS = { calories_kcal: 1800, protein_g: 60, sodium_max_mg: 2000, sugar_max_g: 50, fiber_min_g: 25 };
 
 function json(status: number, body: Record<string, unknown>): Response {
@@ -59,12 +69,8 @@ Deno.serve(async (req) => {
   if (authErr || !userData?.user) return err(401, "UNAUTHORIZED", "invalid or missing JWT", requestId);
   const uid = userData.user.id;
 
-  // 2) 동의 게이트 (§5-2: meal_log + weekly_report 둘 다)
-  for (const domain of ["meal_log", "weekly_report"]) {
-    const { data: allowed, error: cpErr } = await admin.rpc("can_process", { p_user: uid, p_domain: domain });
-    if (cpErr) return err(500, "INTERNAL", `can_process failed: ${cpErr.message}`, requestId, true);
-    if (!allowed) return err(403, "VALIDATION_ERROR", `consent required (${domain})`, requestId);
-  }
+  // 2) [각색] 동의 게이트 제거 — 현 live는 동의=앱레이어(can_process 미도입).
+  //    (구 프로젝트: for domain of ["meal_log","weekly_report"] → can_process 검사)
 
   // 3) 주간 결정
   const url = new URL(req.url);
@@ -76,11 +82,23 @@ Deno.serve(async (req) => {
   const weekEndStr = kstDateStr(new Date(startDate.getTime() + 6 * 86400_000));
   const force = url.searchParams.get("force") === "1";
 
-  // 4) 캐시 조회
+  // 4) 캐시 조회 — 재사용은 ①calc_version 일치 ②그 주 식사가 생성 뒤 바뀌지 않음 ③끼니 수 일치(삭제 감지)
+  const utcFrom = kstDayToUtcIso(weekStart);
+  const utcTo = kstDayToUtcIso(weekEndStr, true);
   const { data: cached } = await admin.from("weekly_report")
     .select("id,payload,generated_at,first_viewed_at")
     .eq("user_id", uid).eq("period_start", weekStart).maybeSingle();
-  if (cached && !force) {
+  let cacheFresh = false;
+  if (cached && !force && (cached.payload as Record<string, unknown>)?.calc_version === CALC_VERSION) {
+    const { data: stamps } = await admin.from("meal_log")
+      .select("updated_at")
+      .eq("user_id", uid).gte("eaten_at", utcFrom).lt("eaten_at", utcTo);
+    const genAt = new Date(cached.generated_at as string).getTime();
+    const changed = (stamps ?? []).some((x) => new Date(x.updated_at as string).getTime() > genAt);
+    const cachedMeals = ((cached.payload as Record<string, unknown>)?.coverage as { meals?: number })?.meals;
+    cacheFresh = !!stamps && !changed && cachedMeals === stamps.length;
+  }
+  if (cached && cacheFresh) {
     return json(200, {
       ok: true,
       data: { report_id: cached.id, period: { start: weekStart, end: weekEndStr }, report: cached.payload, cached: true, first_viewed_at: cached.first_viewed_at },
@@ -88,16 +106,14 @@ Deno.serve(async (req) => {
     });
   }
 
-  // 5) meal_log 주간 조회 → canonical 슬리밍 (A6)
-  const utcFrom = kstDayToUtcIso(weekStart);
-  const utcTo = kstDayToUtcIso(weekEndStr, true);
+  // 5) meal_log 주간 조회 → canonical 슬리밍 (A6) · 실섭취 우선(D1)
   const { data: rows, error: mlErr } = await admin.from("meal_log")
-    .select("eaten_at,meal_slot,foods,summary")
+    .select("eaten_at,meal_slot,foods,summary,original_summary,adjusted_summary,eaten_ratio")
     .eq("user_id", uid).gte("eaten_at", utcFrom).lt("eaten_at", utcTo)
     .order("eaten_at", { ascending: true });
   if (mlErr) return err(500, "INTERNAL", `meal_log query failed: ${mlErr.message}`, requestId, true);
 
-  const FOOD_FIELDS = ["name_ko", "name_en", "amount", "calories_kcal", "protein_g", "carbs_g", "fat_g", "sodium_mg", "sugar_g", "fiber_g", "db_matched", "match_confidence"] as const;
+  const FOOD_FIELDS = ["name_ko", "name_en", "amount", "calories_kcal", "protein_g", "carbs_g", "fat_g", "sodium_mg", "sugar_g", "fiber_g", "db_matched", "match_confidence", "barcode", "missing_nutrients"] as const;
   const SUM_FIELDS = ["total_calories_kcal", "total_protein_g", "total_carbs_g", "total_fat_g", "total_sodium_mg", "total_sugar_g", "total_fiber_g"] as const;
   const meals = (rows ?? []).map((r) => {
     const eaten = new Date(r.eaten_at as string);
@@ -107,17 +123,25 @@ Deno.serve(async (req) => {
       for (const k of FOOD_FIELDS) if (f[k] !== undefined) slim[k] = f[k];
       return slim;
     });
+    const actual = (r.adjusted_summary ?? r.summary) as Record<string, unknown> | null; // 실섭취 우선
+    const original = (r.original_summary ?? r.summary) as Record<string, unknown> | null;
     const summary: Record<string, unknown> = {};
-    for (const k of SUM_FIELDS) summary[k] = (r.summary as Record<string, unknown>)?.[k] ?? 0;
+    const original_summary: Record<string, unknown> = {};
+    for (const k of SUM_FIELDS) {
+      summary[k] = actual?.[k] ?? 0;
+      original_summary[k] = original?.[k] ?? 0;
+    }
     return {
       date: kst.toISOString().slice(0, 10),
       time: kst.toISOString().slice(11, 16),
       meal_slot: r.meal_slot,
-      foods, summary,
+      foods, summary, original_summary,
+      adjusted: r.adjusted_summary != null,
+      eaten_ratio: r.eaten_ratio ?? null,
     };
   });
 
-  // 6) targets = user_goal ?? 기본값
+  // 6) targets = user_goal ?? 기본값 (user_goal 테이블 없거나 행 없으면 기본값으로 폴백)
   const { data: goal } = await admin.from("user_goal")
     .select("calories,protein_g,sodium_max_mg,sugar_max_g,fiber_min_g")
     .eq("user_id", uid).maybeSingle();

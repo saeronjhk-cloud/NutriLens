@@ -8,6 +8,8 @@
 - next_action: 최심각 1개(severity high>medium, 동률 시 sodium>sugar>calories>protein>fiber)
   → 룰 템플릿 → 가드레일 스캔 → 위반 시 안전 폴백(fallback_safe, 빈칸 금지)
 - top_food_groups: tools/food_groups_v1.json (IP 07 사본, 첫 매치 승리) 상위 3(count desc, 이름 asc)
+- accumulation(v2): 나트륨·당류 주간 합계·기준 초과일·값 모르는 음식 수 + 가공식품 목록·몫
+  (영양공식 IP/integration/weekly_accumulation_design_v1.md D3 · 평가 A01~A14)
 """
 import json
 import os
@@ -143,6 +145,107 @@ def _top_food_groups(meals, groups=None, top_n=3):
     return [{"name": k, "count": v} for k, v in ordered[:top_n]]
 
 
+# ── 누적 v1 (weekly_accumulation_design_v1 D3) ─────────────────────────
+CALC_VERSION = "weekly.v2"
+PRODUCTS_TOP_N = 10
+_ACC = [("sodium", "total_sodium_mg", "sodium_mg", "sodium_max_mg"),
+        ("sugar", "total_sugar_g", "sugar_g", "sugar_max_g")]
+
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v
+
+
+def _food_value(food, key):
+    """음식의 영양값. 값을 모르면 None(문자열 음식·키 없음·missing_nutrients)."""
+    if not isinstance(food, dict):
+        return None
+    if key in (food.get("missing_nutrients") or []):
+        return None
+    v = food.get(key)
+    return float(v) if _num(v) else None
+
+
+def _is_product(food):
+    return isinstance(food, dict) and bool(food.get("barcode"))
+
+
+def _adjust_kind(meal):
+    """보정 종류 — 'none' | 'uniform' | 'per_food'. 음식별 비율은 저장되지 않으므로(R16)
+    SQL 156a 와 같은 규칙으로 판정: 보정 열량 ≈ 원래 열량 × eaten_ratio (허용오차 0.5·음식수+0.5) 면 uniform.
+    판정 재료가 모자라면 per_food(= 비율 계산에서 제외하는 안전한 쪽)."""
+    if not meal.get("adjusted"):
+        return "none"
+    o = (meal.get("original_summary") or {}).get("total_calories_kcal")
+    a = (meal.get("summary") or {}).get("total_calories_kcal")
+    r = meal.get("eaten_ratio")
+    if not (_num(o) and _num(a) and _num(r)):
+        return "per_food"
+    n = max(len(meal.get("foods") or []), 1)
+    return "uniform" if abs(float(a) - float(o) * float(r)) <= 0.5 * n + 0.5 else "per_food"
+
+
+def _accumulation(meals, targets):
+    day_tot = {k: {} for k, _, _, _ in _ACC}
+    week_tot = {k: 0.0 for k, _, _, _ in _ACC}
+    unknown = {k: 0 for k, _, _, _ in _ACC}
+    prod_part = {k: 0.0 for k, _, _, _ in _ACC}   # 가공식품 몫(실섭취 기준)
+    share_den = {k: 0.0 for k, _, _, _ in _ACC}   # 비율 분모(제외 끼니 뺀 실섭취)
+    excluded = 0
+    pcount, pname, items = {}, {}, 0
+
+    for m in meals:
+        foods = m.get("foods") or []
+        summ = m.get("summary") or {}
+        has_product = any(_is_product(x) for x in foods)
+        skip_share = has_product and _adjust_kind(m) == "per_food"
+        if skip_share:
+            excluded += 1
+        for x in foods:
+            if _is_product(x):
+                items += 1
+                bc = str(x.get("barcode"))
+                pcount[bc] = pcount.get(bc, 0) + 1
+                pname.setdefault(bc, _food_name(x) or "가공식품")
+        for k, sk, fk, _ in _ACC:
+            actual = float(summ.get(sk) or 0) if _num(summ.get(sk)) else 0.0
+            week_tot[k] += actual
+            d = m.get("date")
+            if d:
+                day_tot[k][d] = day_tot[k].get(d, 0.0) + actual
+            unknown[k] += sum(1 for x in foods if _food_value(x, fk) is None)
+            if skip_share:
+                continue
+            share_den[k] += actual
+            orig = sum(_food_value(x, fk) or 0.0 for x in foods)
+            prod = sum(_food_value(x, fk) or 0.0 for x in foods if _is_product(x))
+            if orig > 0 and prod > 0:
+                prod_part[k] += actual * prod / orig
+
+    days = {m.get("date") for m in meals if m.get("date")}
+    out = {}
+    for k, _, _, tk in _ACC:
+        ref = targets.get(tk)
+        out[k] = {
+            "week_total": round(week_tot[k], 1),
+            "daily_avg": round(week_tot[k] / len(days), 1) if days else 0,
+            "ref": ref,
+            "days_over": sum(1 for v in day_tot[k].values() if ref and v > ref),
+            "days_logged": len(days),
+            "unknown_foods": unknown[k],
+        }
+    ordered = sorted(pcount.items(), key=lambda kv: (-kv[1], pname[kv[0]], kv[0]))
+    out["processed"] = {
+        "product_items": items,
+        "distinct_products": len(pcount),
+        "products": [{"barcode": bc, "name": pname[bc], "count": c} for bc, c in ordered[:PRODUCTS_TOP_N]],
+        "sodium_share_pct": round(100.0 * prod_part["sodium"] / share_den["sodium"], 1) if share_den["sodium"] > 0 else None,
+        "sugar_share_pct": round(100.0 * prod_part["sugar"] / share_den["sugar"], 1) if share_den["sugar"] > 0 else None,
+        "share_excluded_meals": excluded,
+    }
+    return out
+
+
 def compute_report(payload):
     """계약 §5-2 요청 payload → data dict(4요소 + coverage). 저장·인증 없음(stateless)."""
     meals = payload.get("meals") or []
@@ -170,4 +273,6 @@ def compute_report(payload):
         "next_action": next_action,
         "p2_teaser": {"show": len(meals) > 0, "message": P2_TEASER_MSG if meals else None},
         "coverage": {"days_logged": days_logged, "meals": len(meals)},
+        "accumulation": _accumulation(meals, targets),
+        "calc_version": CALC_VERSION,
     }
