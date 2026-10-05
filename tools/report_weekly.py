@@ -10,6 +10,9 @@
 - top_food_groups: tools/food_groups_v1.json (IP 07 사본, 첫 매치 승리) 상위 3(count desc, 이름 asc)
 - accumulation(v2): 나트륨·당류 주간 합계·기준 초과일·값 모르는 음식 수 + 가공식품 목록·몫
   (영양공식 IP/integration/weekly_accumulation_design_v1.md D3 · 평가 A01~A14)
+- completeness(v3): 기록이 모자란 날(끼니≤1 또는 기록일≥3·열량<중앙값×0.5)은 하한 → 부족(under) flag 만
+  충분한 날로 재확인, 충분한 날이 없으면 보류(withheld) · 원전 IP eval 06 스냅샷 v2
+  (영양공식 IP/integration/weekly_missed_meal_design_v1.md · 평가 R05~R20)
 """
 import json
 import os
@@ -31,6 +34,7 @@ TEMPLATES = {
     "fiber_under":    "식이섬유가 부족한 한 주였어요. 나물이나 잡곡을 한 끼 더해보세요.",
     "balanced":       "이번 주는 전반적으로 균형이 잘 잡혔어요. 다음 주도 지금처럼 이어가 보세요.",
     "insufficient_data": "아직 기록이 부족해요. 사흘만 기록해보면 흐름이 보이기 시작해요.",
+    "under_withheld": "하루 식사를 모두 기록한 날이 적어서 부족한 영양소는 판단하지 않았어요. 하루 끼니를 빠짐없이 기록해 보세요.",
 }
 FALLBACK_SAFE = "이번 주는 일반적인 식생활 균형을 참고해 주세요."
 P2_TEASER_MSG = "제품을 스캔해 등록하면 가공식품 영양이 더 정확해져요."
@@ -108,11 +112,11 @@ def _compute_flags(avg, targets):
     return flags
 
 
-def _pick_template(flags, n_meals):
+def _pick_template(flags, n_meals, withheld=()):
     if n_meals == 0:
         return "insufficient_data"
     if not flags:
-        return "balanced"
+        return "under_withheld" if withheld else "balanced"
     sev_rank = {"high": 0, "medium": 1}
     best = min(flags, key=lambda f: (sev_rank.get(f["severity"], 9),
                                      NUTRIENT_PRIORITY.index(f["nutrient"])))
@@ -135,6 +139,56 @@ def _guardrail_check(message):
     return r["guardrail_passed"], (r["violations"][0] if r["violations"] else None)
 
 
+# ── 끼니를 빠뜨린 날 보완 (룰 v2 · 영양공식 IP/integration/weekly_missed_meal_design_v1.md M1~M5) ──
+UNDER_NUTRIENTS = ["calories", "protein", "fiber"]   # 부족 판정이 있는 영양소(우선순위 순)
+INCOMPLETE_MAX_MEALS = 1          # M1①: 그날 끼니 ≤ 1
+MEDIAN_RULE_MIN_DAYS = 3          # M1②: 기록일 ≥ 3 일 때만
+MEDIAN_RULE_RATIO = 0.5           #        그날 열량 < 중앙값 × 0.5
+
+
+def _median(vals):
+    v = sorted(vals)
+    n = len(v)
+    return (v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0) if n else 0.0
+
+
+def _day_split(meals):
+    """날짜 → (끼니 수, 열량 합). 반환: (충분한 날 집합, 모자란 날 집합)."""
+    cnt, kcal = {}, {}
+    for m in meals:
+        d = m.get("date")
+        if not d:
+            continue
+        cnt[d] = cnt.get(d, 0) + 1
+        kcal[d] = kcal.get(d, 0.0) + float((m.get("summary") or {}).get("total_calories_kcal") or 0)
+    med = _median(list(kcal.values())) if len(kcal) >= MEDIAN_RULE_MIN_DAYS else None
+    incomplete = {d for d in cnt
+                  if cnt[d] <= INCOMPLETE_MAX_MEALS or (med is not None and kcal[d] < MEDIAN_RULE_RATIO * med)}
+    return set(cnt) - incomplete, incomplete
+
+
+def _apply_completeness(meals, flags, targets):
+    """M2: 부족 flag 가 뜬 영양소만 충분한 날로 재확인. 반환: (새 flags, completeness)."""
+    complete, incomplete = _day_split(meals)
+    under = [f for f in flags if f["direction"] == "under"]
+    withheld, rechecked = [], []
+    if incomplete and under:
+        keep = [f for f in flags if f["direction"] != "under"]
+        if complete:
+            sub = [m for m in meals if m.get("date") in complete]
+            c_avg, _ = _daily_avg(sub)
+            c_flags = [f for f in _compute_flags(c_avg, targets) if f["direction"] == "under"]
+            rechecked = [n for n in UNDER_NUTRIENTS if any(f["nutrient"] == n for f in under)]
+            keep += [f for f in c_flags if f["nutrient"] in rechecked]
+        else:
+            withheld = [n for n in UNDER_NUTRIENTS if any(f["nutrient"] == n for f in under)]
+        # 원래 판정 순서(sodium, sugar, calories, protein, fiber) 유지
+        prio = ["sodium", "sugar", "calories", "protein", "fiber"]
+        flags = sorted(keep, key=lambda f: prio.index(f["nutrient"]))
+    return flags, {"complete_days": len(complete), "incomplete_days": len(incomplete),
+                   "withheld": withheld, "rechecked": rechecked}
+
+
 def _top_food_groups(meals, groups=None, top_n=3):
     counts = {}
     for m in meals:
@@ -146,7 +200,7 @@ def _top_food_groups(meals, groups=None, top_n=3):
 
 
 # ── 누적 v1 (weekly_accumulation_design_v1 D3) ─────────────────────────
-CALC_VERSION = "weekly.v2"
+CALC_VERSION = "weekly.v3"  # v3 = 끼니를 빠뜨린 날 보완(부족 판정 재확인·보류)
 PRODUCTS_TOP_N = 10
 _ACC = [("sodium", "total_sodium_mg", "sodium_mg", "sodium_max_mg"),
         ("sugar", "total_sugar_g", "sugar_g", "sugar_max_g")]
@@ -254,7 +308,8 @@ def compute_report(payload):
 
     avg, days_logged = _daily_avg(meals)
     flags = _compute_flags(avg, targets) if meals else []  # 기록 없음 = 판정 대상 없음(0값 오탐 방지)
-    template_id = _pick_template(flags, len(meals))
+    flags, completeness = _apply_completeness(meals, flags, targets)
+    template_id = _pick_template(flags, len(meals), completeness["withheld"])
     message = TEMPLATES[template_id]
 
     passed, blocked = _guardrail_check(message)
@@ -274,5 +329,6 @@ def compute_report(payload):
         "p2_teaser": {"show": len(meals) > 0, "message": P2_TEASER_MSG if meals else None},
         "coverage": {"days_logged": days_logged, "meals": len(meals)},
         "accumulation": _accumulation(meals, targets),
+        "completeness": completeness,
         "calc_version": CALC_VERSION,
     }

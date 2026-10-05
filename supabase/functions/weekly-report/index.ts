@@ -31,7 +31,7 @@ const ENGINE_TIMEOUT_MS = 10_000; // 계약 §7: report는 10s 동기
 const SCHEMA_VERSION = "report.v1";
 const KST_OFFSET_MS = 9 * 3600 * 1000;
 const FALLBACK_SAFE = "이번 주는 일반적인 식생활 균형을 참고해 주세요."; // 03 §7 사전 승인 문구
-const CALC_VERSION = "weekly.v2"; // 엔진 report_weekly.CALC_VERSION 과 같아야 캐시를 재사용
+const CALC_VERSION = "weekly.v3"; // 엔진 report_weekly.CALC_VERSION 과 같아야 캐시를 재사용 (v3 = 끼니 빠뜨린 날 보완, 2026-10-05)
 const DEFAULT_TARGETS = { calories_kcal: 1800, protein_g: 60, sodium_max_mg: 2000, sugar_max_g: 50, fiber_min_g: 25 };
 
 function json(status: number, body: Record<string, unknown>): Response {

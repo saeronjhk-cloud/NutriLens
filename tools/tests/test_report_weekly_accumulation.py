@@ -126,7 +126,7 @@ def test_a15_adjust_kind():
 
 def test_a14_version_and_legacy_string_foods():
     d = RW.compute_report({"meals": [{"date": "2026-09-28", "foods": ["설렁탕"], "summary": s(100)}], "targets": T})
-    assert d["calc_version"] == "weekly.v2"
+    assert d["calc_version"] == "weekly.v3"
     assert d["accumulation"]["sodium"]["unknown_foods"] == 1  # 문자열 음식 = 값 모름
 
 
