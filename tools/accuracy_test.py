@@ -48,6 +48,16 @@ RESULT_DIR = PROJECT_DIR / ".tmp"
 ROOT_DIR = PROJECT_DIR.parent.parent                # D:\서박사의 영양공식
 AIHUB_VAL_DIR = ROOT_DIR / "Images" / "aihub_val"
 AIHUB_PER_CLASS = 10                                # 30종 × 10 = 300장 (~$1.5)
+# 2026-10-06 반찬·주식 42종 (영양공식 IP/integration/banchan_recognition_eval_v1.md)
+AIHUB_BANCHAN_DIR = ROOT_DIR / "Images" / "aihub_banchan"
+try:
+    _BANCHAN_SPEC = json.loads((Path(__file__).parent / "banchan_eval_v1.json").read_text(encoding="utf-8"))
+except Exception:
+    _BANCHAN_SPEC = {"classes": [], "per_class": 6}
+BANCHAN_PER_CLASS = _BANCHAN_SPEC.get("per_class", 6)
+BANCHAN_CLASSES = len(_BANCHAN_SPEC.get("classes", []))
+# 정답 폴더명(AI Hub 이름) → 같은 음식으로 인정하는 이름들(예: 달걀말이 ↔ 계란말이)
+BANCHAN_ACCEPT = {c["aihub_name"]: c.get("also_accept", []) for c in _BANCHAN_SPEC.get("classes", [])}
 
 sys.path.insert(0, str(TOOLS_DIR))
 
@@ -329,7 +339,7 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         # 태그가 평가셋/전처리 이름과 같으면 서로 다른 조건이 **같은 파일**을 쓴다.
         #   예: --set baseline32 --tag production  →  photo_test_results_production.json
         #       = --preprocess production 의 파일. 조건이 통째로 뒤바뀐다.
-        _RESERVED = {"raw", "production", "baseline32", "all", "aihub300"}
+        _RESERVED = {"raw", "production", "baseline32", "all", "aihub300", "banchan42"}
         if run_tag in _RESERVED:
             print()
             print(f"  ★ --tag 로 {run_tag!r} 는 쓸 수 없습니다 — 중단합니다.")
@@ -355,24 +365,27 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
 
     _EXTS = ('.jpg', '.jpeg', '.png')
 
-    if photo_set == "aihub300":
-        if not AIHUB_VAL_DIR.exists():
+    if photo_set in ("aihub300", "banchan42"):
+        # banchan42 는 aihub300 과 같은 «폴더명 = 정답» 셋이다. 폴더·장수·종수만 다르다.
+        _ADIR, _PER, _NCLS = ((AIHUB_VAL_DIR, AIHUB_PER_CLASS, 30) if photo_set == "aihub300"
+                              else (AIHUB_BANCHAN_DIR, BANCHAN_PER_CLASS, BANCHAN_CLASSES))
+        if not _ADIR.exists():
             print()
             print("=" * 60)
             print("  aihub300 — 평가셋 폴더가 없습니다. 중단합니다.")
             print("=" * 60)
-            print(f"\n  없음: {AIHUB_VAL_DIR}")
+            print(f"\n  없음: {_ADIR}")
             print("  먼저 run-aihub-val-evalset.bat 으로 holdout 을 추출하십시오.")
             return None, True
 
         images = []
-        classes = sorted(d for d in AIHUB_VAL_DIR.iterdir() if d.is_dir())
+        classes = sorted(d for d in _ADIR.iterdir() if d.is_dir())
         short = []
         for d in classes:
             fs = sorted(f for f in d.iterdir() if f.suffix.lower() in _EXTS)
-            picked = fs[:AIHUB_PER_CLASS]
-            if len(picked) < AIHUB_PER_CLASS:
-                short.append(f"{d.name} {len(picked)}/{AIHUB_PER_CLASS}")
+            picked = fs[:_PER]
+            if len(picked) < _PER:
+                short.append(f"{d.name} {len(picked)}/{_PER}")
             for f in picked:
                 gt_map[f] = d.name
             images.extend(picked)
@@ -382,9 +395,9 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         print("=" * 60)
         print("  aihub300 인벤토리 — AI Hub Validation holdout")
         print("=" * 60)
-        print(f"  클래스 {len(classes)}종 · 클래스당 최대 {AIHUB_PER_CLASS}장 "
+        print(f"  클래스 {len(classes)}종 · 클래스당 최대 {_PER}장 "
               f"· 합계 {len(images)}장")
-        print(f"  출처: {AIHUB_VAL_DIR}")
+        print(f"  출처: {_ADIR}")
         print("  GT = 폴더명 (파일명에서는 유도 불가)")
         print("  샘플링 = 파일명 정렬 후 앞 N장 → 매 실행 같은 사진 (재현 가능)")
         # ★ 경고를 «출력만» 하면 안 된다(규칙44). 셋이 깨진 채로 $1.5 가 나간다.
@@ -393,11 +406,11 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         _broken = []
         if short:
             print(f"  [경고] 목표 미달 클래스 {len(short)}종: {', '.join(short)}")
-            _broken.append(f"클래스당 {AIHUB_PER_CLASS}장을 못 채운 클래스 {len(short)}종")
-        if len(classes) != 30:
-            print(f"  [경고] 클래스가 30종이 아니라 {len(classes)}종입니다 — "
+            _broken.append(f"클래스당 {_PER}장을 못 채운 클래스 {len(short)}종")
+        if len(classes) != _NCLS:
+            print(f"  [경고] 클래스가 기대 종수가 아니라 {len(classes)}종입니다 — "
                   "셋 구성이 바뀌었는지 확인하십시오.")
-            _broken.append(f"클래스가 30종이 아니라 {len(classes)}종")
+            _broken.append(f"클래스가 기대 종수가 아니라 {len(classes)}종")
         print("=" * 60)
         if _broken:
             print()
@@ -408,8 +421,8 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
             print("  이대로 돌리면 분모가 달라진 정확도가 나오고, 나중에 30종×10장")
             print("  결과와 나란히 놓이게 됩니다(규칙34). 먼저 확인하십시오:")
             print("   1) run-aihub-val-evalset.bat 이 완주했는가")
-            print(f"   2) {AIHUB_VAL_DIR} 아래 폴더가 30개인가")
-            print(f"   3) 각 폴더에 사진이 {AIHUB_PER_CLASS}장 이상인가")
+            print(f"   2) {_ADIR} 아래 폴더가 {_NCLS}개인가")
+            print(f"   3) 각 폴더에 사진이 {_PER}장 이상인가")
             return None, True
 
     else:
@@ -569,6 +582,13 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
 
         ai_foods = analysis.get("foods", [])
         best, strictness = find_best_match(expected_name, ai_foods)
+        if photo_set == "banchan42" and strictness != "EXACT":
+            # 같은 음식의 다른 표기(달걀말이↔계란말이 등)도 EXACT 로 인정 — 정의는 banchan_eval_v1.json
+            for _alt in BANCHAN_ACCEPT.get(expected_name, []):
+                _b2, _s2 = find_best_match(_alt, ai_foods)
+                if _s2 == "EXACT":
+                    best, strictness = _b2, _s2
+                    break
 
         # 정확도 카운트
         if strictness == "EXACT":
@@ -1013,7 +1033,7 @@ def main():
     parser.add_argument("--photo", action="store_true", help="사진 인식 테스트 (~$0.005/장)")
     parser.add_argument("--all", action="store_true", help="둘 다")
     parser.add_argument("--set", dest="photo_set", default="baseline32",
-                        choices=["baseline32", "all", "aihub300"],
+                        choices=["baseline32", "all", "aihub300", "banchan42"],
                         # ⚠ help 안의 %는 %%로 (아래 --preprocess 주석 참조)
                         help="사진 평가셋. baseline32=IP/165 G4 게이트(기본), "
                              "all=폴더 전수(탐색용, 기준선과 비교 불가), "
