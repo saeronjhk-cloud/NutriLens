@@ -339,7 +339,7 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         # 태그가 평가셋/전처리 이름과 같으면 서로 다른 조건이 **같은 파일**을 쓴다.
         #   예: --set baseline32 --tag production  →  photo_test_results_production.json
         #       = --preprocess production 의 파일. 조건이 통째로 뒤바뀐다.
-        _RESERVED = {"raw", "production", "baseline32", "all", "aihub300", "banchan42"}
+        _RESERVED = {"raw", "production", "baseline32", "all", "aihub300", "banchan42", "banchan42h"}
         if run_tag in _RESERVED:
             print()
             print(f"  ★ --tag 로 {run_tag!r} 는 쓸 수 없습니다 — 중단합니다.")
@@ -365,10 +365,17 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
 
     _EXTS = ('.jpg', '.jpeg', '.png')
 
-    if photo_set in ("aihub300", "banchan42"):
+    if photo_set in ("aihub300", "banchan42", "banchan42h"):
         # banchan42 는 aihub300 과 같은 «폴더명 = 정답» 셋이다. 폴더·장수·종수만 다르다.
-        _ADIR, _PER, _NCLS = ((AIHUB_VAL_DIR, AIHUB_PER_CLASS, 30) if photo_set == "aihub300"
-                              else (AIHUB_BANCHAN_DIR, BANCHAN_PER_CLASS, BANCHAN_CLASSES))
+        # banchan42h = 보류셋(holdout): 같은 폴더의 7~10번째 사진(종당 4장). 프롬프트를 252장에
+        #   맞춰 고쳤을 때 «그 사진에만 맞춘 개선»인지 가려내는 용도 — 개선 판정은 여기서도 올라야 한다.
+        _OFF = 0
+        if photo_set == "aihub300":
+            _ADIR, _PER, _NCLS = AIHUB_VAL_DIR, AIHUB_PER_CLASS, 30
+        elif photo_set == "banchan42":
+            _ADIR, _PER, _NCLS = AIHUB_BANCHAN_DIR, BANCHAN_PER_CLASS, BANCHAN_CLASSES
+        else:
+            _ADIR, _PER, _NCLS, _OFF = AIHUB_BANCHAN_DIR, 4, BANCHAN_CLASSES, BANCHAN_PER_CLASS
         if not _ADIR.exists():
             print()
             print("=" * 60)
@@ -383,7 +390,7 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         short = []
         for d in classes:
             fs = sorted(f for f in d.iterdir() if f.suffix.lower() in _EXTS)
-            picked = fs[:_PER]
+            picked = fs[_OFF:_OFF + _PER]
             if len(picked) < _PER:
                 short.append(f"{d.name} {len(picked)}/{_PER}")
             for f in picked:
@@ -582,7 +589,7 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
 
         ai_foods = analysis.get("foods", [])
         best, strictness = find_best_match(expected_name, ai_foods)
-        if photo_set == "banchan42" and strictness != "EXACT":
+        if photo_set in ("banchan42", "banchan42h") and strictness != "EXACT":
             # 같은 음식의 다른 표기(달걀말이↔계란말이 등)도 EXACT 로 인정 — 정의는 banchan_eval_v1.json
             for _alt in BANCHAN_ACCEPT.get(expected_name, []):
                 _b2, _s2 = find_best_match(_alt, ai_foods)
@@ -872,6 +879,7 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         # 서로 다른 입력을 받고 있었다」가 드러났고, 그걸 모르면 두 실행의 숫자를
         # 같은 표에 올리게 된다(규칙34).
         "preprocess": preprocess,
+        "prompt_version": os.environ.get("NL_PROMPT_VERSION", "v1"),  # 2026-10-06 반찬 v2 비교용
         # 세션49: 반복 측정(run-to-run 분산)에서 어느 회차인지. 비우면 "".
         "tag": run_tag,
         # 세션49: aihub300 은 클래스당 장수가 결과의 성격을 정한다. 나중에
@@ -1033,7 +1041,7 @@ def main():
     parser.add_argument("--photo", action="store_true", help="사진 인식 테스트 (~$0.005/장)")
     parser.add_argument("--all", action="store_true", help="둘 다")
     parser.add_argument("--set", dest="photo_set", default="baseline32",
-                        choices=["baseline32", "all", "aihub300", "banchan42"],
+                        choices=["baseline32", "all", "aihub300", "banchan42", "banchan42h"],
                         # ⚠ help 안의 %는 %%로 (아래 --preprocess 주석 참조)
                         help="사진 평가셋. baseline32=IP/165 G4 게이트(기본), "
                              "all=폴더 전수(탐색용, 기준선과 비교 불가), "

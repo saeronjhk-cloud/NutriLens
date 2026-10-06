@@ -367,6 +367,16 @@ SYSTEM_PROMPT = """당신은 NutriLens의 AI 음식 영양 분석 전문가입�
 - 3~4: 영양 불균형, 고칼로리/고나트륨
 - 1~2: 매우 불균형, 과도한 열량/지방/나트륨"""
 
+# ── 한식 반찬·주식 이름 규칙 v2 (2026-10-06 웹앱트랙) ─────────────────────────
+# 원본: IP/통합앱_P1/prompts/korean_dish_guide_v2.txt (이 문자열은 사본 — 고칠 때 원본 먼저)
+# 근거: 영양공식 IP/integration/banchan_recognition_result_v1.md (AI Hub 252장 57.1%, 혼동 쌍 반복)
+# 켜기/끄기: 환경변수 NL_PROMPT_VERSION = "v1" | "v2". test_server 도 이 SYSTEM_PROMPT 를 import 하므로 한 곳에서 바뀐다.
+KOREAN_DISH_GUIDE_V2 = (Path(__file__).parent / "korean_dish_guide_v2.txt").read_text(encoding="utf-8") \
+    if (Path(__file__).parent / "korean_dish_guide_v2.txt").exists() else ""
+PROMPT_VERSION = os.environ.get("NL_PROMPT_VERSION", "v1").strip().lower()
+if PROMPT_VERSION == "v2" and KOREAN_DISH_GUIDE_V2:
+    SYSTEM_PROMPT = SYSTEM_PROMPT + "\n" + KOREAN_DISH_GUIDE_V2
+
 
 def encode_image(image_path):
     """이미지를 base64로 인코딩"""
@@ -1285,7 +1295,15 @@ def analyze_food_image(image_path, api_key=None, model="gpt-4o", *, allow_raw=Fa
         return {"error": f"OpenAI API 에러: {result['error'].get('message', str(result['error']))}"}
 
     # 응답 파싱
-    content = result["choices"][0]["message"]["content"]
+    # ★ 2026-10-06 — content 가 null 로 오는 경우가 있다(모델 거절 `refusal` · finish_reason=content_filter/length).
+    #   banchan42 평가 184/252(오이생채)에서 `"```json" in None` TypeError 로 평가 전체가 중단됐다.
+    #   크래시 대신 «에러 응답»으로 돌려 호출자(앱·평가)가 그 사진만 실패로 기록하고 계속 가게 한다.
+    _choice = (result.get("choices") or [{}])[0]
+    _msg = _choice.get("message") or {}
+    content = _msg.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return {"error": f"AI 응답 본문 없음(finish_reason={_choice.get('finish_reason')}, "
+                         f"refusal={str(_msg.get('refusal'))[:120]})"}
 
     # JSON 추출 (```json ... ``` 블록이 있을 수 있음)
     if "```json" in content:
