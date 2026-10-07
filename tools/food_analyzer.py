@@ -370,10 +370,10 @@ SYSTEM_PROMPT = """당신은 NutriLens의 AI 음식 영양 분석 전문가입�
 # ── 한식 반찬·주식 이름 규칙 v2 (2026-10-06 웹앱트랙) ─────────────────────────
 # 원본: IP/통합앱_P1/prompts/korean_dish_guide_v2.txt (이 문자열은 사본 — 고칠 때 원본 먼저)
 # 근거: 영양공식 IP/integration/banchan_recognition_result_v1.md (AI Hub 252장 57.1%, 혼동 쌍 반복)
-# 켜기/끄기: 환경변수 NL_PROMPT_VERSION = "v1" | "v2". test_server 도 이 SYSTEM_PROMPT 를 import 하므로 한 곳에서 바뀐다.
+# 켜기/끄기: 환경변수 NL_PROMPT_VERSION = "v1" | "v2" (기본 v2, 2026-10-07 채택). test_server 도 이 SYSTEM_PROMPT 를 import 하므로 한 곳에서 바뀐다.
 KOREAN_DISH_GUIDE_V2 = (Path(__file__).parent / "korean_dish_guide_v2.txt").read_text(encoding="utf-8") \
     if (Path(__file__).parent / "korean_dish_guide_v2.txt").exists() else ""
-PROMPT_VERSION = os.environ.get("NL_PROMPT_VERSION", "v1").strip().lower()
+PROMPT_VERSION = os.environ.get("NL_PROMPT_VERSION", "v2").strip().lower()  # 2026-10-07 v2 채택(본셋 57.1→66.7 · 보류셋 55.4→67.3 · 32장 게이트 18/32) · 되돌리기: Railway 환경변수 NL_PROMPT_VERSION=v1
 if PROMPT_VERSION == "v2" and KOREAN_DISH_GUIDE_V2:
     SYSTEM_PROMPT = SYSTEM_PROMPT + "\n" + KOREAN_DISH_GUIDE_V2
 

@@ -879,7 +879,7 @@ def run_photo_test(photo_set="baseline32", preprocess="raw", run_tag="", dry_run
         # 서로 다른 입력을 받고 있었다」가 드러났고, 그걸 모르면 두 실행의 숫자를
         # 같은 표에 올리게 된다(규칙34).
         "preprocess": preprocess,
-        "prompt_version": os.environ.get("NL_PROMPT_VERSION", "v1"),  # 2026-10-06 반찬 v2 비교용
+        "prompt_version": os.environ.get("NL_PROMPT_VERSION", "v2"),  # 2026-10-06 반찬 v2 비교용
         # 세션49: 반복 측정(run-to-run 분산)에서 어느 회차인지. 비우면 "".
         "tag": run_tag,
         # 세션49: aihub300 은 클래스당 장수가 결과의 성격을 정한다. 나중에
