@@ -26,7 +26,7 @@ def attach(name):
     return fa.attach_food30_alternates(a, [])['foods'][0]
 
 os.environ.pop('BANCHAN_ALT', None)
-check('B0 기본 꺼짐(BANCHAN_ALT 미설정)', 'alternates' not in attach('연근조림'))
+check('B0 기본 켜짐(BANCHAN_ALT 미설정) — 2026-10-09 채택', 'alternates' in attach('연근조림'))
 os.environ['BANCHAN_ALT'] = '1'
 f = attach('연근조림')
 check('B1 연근조림 → 후보 감자조림', [x['name_ko'] for x in f.get('alternates', [])] == ['감자조림'])
