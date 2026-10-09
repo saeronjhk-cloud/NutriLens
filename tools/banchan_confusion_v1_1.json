@@ -1,0 +1,48 @@
+{
+ "version": "banchan_confusion_v1.1",
+ "date": "2026-10-09",
+ "source": "v2 결과 본셋252+보류셋168 합산 · 규칙 R>=4 그리고 R/(R+N)>=0.30 · A/B 모두 GOLD_REF · 방향성 (v1 은 보류셋 소음 21.3%로 불채택)",
+ "doc": "영양공식 IP/integration/banchan_alternates_eval_v1.md §5",
+ "pairs": [
+  {
+   "ai": "연근조림",
+   "alt": [
+    "감자조림"
+   ],
+   "rescued_420": 10,
+   "noise_420": 0
+  },
+  {
+   "ai": "진미채볶음",
+   "alt": [
+    "북어채무침"
+   ],
+   "rescued_420": 8,
+   "noise_420": 9
+  },
+  {
+   "ai": "콩나물무침",
+   "alt": [
+    "숙주나물"
+   ],
+   "rescued_420": 8,
+   "noise_420": 9
+  },
+  {
+   "ai": "시금치나물",
+   "alt": [
+    "취나물"
+   ],
+   "rescued_420": 7,
+   "noise_420": 10
+  },
+  {
+   "ai": "고등어조림",
+   "alt": [
+    "코다리조림"
+   ],
+   "rescued_420": 5,
+   "noise_420": 9
+  }
+ ]
+}

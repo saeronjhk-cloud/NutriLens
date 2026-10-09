@@ -967,6 +967,46 @@ def food30_alternates(name):
     return [m for m in g if m != n] if g else []
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 2026-10-09 — 반찬 «혹시 ○○인가요?» 혼동표 v1.1 (방향성)
+# ══════════════════════════════════════════════════════════════════════════
+# 프롬프트 v2 뒤에도 남은 오답은 전부 «다른 이름으로 부름»이고 프롬프트로 안 움직인다
+# (영양공식 IP/integration/banchan_recognition_result_v1.md §6).
+# 엔진은 이름을 «바꾸지 않는다» — GPT 가 A 라고 하면 A 로 잘못 불리기 쉬운 B 를 후보로만 붙인다.
+# 혼동표 원본 = IP/통합앱_P1/eval/09_반찬혼동표_v1_1.json · 코드 사본 = tools/banchan_confusion_v1_1.json
+# 선정 규칙·채택 기준 = 영양공식 IP/integration/banchan_alternates_eval_v1.md (측정 전 고정)
+# ★ 기본 꺼짐(BANCHAN_ALT 미설정 = 꺼짐). 새 판정셋 banchan42n 에서 H1·H2 통과 뒤 기본값을 켠다.
+#   켜기 = 환경변수 BANCHAN_ALT=1
+BANCHAN_CONFUSION_FILE = 'banchan_confusion_v1_1.json'   # v1(9쌍)은 보류셋 소음 21.3%로 불채택
+_BANCHAN_CONFUSION = None
+
+
+def _banchan_confusion():
+    global _BANCHAN_CONFUSION
+    if _BANCHAN_CONFUSION is None:
+        table = {}
+        try:
+            path = Path(__file__).parent / BANCHAN_CONFUSION_FILE
+            data = json.loads(path.read_text(encoding='utf-8'))
+            for p in data.get('pairs', []):
+                key = _f30_norm(p.get('ai', ''))
+                alts = [a for a in p.get('alt', []) if isinstance(a, str) and a][:2]
+                if key and alts:
+                    table[key] = alts
+        except Exception as e:                # 표가 없어도 본 분석은 계속된다
+            print(f"[banchan_alt] 혼동표 로드 실패: {e}")
+        _BANCHAN_CONFUSION = table
+    return _BANCHAN_CONFUSION
+
+
+def banchan_alternates(name):
+    """GPT 가 이 이름으로 불렀을 때 «사진상 자주 헷갈린» 실제 음식 후보. 없으면 빈 리스트."""
+    if os.environ.get('BANCHAN_ALT', '0') != '1':
+        return []
+    n = _f30_norm(name)
+    return [a for a in _banchan_confusion().get(n, []) if _f30_norm(a) != n]
+
+
 def food30_same_group(a, b):
     """두 이름이 같은 구별불가 그룹인가. 평가 채점(GROUP 등급)에서 쓴다."""
     na, nb = _f30_norm(a), _f30_norm(b)
@@ -998,7 +1038,13 @@ def attach_food30_alternates(analysis, foods_db):
     for food in foods:
         if not isinstance(food, dict):
             continue
-        alts = food30_alternates(food.get('name_ko') or food.get('name') or '')
+        _nm = food.get('name_ko') or food.get('name') or ''
+        alts = food30_alternates(_nm)
+        reason = 'indistinguishable_pair'
+        if not alts:
+            # 2026-10-09 — 반찬 혼동표(방향성). food30 쌍이 우선이다(겹치지 않음).
+            alts = banchan_alternates(_nm)
+            reason = 'photo_confusable'
         if not alts:
             continue
         out = []
@@ -1022,7 +1068,7 @@ def attach_food30_alternates(analysis, foods_db):
         if out:
             # 「구별 불가라서 후보를 준다」는 사실 자체를 화면이 알 수 있게 이유를 남긴다.
             food['alternates'] = out
-            food['alternates_reason'] = 'indistinguishable_pair'
+            food['alternates_reason'] = reason
     return analysis
 
 
