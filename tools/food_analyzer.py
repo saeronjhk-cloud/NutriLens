@@ -1473,6 +1473,19 @@ _NOT_DRINK_TOKENS = (
 )
 
 
+# ★ 2026-10-12 포장 기준(건면·분말) CORE 항목 v1 — tools/tests/test_package_basis_v1.py
+#   이 항목들의 100g당 영양은 «건면·분말» 기준이고 serving 은 «포장 1개(1회분)» 이다.
+#   GPT 의 estimated_serving_g 는 «조리된 그릇 무게»(라면 ≈500g)라 둘을 곱하면 3~10배 과대
+#   (라면 사진 1장 → 1,448kcal · 나트륨 5,790mg). 10-11 C3b 가 CORE 덮어쓰기를 없애며 라면류에서 드러남.
+#   v1 = GPT g 와 무관하게 1회분(CORE serving)으로 계산. 조리 무게 → 포장 개수 환산(2봉 등)은
+#   IP/integration/core_serving_advisory_v1.md 자문 뒤 v2 에서.
+#   새 항목 추가 기준: 100g당 영양이 «조리 전/분말» 인데 사진에는 «조리 후/탄 음료» 로 찍히는 CORE 항목.
+PACKAGE_BASIS_KEYS = frozenset({
+    '라면', '신라면', '진라면', '컵라면', '편의점컵라면', '불닭볶음면', '짜파게티',
+    '오트밀', '미숫가루', '게이너쉐이크', '소이프로틴', '식물성프로틴',
+})
+
+
 def _detect_shape(food_name, category=None):
     """음식의 형태 자동 추론 — 'piece' | 'volume' | 'drink'.
 
@@ -3228,7 +3241,13 @@ def match_with_db(analysis, foods_db):
             shape = _detect_shape(ai_name, gold_data.get('category'))
             food['shape'] = shape  # 디버깅 / 시트 백업용 메타데이터
 
-            if ai_serving:
+            if gold_data.get('source') == 'core' and gold_key in PACKAGE_BASIS_KEYS:
+                # 포장 기준 항목 v1 — 1회분 고정 (GPT 그릇 무게 × 건조 100g당 값 곱셈 금지)
+                effective_serving = gold_serving
+                food['serving_basis'] = 'package'
+                if ai_serving and ai_serving != gold_serving:
+                    print(f"[포장 기준] {ai_name}: GPT {ai_serving}g(조리 무게) 무시 → 1회분 {gold_serving}g 기준")
+            elif ai_serving:
                 if shape == 'piece':
                     # 개수·조각 음식 (사과·햄버거·피자·도넛 등): AI 양 그대로 신뢰
                     # 사용자가 1/4쪽 먹은 사과를 표준 1개로 강제하지 않음
