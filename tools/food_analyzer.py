@@ -1460,7 +1460,16 @@ _DRINK_KEYWORDS = (
     '우유', '저지방우유', '두유',
     '스무디', '에이드', '식혜',
     '맥주', '와인', '소주', '막걸리', '하이볼',
-    '물', '생수', '탄산수', '얼음물', '보리차',
+    '생수', '탄산수', '얼음물', '보리차',
+)
+
+# ★ 2026-10-11 _detect_shape v2 — 부분일치 오분류 수정 (tools/tests/test_detect_shape_v2.py)
+#   '물'이 부분일치라 나물·해물·물만두·물회가 drink 였고, 콜라⊂콜라비 · 녹차⊂녹차빙수 · 우유⊂달걀찜(우유) 도 drink 였다.
+#   ① 이름에 «음료가 아님을 뜻하는 말»(나물·해물·빙수·찜…)이 있으면 음료 검사를 건너뛴다
+#   ② '물'은 부분일치 금지 — 이름이 '물'로 끝나는 짧은 이름만 음료(물·레몬물·얼음물)
+_NOT_DRINK_TOKENS = (
+    '나물', '국물', '해물', '물만두', '물회', '물김치', '물냉면',
+    '콜라비', '빙수', '아이스크림', '찜', '식빵', '케이크', '쿠키', '식물성',
 )
 
 
@@ -1479,10 +1488,13 @@ def _detect_shape(food_name, category=None):
         return 'piece'
     name = food_name.strip()
 
-    # 1) 음료 (가장 구체적이라 먼저 체크)
-    for kw in _DRINK_KEYWORDS:
-        if kw in name:
-            return 'drink'
+    # 1) 음료 (가장 구체적이라 먼저 체크) — v2: 음료가 아님을 뜻하는 말이 있으면 음료 검사를 건너뛴다
+    if not any(tok in name for tok in _NOT_DRINK_TOKENS):
+        for kw in _DRINK_KEYWORDS:
+            if kw in name:
+                return 'drink'
+        if name == '물' or (name.endswith('물') and len(name) <= 4):
+            return 'drink'                  # 물 · 레몬물 · 얼음물 (나물·국물·해물은 위 토큰으로 이미 제외)
 
     # 2) 무정형 / 부피 음식
     for kw in _VOLUME_KEYWORDS:
