@@ -490,7 +490,7 @@ def test_serving_correction():
 
     검증 시나리오:
     1. piece 음식(사과)은 AI 양 그대로 신뢰 — 다이어터의 1/4 사과 50g 시나리오
-    2. volume 음식(찌개)이 CORE 표준의 2.5배 초과 → CORE 표준으로 보정
+    2. volume 음식(찌개)이 CORE 표준의 2.5배 초과 → (v2) 덮어쓰지 않고 가중 평균
     3. volume 음식이 1.5~2.5배 → GPT 70% + CORE 30% 가중 평균
     4. volume 음식이 정상 범위 (0.7~1.5배) → AI 양 그대로
     """
@@ -534,10 +534,12 @@ def test_serving_correction():
     }
     result = match_with_db(analysis, None)
     food = result["foods"][0]
-    # 보정되어 400g 기준 200kcal로 변경되어야 함
-    check(food.get('calories_kcal', 9999) < 300,
-          "volume(김치찌개) AI 1500g → CORE 표준 400g으로 보정",
-          f"칼로리 {food.get('calories_kcal')} (300 미만 기대, shape={food.get('shape')})")
+    # ★ 2026-10-11 양 보정 v2(C3b): 덮어쓰기 폐지 → GPT 70% + CORE 30% = 1170g → 585kcal
+    #   (AI Hub 양추정 Q 순서 평가에서 덮어쓰기가 양 정보를 지움 — calorie_serving_diagnosis_v1.md §5)
+    expected_cal = round(50 * round(1500 * 0.7 + 400 * 0.3) / 100, 1)
+    check(abs(food.get('calories_kcal', 0) - expected_cal) < 5,
+          "volume(김치찌개) AI 1500g → 가중 평균 1170g (덮어쓰기 없음)",
+          f"기대 {expected_cal}kcal, 실제 {food.get('calories_kcal')}kcal (shape={food.get('shape')})")
 
     # ── 시나리오 3: volume(된장찌개) — 정상 범위 ──
     # 된장찌개 CORE 38kcal/100g, 표준 400g. AI가 350g(0.875배)로 정상 추정

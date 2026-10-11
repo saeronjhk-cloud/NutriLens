@@ -3237,12 +3237,12 @@ def match_with_db(analysis, foods_db):
                     # 무정형/음료: AI 양이 CORE 표준에서 너무 벗어나면 가중 평균
                     # 부드러운 보정 — 강제 덮어쓰기는 "평균으로의 회귀" 부작용 우려
                     diff_ratio = ai_serving / gold_serving
-                    if diff_ratio > 2.5 or diff_ratio < 0.4:
-                        # 명백한 빗나감 — CORE 표준 사용
-                        print(f"[양 보정] {ai_name} ({shape}): GPT {ai_serving}g → "
-                              f"CORE 표준 {gold_serving}g (비율 {diff_ratio:.1f}배)")
-                        effective_serving = gold_serving
-                    elif diff_ratio > 1.5 or diff_ratio < 0.7:
+                    # ★ 2026-10-11 양 보정 v2 (C3b) — «CORE 표준으로 덮어쓰기» 폐지, 벗어나면 가중 평균만.
+                    #   근거: AI Hub 양추정 Validation Q1~Q5 순서 평가 15종 255장
+                    #   (영양공식 IP/integration/calorie_serving_diagnosis_v1.md §4·§5, tools/portion_q_eval.py)
+                    #   양 순서 일치율 OFF 80.0% · 현행(덮어쓰기) 68.0% · C3b 77.1% (+9.0%p, 나빠진 음식 0)
+                    #   덮어쓰기는 같은 음식의 많고 적음을 지워 버린다(자장면 85→43 · 갈치조림 88→58).
+                    if diff_ratio > 1.5 or diff_ratio < 0.7:
                         # 의심스러움 — GPT 70% + CORE 30% 가중 평균
                         blended = round(ai_serving * 0.7 + gold_serving * 0.3)
                         print(f"[양 가중] {ai_name} ({shape}): GPT {ai_serving}g + "
