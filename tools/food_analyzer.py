@@ -2759,6 +2759,34 @@ try:
 except Exception as _e2:
     print(f"[CORE 확장 v2] core_extension_v2.json 로드 실패 (무시하고 계속): {_e2}")
 
+# ── CORE 1인분 덮어쓰기 표 v1 (2026-10-13) ──
+# 1인분 정의 = «1명이 한 끼에 먹는 개인 몫, 국물·소스 포함 그릇 전체» (자문 Q2, Gemini·ChatGPT 합의)
+# 출처 파일(core_extension*.json·수기)은 그대로 두고 이 표 한 장으로만 바꾼다(자문 Q5). 되돌리기 = 파일 제거.
+# 원본 IP/통합앱_P1/eval/core_serving_overrides_v1.json · 결정 근거 영양공식 IP/integration/core_serving_decision_v1.md
+# 순서: alias(표준 키의 영양값 복사) → serving 덮어쓰기. tools/tests/test_core_serving_overrides_v1.py
+CORE_SERVING_OVERRIDES_FILE = 'core_serving_overrides_v1.json'
+try:
+    _ovr_path = Path(__file__).parent / CORE_SERVING_OVERRIDES_FILE
+    if _ovr_path.exists():
+        with open(_ovr_path, 'r', encoding='utf-8') as _f:
+            _ovr = json.load(_f)
+        _n_alias = _n_sv = 0
+        for _a, _std in _ovr.get('alias', {}).items():
+            if _std in CORE_FOODS:
+                CORE_FOODS[_a] = dict(CORE_FOODS[_std])
+                _n_alias += 1
+        for _nm, _g in _ovr.get('serving', {}).items():
+            if _nm in CORE_FOODS:
+                CORE_FOODS[_nm] = dict(CORE_FOODS[_nm], serving=_g)
+                _n_sv += 1
+        PACKAGE_COOKED_G = dict(_ovr.get('package_cooked_g', {}))
+        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 적용")
+    else:
+        PACKAGE_COOKED_G = {}
+except Exception as _e3:
+    PACKAGE_COOKED_G = {}
+    print(f"[CORE 1인분 표] 로드 실패 (무시하고 계속): {_e3}")
+
 # ── 모니터링 #4 (transition matrix): v2 효과 격리용 v1 스냅샷 ──
 # v2(core_extension_v2.json 434종)는 CORE_FOODS(gold 경로)에만 추가되고 SQLite DB엔 없음.
 # 따라서 v2가 결과를 바꿀 수 있는 곳은 gold 경로뿐 → 같은 이름을 v1(=v2 제외)/v2로 각각
