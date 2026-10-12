@@ -32,6 +32,8 @@ PICK_Q2 = ['감자탕', '곱창전골', '꽃게탕', '닭볶음탕', '닭죽', '
 if any(a == '--set=q2' for a in sys.argv):
     PICK = PICK_Q2
     RES = PROJECT / ".tmp" / "portion_q_results_q2.json"
+# 검산 = «기록 kcal 을 만든 엔진 규칙»: 1차셋은 10-11 CUR(덮어쓰기) 엔진, q2 는 10-12 운영(C3b+포장 기준) 엔진으로 실행됨
+CHECK_VARIANT = 'C3bP' if PICK is PICK_Q2 else 'CUR'
 QRE = re.compile(r'^[Qq](\d)$')
 
 
@@ -254,9 +256,9 @@ def score():
     for r in ok:                                     # 검산: 기록 kcal 로 역산한 g = CUR 재계산 g
         if r.get('kcal') and r.get('gold_cal'):
             g_rec = r['kcal'] / r['gold_cal'] * 100
-            if abs(g_rec - rule(r['gpt_g'], r['gold_serving'], 'CUR')) > 2:
+            if abs(g_rec - rule(r['gpt_g'], r['gold_serving'], CHECK_VARIANT, r.get('gold_key'))) > 2:
                 bad += 1
-    print(f"검산 불일치 {bad}건 (0 이어야 유효)")
+    print(f"검산 불일치 {bad}건 (0 이어야 유효 · 기준 {CHECK_VARIANT})")
     V = ('OFF', 'CUR', 'C1', 'C3a', 'C3b', 'C3bP', 'C3c')
     by = defaultdict(list)
     for r in ok:

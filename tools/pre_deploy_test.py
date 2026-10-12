@@ -536,9 +536,11 @@ def test_serving_correction():
     food = result["foods"][0]
     # ★ 2026-10-11 양 보정 v2(C3b): 덮어쓰기 폐지 → GPT 70% + CORE 30% = 1170g → 585kcal
     #   (AI Hub 양추정 Q 순서 평가에서 덮어쓰기가 양 정보를 지움 — calorie_serving_diagnosis_v1.md §5)
-    expected_cal = round(50 * round(1500 * 0.7 + 400 * 0.3) / 100, 1)
+    # ★ 2026-10-12 양 보정 v3(C3c): 범위 끝(1.5×400=600g) 쪽 30% → 1500×0.7 + 600×0.3 = 1230g → 615kcal
+    #   (C3b 경계 역전 제거 — calorie_serving_diagnosis_v1.md §6, 확인셋 q2)
+    expected_cal = round(50 * round(1500 * 0.7 + 400 * 1.5 * 0.3) / 100, 1)
     check(abs(food.get('calories_kcal', 0) - expected_cal) < 5,
-          "volume(김치찌개) AI 1500g → 가중 평균 1170g (덮어쓰기 없음)",
+          "volume(김치찌개) AI 1500g → 범위 끝 가중 1230g (C3c)",
           f"기대 {expected_cal}kcal, 실제 {food.get('calories_kcal')}kcal (shape={food.get('shape')})")
 
     # ── 시나리오 3: volume(된장찌개) — 정상 범위 ──

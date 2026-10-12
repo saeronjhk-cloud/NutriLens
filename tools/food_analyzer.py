@@ -3268,11 +3268,15 @@ def match_with_db(analysis, foods_db):
                     #   (영양공식 IP/integration/calorie_serving_diagnosis_v1.md §4·§5, tools/portion_q_eval.py)
                     #   양 순서 일치율 OFF 80.0% · 현행(덮어쓰기) 68.0% · C3b 77.1% (+9.0%p, 나빠진 음식 0)
                     #   덮어쓰기는 같은 음식의 많고 적음을 지워 버린다(자장면 85→43 · 갈치조림 88→58).
+                    # ★ 2026-10-12 양 보정 v3 (C3c, 연속형) — 1인분(s)이 아니라 «범위 끝»(1.5s / 0.7s) 쪽으로 30%.
+                    #   C3b 는 경계에서 역전(GPT 1.49s→1.49s · 1.51s→1.357s, 345g→392g · 350g→350g). C3c 는 연속·단조.
+                    #   근거: 확인셋 q2(미사용 20종 359장) C3c 83.4% vs C3b 80.4% (+3.0%p · 최악 −2.3%p · 검산 0),
+                    #   판정 기준 사전 고정 — calorie_serving_diagnosis_v1.md §6 · tools/tests/test_portion_c3c_v1.py
                     if diff_ratio > 1.5 or diff_ratio < 0.7:
-                        # 의심스러움 — GPT 70% + CORE 30% 가중 평균
-                        blended = round(ai_serving * 0.7 + gold_serving * 0.3)
+                        edge = gold_serving * (1.5 if diff_ratio > 1.5 else 0.7)
+                        blended = round(ai_serving * 0.7 + edge * 0.3)
                         print(f"[양 가중] {ai_name} ({shape}): GPT {ai_serving}g + "
-                              f"CORE {gold_serving}g → {blended}g")
+                              f"범위 끝 {round(edge)}g(CORE {gold_serving}g) → {blended}g")
                         effective_serving = blended
                     else:
                         effective_serving = ai_serving
