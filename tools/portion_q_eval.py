@@ -191,9 +191,14 @@ def run(dry=False):
 
 
 # ── 채점 (오프라인, 비용 0) — 기준은 IP/integration/calorie_serving_diagnosis_v1.md §4 (측정 전 고정) ──
-def rule(gpt, std, variant):
+def rule(gpt, std, variant, key=None):
     if not gpt or not std:
         return gpt
+    if variant == 'C3bP':                            # 운영(10-12~) = C3b + 포장 기준 12종 1회분 고정
+        from food_analyzer import PACKAGE_BASIS_KEYS
+        if key in PACKAGE_BASIS_KEYS:
+            return std
+        variant = 'C3b'
     r = gpt / std
     if variant == 'OFF':
         return gpt
@@ -236,13 +241,13 @@ def score():
             if abs(g_rec - rule(r['gpt_g'], r['gold_serving'], 'CUR')) > 2:
                 bad += 1
     print(f"검산 불일치 {bad}건 (0 이어야 유효)")
-    V = ('OFF', 'CUR', 'C1', 'C3a', 'C3b')
+    V = ('OFF', 'CUR', 'C1', 'C3a', 'C3b', 'C3bP')
     by = defaultdict(list)
     for r in ok:
         by[r['food']].append(r)
     tab = {}
     for f, rs in sorted(by.items()):
-        tab[f] = {v: concordance([(int(r['q'][1:]), rule(r['gpt_g'], r['gold_serving'], v)) for r in rs]) for v in V}
+        tab[f] = {v: concordance([(int(r['q'][1:]), rule(r['gpt_g'], r['gold_serving'], v, r.get('gold_key'))) for r in rs]) for v in V}
         qm = defaultdict(list)
         for r in rs:
             qm[r['q']].append(r['gpt_g'])
@@ -251,7 +256,7 @@ def score():
               ' '.join(f"{v} {tab[f][v]*100:.0f}" if tab[f][v] is not None else f"{v} -" for v in V))
     mean = {v: (lambda xs: sum(xs) / len(xs) if xs else None)([t[v] for t in tab.values() if t[v] is not None]) for v in V}
     print('\n평균 순서 일치율: ' + ' · '.join(f"{v} {mean[v]*100:.1f}%" for v in V if mean[v] is not None))
-    for v in ('C1', 'C3a', 'C3b'):
+    for v in ('C1', 'C3a', 'C3b', 'C3bP'):
         if mean[v] is None or mean['CUR'] is None:
             continue
         worst = min((t[v] - t['CUR']) for t in tab.values() if t[v] is not None and t['CUR'] is not None)
