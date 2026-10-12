@@ -1485,6 +1485,10 @@ PACKAGE_BASIS_KEYS = frozenset({
     '오트밀', '미숫가루', '게이너쉐이크', '소이프로틴', '식물성프로틴',
 })
 
+# ★ 2026-10-12 _detect_shape v3 — volume 키워드가 «다른 말의 일부»로 걸리는 것 제외 (tools/tests/test_detect_shape_v3.py)
+#   '탕'⊂탕수육·설탕·사탕 · '면'⊂칠면조·라면땅·당면 → 이 말을 지운 이름으로 volume 키워드를 검사한다.
+_NOT_VOLUME_TOKENS = ('탕수', '설탕', '사탕', '칠면조', '라면땅', '당면')
+
 
 def _detect_shape(food_name, category=None):
     """음식의 형태 자동 추론 — 'piece' | 'volume' | 'drink'.
@@ -1509,9 +1513,12 @@ def _detect_shape(food_name, category=None):
         if name == '물' or (name.endswith('물') and len(name) <= 4):
             return 'drink'                  # 물 · 레몬물 · 얼음물 (나물·국물·해물은 위 토큰으로 이미 제외)
 
-    # 2) 무정형 / 부피 음식
+    # 2) 무정형 / 부피 음식 — v3: 다른 말의 일부(탕수·설탕·칠면조·당면 …)는 지우고 검사
+    name_v = name
+    for tok in _NOT_VOLUME_TOKENS:
+        name_v = name_v.replace(tok, ' ')
     for kw in _VOLUME_KEYWORDS:
-        if kw in name:
+        if kw in name_v:
             return 'volume'
 
     # 3) 기본값 — 개수/조각 음식 (과일, 햄버거, 빵, 고기 등)
