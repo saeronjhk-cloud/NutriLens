@@ -543,6 +543,15 @@ def test_serving_correction():
           "volume(김치찌개) AI 1500g → 범위 끝 가중 1230g (C3c)",
           f"기대 {expected_cal}kcal, 실제 {food.get('calories_kcal')}kcal (shape={food.get('shape')})")
 
+    # ── 시나리오 2b: 포장 기준(라면) — 건면 100g당 값 × 그릇 무게 곱셈 금지, 봉지 수 환산 (2026-10-13) ──
+    #   pre_deploy 가 포장 기준 경로를 안 거쳐 math import 누락을 못 잡은 일(10-13) 재발 방지
+    for g, packs in ((500, 1), (1200, 2)):
+        result = match_with_db({"foods": [{"name_ko": "라면", "estimated_serving_g": g}]}, None)
+        food = result["foods"][0]
+        check(abs(food.get('calories_kcal', 0) - 450 * packs) < 5 and food.get('serving_basis') == 'package',
+              f"포장 기준(라면) GPT {g}g → {packs}봉 {450 * packs}kcal",
+              f"실제 {food.get('calories_kcal')}kcal · basis={food.get('serving_basis')} · 봉지={food.get('package_count')}")
+
     # ── 시나리오 3: volume(된장찌개) — 정상 범위 ──
     # 된장찌개 CORE 38kcal/100g, 표준 400g. AI가 350g(0.875배)로 정상 추정
     analysis = {

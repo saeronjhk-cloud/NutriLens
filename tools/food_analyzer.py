@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import json
+import math
 import time
 import base64
 import argparse
@@ -1478,7 +1479,7 @@ _NOT_DRINK_TOKENS = (
 #   GPT 의 estimated_serving_g 는 «조리된 그릇 무게»(라면 ≈500g)라 둘을 곱하면 3~10배 과대
 #   (라면 사진 1장 → 1,448kcal · 나트륨 5,790mg). 10-11 C3b 가 CORE 덮어쓰기를 없애며 라면류에서 드러남.
 #   v1 = GPT g 와 무관하게 1회분(CORE serving)으로 계산. 조리 무게 → 포장 개수 환산(2봉 등)은
-#   IP/integration/core_serving_advisory_v1.md 자문 뒤 v2 에서.
+#   → v2(2026-10-13): 자문 Q1 완성 무게로 봉지 수 환산(match_with_db 안 «포장 기준 항목 v2»).
 #   새 항목 추가 기준: 100g당 영양이 «조리 전/분말» 인데 사진에는 «조리 후/탄 음료» 로 찍히는 CORE 항목.
 PACKAGE_BASIS_KEYS = frozenset({
     '라면', '신라면', '진라면', '컵라면', '편의점컵라면', '불닭볶음면', '짜파게티',
@@ -3277,11 +3278,18 @@ def match_with_db(analysis, foods_db):
             food['shape'] = shape  # 디버깅 / 시트 백업용 메타데이터
 
             if gold_data.get('source') == 'core' and gold_key in PACKAGE_BASIS_KEYS:
-                # 포장 기준 항목 v1 — 1회분 고정 (GPT 그릇 무게 × 건조 100g당 값 곱셈 금지)
-                effective_serving = gold_serving
+                # 포장 기준 항목 v2 (2026-10-13) — GPT 완성 무게 ÷ 1회분 완성 무게(PACKAGE_COOKED_G, 자문 Q1) = 봉지 수.
+                #   0.5 단위(정확히 .25/.75 는 아래로) · 최소 1(건조 무게를 반 봉지로 깎지 않음) · 최대 3 · 무게 없으면 1.
+                #   건조 100g당 값 × GPT 그릇 무게 곱셈은 여전히 금지. tools/tests/test_package_basis_v2.py
+                cooked = PACKAGE_COOKED_G.get(gold_key)
+                packs = 1.0
+                if ai_serving and cooked:
+                    packs = max(1.0, min(3.0, math.ceil(ai_serving / cooked * 2 - 0.5) / 2))
+                effective_serving = gold_serving * packs
                 food['serving_basis'] = 'package'
-                if ai_serving and ai_serving != gold_serving:
-                    print(f"[포장 기준] {ai_name}: GPT {ai_serving}g(조리 무게) 무시 → 1회분 {gold_serving}g 기준")
+                food['package_count'] = packs
+                if ai_serving:
+                    print(f"[포장 기준] {ai_name}: GPT {ai_serving}g(완성 무게) ÷ 1회분 {cooked}g → {packs}봉 = 건조 {effective_serving}g 기준")
             elif ai_serving:
                 if shape == 'piece':
                     # 개수·조각 음식 (사과·햄버거·피자·도넛 등): AI 양 그대로 신뢰
