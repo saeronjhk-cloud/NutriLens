@@ -25,6 +25,13 @@ MAX_FOODS = 15     # volume/drink 음식 최대 수
 # 측정 전 고정(2026-10-11 20:4x): 반찬 7 + 밥·면·국 8. 1차 실행은 가나다순 15종(탕·찌개 위주)이라 반찬이 빠졌고 GPT 호출 0건으로 무효.
 PICK = ['시금치나물', '어묵볶음', '오징어볶음', '순대볶음', '갈치조림', '꽁치조림', '코다리조림',
         '김치볶음밥', '카레라이스', '자장면', '순두부찌개', '갈비탕', '떡만둣국', '호박죽', '콩국수']
+# ★ 확인셋 q2 (2026-10-12 고정, 결과 보기 전) — 1차 15종과 겹치지 않는 «아직 GPT 에 안 보낸» volume 음식 20종.
+#   목적: C3c(연속형) 를 1차셋(이미 본 셋)에서 골랐으므로 새 셋에서 재확인. 판정 기준 = IP/integration/calorie_serving_diagnosis_v1.md §6
+PICK_Q2 = ['감자탕', '곱창전골', '꽃게탕', '닭볶음탕', '닭죽', '류산슬덮밥', '매운탕', '부대찌개', '삼계탕', '삼선짬뽕',
+           '새우볶음밥', '소고기무국', '순대국', '시래기된장국', '알탕', '잡탕밥', '전주비빔밥', '제육덮밥', '쫄면', '회덮밥']
+if any(a == '--set=q2' for a in sys.argv):
+    PICK = PICK_Q2
+    RES = PROJECT / ".tmp" / "portion_q_results_q2.json"
 QRE = re.compile(r'^[Qq](\d)$')
 
 
@@ -199,6 +206,13 @@ def rule(gpt, std, variant, key=None):
         if key in PACKAGE_BASIS_KEYS:
             return std
         variant = 'C3b'
+    if variant == 'C3c':                             # 연속형: 범위 밖이면 «범위 끝» 쪽으로 30% (1.5배 경계에서 값이 뒤집히지 않음)
+        r = gpt / std
+        if r > 1.5:
+            return round(gpt * 0.7 + std * 1.5 * 0.3)
+        if r < 0.7:
+            return round(gpt * 0.7 + std * 0.7 * 0.3)
+        return gpt
     r = gpt / std
     if variant == 'OFF':
         return gpt
@@ -230,6 +244,8 @@ def concordance(rows):
 
 
 def score():
+    if not RES.exists():
+        print(f"[STOP] 결과 파일 없음: {RES} — 먼저 run 을 실행하십시오."); return 1
     d = {k: v for k, v in json.loads(RES.read_text(encoding='utf-8')).items() if v.get('food') in PICK}
     ok = [r for r in d.values() if 'error' not in r and r.get('gpt_g') and r.get('gold_serving')
           and r.get('shape') in ('volume', 'drink') and r.get('gold_src') == 'core']
@@ -241,7 +257,7 @@ def score():
             if abs(g_rec - rule(r['gpt_g'], r['gold_serving'], 'CUR')) > 2:
                 bad += 1
     print(f"검산 불일치 {bad}건 (0 이어야 유효)")
-    V = ('OFF', 'CUR', 'C1', 'C3a', 'C3b', 'C3bP')
+    V = ('OFF', 'CUR', 'C1', 'C3a', 'C3b', 'C3bP', 'C3c')
     by = defaultdict(list)
     for r in ok:
         by[r['food']].append(r)
@@ -256,14 +272,14 @@ def score():
               ' '.join(f"{v} {tab[f][v]*100:.0f}" if tab[f][v] is not None else f"{v} -" for v in V))
     mean = {v: (lambda xs: sum(xs) / len(xs) if xs else None)([t[v] for t in tab.values() if t[v] is not None]) for v in V}
     print('\n평균 순서 일치율: ' + ' · '.join(f"{v} {mean[v]*100:.1f}%" for v in V if mean[v] is not None))
-    for v in ('C1', 'C3a', 'C3b', 'C3bP'):
+    for v in ('C1', 'C3a', 'C3b', 'C3bP', 'C3c'):
         if mean[v] is None or mean['CUR'] is None:
             continue
         worst = min((t[v] - t['CUR']) for t in tab.values() if t[v] is not None and t['CUR'] is not None)
         ok_ = (mean[v] - mean['CUR']) >= 0.05 and worst >= -0.10
         print(f"  {v}: CUR 대비 {100*(mean[v]-mean['CUR']):+.1f}%p · 최악 음식 {100*worst:+.1f}%p → {'채택 가능' if ok_ else '불채택'}")
     print(f"  (참고) OFF: CUR 대비 {100*(mean['OFF']-mean['CUR']):+.1f}%p — 규칙이 순서를 얼마나 뭉개는지")
-    out = PROJECT / '.tmp' / 'portion_q_score.json'
+    out = PROJECT / '.tmp' / ('portion_q_score_q2.json' if PICK is PICK_Q2 else 'portion_q_score.json')
     out.write_text(json.dumps(dict(n=len(ok), mismatch=bad, mean=mean, by_food=tab), ensure_ascii=False, indent=1), encoding='utf-8')
     return 0
 
@@ -282,7 +298,7 @@ class _Tee:
 
 if __name__ == '__main__':
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
-    _log = PROJECT / '.tmp' / f'portion_q_log_{cmd or "help"}.txt'
+    _log = PROJECT / '.tmp' / f'portion_q_log_{cmd or "help"}{"_q2" if PICK is PICK_Q2 else ""}.txt'
     _log.parent.mkdir(parents=True, exist_ok=True)
     _lf = open(_log, 'a', encoding='utf-8')
     _lf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} {' '.join(sys.argv[1:])} =====\n")
