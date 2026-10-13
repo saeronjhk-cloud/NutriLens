@@ -3,7 +3,11 @@
 
 export type LookupRequest =
   | { action: "search"; q: string; limit: number }
-  | { action: "resolve"; name: string; serving_g: number | null };
+  | { action: "resolve"; name: string; serving_g: number | null; portion_choice?: PortionChoice; rice_separated?: boolean };
+
+// 분량 조절 v1 (2026-10-13) — 엔진 portion.PORTION_FACTOR 의 키. 배율은 엔진에만 있다(여기선 이름만 검사).
+export const PORTION_CHOICES = ["적게", "보통", "많게"] as const;
+export type PortionChoice = typeof PORTION_CHOICES[number];
 
 export type Parsed = { ok: true; req: LookupRequest } | { ok: false; message: string };
 
@@ -34,11 +38,26 @@ export function parseLookupRequest(body: unknown): Parsed {
     const name = b.name.trim();
     if (name.length < 1 || name.length > NAME_MAX) return { ok: false, message: `name length 1..${NAME_MAX}` };
     const s = b.serving_g;
-    if (s === undefined || s === null) return { ok: true, req: { action: "resolve", name, serving_g: null } };
-    if (typeof s !== "number" || !Number.isFinite(s) || s <= 0 || s > SERVING_MAX) {
-      return { ok: false, message: `serving_g null or (0, ${SERVING_MAX}]` };
+    let serving: number | null = null;
+    if (s !== undefined && s !== null) {
+      if (typeof s !== "number" || !Number.isFinite(s) || s <= 0 || s > SERVING_MAX) {
+        return { ok: false, message: `serving_g null or (0, ${SERVING_MAX}]` };
+      }
+      serving = s;
     }
-    return { ok: true, req: { action: "resolve", name, serving_g: s } };
+    const req: Extract<LookupRequest, { action: "resolve" }> = { action: "resolve", name, serving_g: serving };
+    if (b.portion_choice !== undefined) {
+      if (!(PORTION_CHOICES as readonly unknown[]).includes(b.portion_choice)) {
+        return { ok: false, message: `portion_choice ${PORTION_CHOICES.join("|")}` };
+      }
+      if (serving === null) return { ok: false, message: "portion_choice needs serving_g (base)" };
+      req.portion_choice = b.portion_choice as PortionChoice;
+    }
+    if (b.rice_separated !== undefined) {
+      if (typeof b.rice_separated !== "boolean") return { ok: false, message: "rice_separated must be boolean" };
+      req.rice_separated = b.rice_separated;
+    }
+    return { ok: true, req };
   }
   return { ok: false, message: "action must be search|resolve" };
 }
@@ -47,5 +66,12 @@ export function parseLookupRequest(body: unknown): Parsed {
 export function engineCall(req: LookupRequest): { path: string; body: Record<string, unknown> } {
   return req.action === "search"
     ? { path: "/v1/food/search", body: { q: req.q, limit: req.limit } }
-    : { path: "/v1/food/resolve", body: { name: req.name, serving_g: req.serving_g } };
+    : {
+        path: "/v1/food/resolve",
+        body: {
+          name: req.name, serving_g: req.serving_g,
+          ...(req.portion_choice !== undefined ? { portion_choice: req.portion_choice } : {}),
+          ...(req.rice_separated !== undefined ? { rice_separated: req.rice_separated } : {}),
+        },
+      };
 }

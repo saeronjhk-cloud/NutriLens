@@ -40,3 +40,21 @@ test("F06 엔진 경로 매핑", () => {
   assert.deepEqual(engineCall({ action: "search", q: "국밥", limit: 10 }), { path: "/v1/food/search", body: { q: "국밥", limit: 10 } });
   assert.deepEqual(engineCall({ action: "resolve", name: "밥", serving_g: null }), { path: "/v1/food/resolve", body: { name: "밥", serving_g: null } });
 });
+
+// ── 분량 조절 v1 (2026-10-13) — 저장 전 «적게·보통·많게». 기존 F03·F06 결과 모양은 그대로(새 키는 있을 때만)
+test("F07 resolve 분량 선택: 적게·보통·많게 + 기준 g 필수 · rice_separated 불리언", () => {
+  assert.deepEqual(parseLookupRequest({ action: "resolve", name: "갈비탕", serving_g: 785, portion_choice: "많게" }),
+    { ok: true, req: { action: "resolve", name: "갈비탕", serving_g: 785, portion_choice: "많게" } });
+  assert.deepEqual(parseLookupRequest({ action: "resolve", name: "돼지국밥", serving_g: 640, portion_choice: "적게", rice_separated: true }),
+    { ok: true, req: { action: "resolve", name: "돼지국밥", serving_g: 640, portion_choice: "적게", rice_separated: true } });
+  for (const portion_choice of ["매우많게x", "", 1, null]) {
+    assert.equal(parseLookupRequest({ action: "resolve", name: "밥", serving_g: 210, portion_choice }).ok, false);
+  }
+  assert.equal(parseLookupRequest({ action: "resolve", name: "밥", portion_choice: "많게" }).ok, false);   // 기준 g 없음
+  assert.equal(parseLookupRequest({ action: "resolve", name: "밥", serving_g: 210, rice_separated: "yes" }).ok, false);
+});
+
+test("F08 엔진 경로 매핑 — 분량 선택 전달", () => {
+  assert.deepEqual(engineCall({ action: "resolve", name: "돼지국밥", serving_g: 640, portion_choice: "많게", rice_separated: true }),
+    { path: "/v1/food/resolve", body: { name: "돼지국밥", serving_g: 640, portion_choice: "많게", rice_separated: true } });
+});
