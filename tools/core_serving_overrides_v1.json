@@ -5,7 +5,8 @@
   "basis": "IP/integration/core_serving_advisory_v1.md + reply_gemini.txt + reply_chatgpt.xlsx",
   "definition": "1인분 = 1명이 한 끼에 먹는 개인 몫, 국물·소스 포함 그릇 전체 (Q2 두 AI 합의)",
   "decision_doc": "IP/integration/core_serving_decision_v1.md · _detail.md · _v1.csv (영양공식 루트)",
-  "apply": "food_analyzer: CORE_FOODS 로드 뒤 serving 덮어쓰기 → alias 는 표준 키의 영양값 복사 + 1인분"
+  "apply": "food_analyzer: CORE_FOODS 로드 뒤 serving 덮어쓰기 → alias 는 표준 키의 영양값 복사 + 1인분",
+  "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선»)"
  },
  "serving": {
   "잔치국수": 500,
@@ -248,5 +249,73 @@
   "마늘쫑볶음": "동의어 통합(두 AI 합의) → 표준명 마늘종볶음, 60g, 영양값 = 마늘종볶음",
   "마늘종볶음": "동의어 통합(두 AI 합의) → 표준명 마늘종볶음, 60g",
   "소세지볶음": "동의어 통합(두 AI 합의) → 표준명 소시지볶음, 100g, 영양값 = 소시지볶음"
+ },
+ "label": {
+  "신라면": {
+   "serving": 120,
+   "kcal": 500,
+   "carbs": 79,
+   "sugar": 4,
+   "fat": 16,
+   "prot": 10,
+   "sodium": 1790,
+   "product": "농심 신라면 120g",
+   "src": "https://www.costco.co.kr/Foods/p/524497"
+  },
+  "라면": {
+   "serving": 120,
+   "kcal": 500,
+   "carbs": 79,
+   "sugar": 4,
+   "fat": 16,
+   "prot": 10,
+   "sodium": 1790,
+   "product": "일반명 «라면» 대표값 = 국내 판매 1위 신라면 라벨",
+   "src": "https://www.costco.co.kr/Foods/p/524497"
+  },
+  "진라면": {
+   "serving": 120,
+   "kcal": 500,
+   "carbs": 80,
+   "sugar": 4.6,
+   "fat": 15,
+   "prot": 11,
+   "sodium": 1860,
+   "product": "오뚜기 진라면(플러스) 매운맛 120g",
+   "src": "https://www.costco.co.kr/Foods/Processed-Food/PastaNoodles/Jin-Ramen-Plus-Spicy-120g-x-30/p/604876"
+  },
+  "짜파게티": {
+   "serving": 140,
+   "kcal": 610,
+   "carbs": 96,
+   "sugar": 7,
+   "fat": 20,
+   "prot": 11,
+   "sodium": 1100,
+   "product": "농심 (올리브)짜파게티 140g",
+   "src": "https://www.costco.co.kr/Foods/Processed-Food/PastaNoodles/Nongshim-Chapaghetti-140g-x-20/p/523006"
+  },
+  "컵라면": {
+   "serving": 65,
+   "kcal": 300,
+   "carbs": 47,
+   "sugar": 3,
+   "fat": 10,
+   "prot": 5,
+   "sodium": 1290,
+   "product": "일반명 «컵라면»(소컵) 대표값 = 신라면 컵 65g",
+   "src": "https://www.costco.co.kr/Nongshim/Nongshim-Shin-Cup-Noodle-Soup-65g-x-30/p/603548"
+  },
+  "편의점컵라면": {
+   "serving": 65,
+   "kcal": 300,
+   "carbs": 47,
+   "sugar": 3,
+   "fat": 10,
+   "prot": 5,
+   "sodium": 1290,
+   "product": "일반명 «편의점컵라면»(소컵) 대표값 = 신라면 컵 65g",
+   "src": "https://www.costco.co.kr/Nongshim/Nongshim-Shin-Cup-Noodle-Soup-65g-x-30/p/603548"
+  }
  }
 }

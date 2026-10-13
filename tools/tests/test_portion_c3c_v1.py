@@ -44,7 +44,7 @@ for gpt in range(150, 1501, 5):
 got, f = g_of('사과', 50)
 if abs(f['calories_kcal'] - 28.5) > 1: fails.append(f'[대조] 사과 50g: {f["calories_kcal"]}kcal')
 _, f = g_of('라면', 500)
-if abs(f['calories_kcal'] - 450) > 1: fails.append(f'[대조] 라면 500g: {f["calories_kcal"]}kcal')
+if abs(f['calories_kcal'] - 500) > 1: fails.append(f'[대조] 라면 500g: {f["calories_kcal"]}kcal')   # 1봉 = 500kcal (10-13 라벨값 v1.1, 이전 450)
 for x in fails: print('FAIL', x)
 n = len(CASES) + 3
 print(f'{n - len(fails)}/{n}')

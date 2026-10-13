@@ -2780,8 +2780,21 @@ try:
             if _nm in CORE_FOODS:
                 CORE_FOODS[_nm] = dict(CORE_FOODS[_nm], serving=_g)
                 _n_sv += 1
+        # v1.1 (2026-10-13) label: 포장제품 제조사 라벨 1회분 → 100g당으로 환산해 영양값·1인분을 교체(출처 URL 은 json).
+        #   tools/tests/test_package_label_v1.py
+        _n_lab = 0
+        _LAB_KEYS = (('kcal', 'cal'), ('prot', 'prot'), ('carbs', 'carbs'), ('fat', 'fat'), ('sodium', 'sodium'), ('sugar', 'sugar'))
+        for _nm, _lab in _ovr.get('label', {}).items():
+            if _nm in CORE_FOODS and _lab.get('serving'):
+                _sv = float(_lab['serving'])
+                _new = dict(CORE_FOODS[_nm], serving=_lab['serving'])
+                for _lk, _ck in _LAB_KEYS:
+                    if _lab.get(_lk) is not None:
+                        _new[_ck] = round(_lab[_lk] / _sv * 100, 3)
+                CORE_FOODS[_nm] = _new
+                _n_lab += 1
         PACKAGE_COOKED_G = dict(_ovr.get('package_cooked_g', {}))
-        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 적용")
+        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 · 라벨 {_n_lab}건 적용")
     else:
         PACKAGE_COOKED_G = {}
 except Exception as _e3:

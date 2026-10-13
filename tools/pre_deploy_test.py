@@ -548,8 +548,9 @@ def test_serving_correction():
     for g, packs in ((500, 1), (1200, 2)):
         result = match_with_db({"foods": [{"name_ko": "라면", "estimated_serving_g": g}]}, None)
         food = result["foods"][0]
-        check(abs(food.get('calories_kcal', 0) - 450 * packs) < 5 and food.get('serving_basis') == 'package',
-              f"포장 기준(라면) GPT {g}g → {packs}봉 {450 * packs}kcal",
+        # 라면 1봉 = 500kcal (2026-10-13 라벨값 v1.1, 신라면 120g 대표값 — 이전 CORE 450)
+        check(abs(food.get('calories_kcal', 0) - 500 * packs) < 5 and food.get('serving_basis') == 'package',
+              f"포장 기준(라면) GPT {g}g → {packs}봉 {500 * packs}kcal",
               f"실제 {food.get('calories_kcal')}kcal · basis={food.get('serving_basis')} · 봉지={food.get('package_count')}")
 
     # ── 시나리오 3: volume(된장찌개) — 정상 범위 ──
