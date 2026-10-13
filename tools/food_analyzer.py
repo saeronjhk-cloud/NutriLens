@@ -2766,6 +2766,24 @@ except Exception as _e2:
 # 원본 IP/통합앱_P1/eval/core_serving_overrides_v1.json · 결정 근거 영양공식 IP/integration/core_serving_decision_v1.md
 # 순서: alias(표준 키의 영양값 복사) → serving 덮어쓰기. tools/tests/test_core_serving_overrides_v1.py
 CORE_SERVING_OVERRIDES_FILE = 'core_serving_overrides_v1.json'
+SET_MEALS = {}          # 백반·정식 구성 합산 v1(2026-10-13) — {세트: {구성 음식: g}}. tools/tests/test_set_meal_v1.py
+_SET_KEYS = ('cal', 'prot', 'carbs', 'fat', 'fiber', 'sodium', 'sugar')
+
+
+def _build_set_meals(table, core):
+    """세트 표 → (실린 세트 {이름: {구성: g}}, 세트 CORE 값 {이름: 100g당 + serving=Σg}).
+    구성 하나라도 core 에 없거나 g 가 0 이하면 그 세트는 건너뛴다(값을 지어내지 않음)."""
+    sets, built = {}, {}
+    for _nm, _comps in (table or {}).items():
+        if not _comps or any(c not in core or not (float(g) > 0) for c, g in _comps.items()):
+            continue
+        _tot_g = float(sum(float(g) for g in _comps.values()))
+        _v = {'serving': round(_tot_g)}
+        for _k in _SET_KEYS:
+            _v[_k] = round(sum(core[c].get(_k, 0) * float(g) / 100 for c, g in _comps.items()) / _tot_g * 100, 3)
+        sets[_nm] = {c: g for c, g in _comps.items()}
+        built[_nm] = _v
+    return sets, built
 GUKBAP_SOUP_ONLY = {}   # 밥 포함 국밥의 «국만» 값 — 같은 끼니에 밥이 따로 있을 때만 쓴다(v1.2)
 try:
     _ovr_path = Path(__file__).parent / CORE_SERVING_OVERRIDES_FILE
@@ -2795,6 +2813,11 @@ try:
                 CORE_FOODS[_nm] = _new
                 _n_lab += 1
         PACKAGE_COOKED_G = dict(_ovr.get('package_cooked_g', {}))
+        # v1.3 (2026-10-13) 백반·정식 구성 합산 — 구성 음식의 최종 값(위 덮어쓰기 반영 후)으로 계산
+        _sets, _built = _build_set_meals(_ovr.get('set_meal', {}), CORE_FOODS)
+        for _nm, _v in _built.items():
+            CORE_FOODS[_nm] = dict(CORE_FOODS.get(_nm, {}), **_v)
+        SET_MEALS.update(_sets)
         # v1.2 (2026-10-13) 국밥 밥 이중계산 방지 — «국만» 값 미리 계산(전체 − 흰밥 rice_g). tools/tests/test_gukbap_rice_v1.py
         _gr = _ovr.get('gukbap_rice', {})
         _rk, _rg = _gr.get('rice_key', '흰밥'), float(_gr.get('rice_g', 210))
@@ -2810,7 +2833,7 @@ try:
                     _tot = _d.get(_k, 0) * _d['serving'] / 100 - _rice.get(_k, 0) * _rg / 100
                     _soup[_k] = round(max(0.0, _tot) / _sv * 100, 3)
                 GUKBAP_SOUP_ONLY[_nm] = _soup
-        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 · 라벨 {_n_lab}건 적용")
+        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 · 라벨 {_n_lab}건 · 세트 {len(SET_MEALS)}건 적용")
     else:
         PACKAGE_COOKED_G = {}
 except Exception as _e3:

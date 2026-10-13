@@ -107,6 +107,14 @@ def resolve_food(name, serving_g=None, portion_choice=None, rice_separated=False
     for k in _NUTRIENTS:
         v = food.get(k)
         out[k] = round(float(v), 1) if isinstance(v, (int, float)) else 0.0
+    # 백반·정식 구성 합산 v1(2026-10-13): 이름만(사진 무게·양 선택 없음)이면 구성 음식을 함께 준다 → 웹이 나눠 담음.
+    #   각 구성은 표의 g 를 «보통»(배율 1, C3c 없음)으로 확정 → 합 = 세트값 · 구성마다 양 칩(portion_base_g = g). tests/test_set_meal_v1.py
+    if serving_g is None and portion_choice is None:
+        comps = fa.SET_MEALS.get(out['name_ko']) or fa.SET_MEALS.get(name)
+        if comps:
+            parts = [resolve_food(c, g, '보통') for c, g in comps.items()]
+            if all(parts):
+                out['set_components'] = parts
     return out
 
 
