@@ -4988,7 +4988,9 @@ class NutriLensHandler(BaseHTTPRequestHandler):
                 items = food_lookup.search_foods(body.get('q'), body.get('limit', food_lookup.DEFAULT_LIMIT))
                 self._json_response(200, {"ok": True, "data": {"items": items}, "request_id": request_id})
             else:
-                food = food_lookup.resolve_food(body.get('name'), body.get('serving_g'))
+                food = food_lookup.resolve_food(body.get('name'), body.get('serving_g'),
+                                                portion_choice=body.get('portion_choice'),
+                                                rice_separated=bool(body.get('rice_separated')))
                 self._json_response(200, {"ok": True, "data": {"matched": food is not None, "food": food},
                                           "request_id": request_id})
         except Exception as e:  # noqa: BLE001

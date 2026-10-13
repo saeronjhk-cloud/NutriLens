@@ -48,10 +48,15 @@ def _index():
     return _INDEX
 
 
-def resolve_food(name, serving_g=None):
+def resolve_food(name, serving_g=None, portion_choice=None, rice_separated=False):
     """이름 1개 → 엔진 확정 영양(dict) 또는 None.
 
     serving_g: 사진 추정량(g). None 이면 엔진의 현실 1인분으로 채운다.
+    portion_choice: 분량 조절 v1(2026-10-13) — '적게'·'보통'·'많게'(portion.PORTION_FACTOR).
+      serving_g 를 «기준 g»(match_with_db 의 portion_base_g)로 보고 × 배율. 사용자가 고른 양이므로
+      C3c 가중을 하지 않는다(serving_trusted). 기준 g 가 없거나 모르는 선택이면 None.
+    rice_separated: 같은 끼니에 밥이 따로 있는 국밥(«국만» 값)을 그대로 유지하기 위해 흰밥을 함께 넣어 계산.
+    tools/tests/test_portion_choice_v1.py
     """
     name = (name or '').strip()
     if not name or len(name) > 40:
@@ -64,8 +69,16 @@ def resolve_food(name, serving_g=None):
         if not (0 < serving_g <= 2000):
             return None
 
+    base_g = serving_g
     food = {'name_ko': name, 'estimated_serving_g': serving_g}
-    fa.match_with_db({'foods': [food]}, None)
+    if portion_choice is not None:
+        from portion import PORTION_FACTOR
+        if portion_choice not in PORTION_FACTOR or serving_g is None:
+            return None
+        food = {'name_ko': name, 'estimated_serving_g': round(serving_g * PORTION_FACTOR[portion_choice]),
+                'serving_trusted': True}
+    foods = [food] + ([{'name_ko': '흰밥'}] if rice_separated else [])
+    fa.match_with_db({'foods': foods}, None)
     if food.get('source') not in _OK_SOURCES:
         return None
 
@@ -82,7 +95,15 @@ def resolve_food(name, serving_g=None):
         'source': food.get('source'),
         'estimated_serving_g': round(float(serving)),
         'shape': food.get('shape'),
+        # 분량 조절 v1: 기준 g 는 선택을 해도 바뀌지 않는다(누적 방지)
+        'portion_base_g': round(base_g) if portion_choice is not None else food.get('portion_base_g'),
     }
+    if portion_choice is not None:
+        out['portion_choice'] = portion_choice
+    if food.get('rice_separated'):
+        out['rice_separated'] = True
+    if food.get('package_count') is not None:
+        out['package_count'] = food['package_count']
     for k in _NUTRIENTS:
         v = food.get(k)
         out[k] = round(float(v), 1) if isinstance(v, (int, float)) else 0.0

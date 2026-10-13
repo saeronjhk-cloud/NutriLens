@@ -3320,14 +3320,21 @@ def match_with_db(analysis, foods_db):
                 cooked = PACKAGE_COOKED_G.get(gold_key)
                 packs = 1.0
                 if ai_serving and cooked:
-                    packs = max(1.0, min(3.0, math.ceil(ai_serving / cooked * 2 - 0.5) / 2))
+                    # 분량 조절 v1(2026-10-13): 사용자가 고른 양(serving_trusted)이면 반 봉지(0.5)까지 허용
+                    _min_packs = 0.5 if food.get('serving_trusted') else 1.0
+                    packs = max(_min_packs, min(3.0, math.ceil(ai_serving / cooked * 2 - 0.5) / 2))
                 effective_serving = gold_serving * packs
                 food['serving_basis'] = 'package'
                 food['package_count'] = packs
+                # 분량 조절 기준 g = 지금 숫자를 만든 «완성 무게»(봉지 수 × 1회분 완성 g)
+                food['portion_base_g'] = round(packs * cooked) if cooked else round(effective_serving)
                 if ai_serving:
                     print(f"[포장 기준] {ai_name}: GPT {ai_serving}g(완성 무게) ÷ 1회분 {cooked}g → {packs}봉 = 건조 {effective_serving}g 기준")
             elif ai_serving:
-                if shape == 'piece':
+                if food.get('serving_trusted'):
+                    # 분량 조절 v1: 사용자가 고른 양 — 믿는다(C3c 가중 생략). tools/tests/test_portion_choice_v1.py
+                    effective_serving = ai_serving
+                elif shape == 'piece':
                     # 개수·조각 음식 (사과·햄버거·피자·도넛 등): AI 양 그대로 신뢰
                     # 사용자가 1/4쪽 먹은 사과를 표준 1개로 강제하지 않음
                     effective_serving = ai_serving
@@ -3359,6 +3366,9 @@ def match_with_db(analysis, foods_db):
                 effective_serving = _estimate_realistic_serving(ai_name, gold_serving)
 
             ratio = effective_serving / 100  # 골드 테이블은 100g 기준
+            if 'portion_base_g' not in food:
+                # 분량 조절 v1: 지금 숫자를 만든 g(가중 뒤). 웹 «적게·보통·많게»의 기준 — 반복 탭해도 누적되지 않게 고정값
+                food['portion_base_g'] = round(effective_serving)
 
             food['db_matched'] = True
             food['db_name'] = gold_key
