@@ -2766,6 +2766,7 @@ except Exception as _e2:
 # 원본 IP/통합앱_P1/eval/core_serving_overrides_v1.json · 결정 근거 영양공식 IP/integration/core_serving_decision_v1.md
 # 순서: alias(표준 키의 영양값 복사) → serving 덮어쓰기. tools/tests/test_core_serving_overrides_v1.py
 CORE_SERVING_OVERRIDES_FILE = 'core_serving_overrides_v1.json'
+GUKBAP_SOUP_ONLY = {}   # 밥 포함 국밥의 «국만» 값 — 같은 끼니에 밥이 따로 있을 때만 쓴다(v1.2)
 try:
     _ovr_path = Path(__file__).parent / CORE_SERVING_OVERRIDES_FILE
     if _ovr_path.exists():
@@ -2794,6 +2795,21 @@ try:
                 CORE_FOODS[_nm] = _new
                 _n_lab += 1
         PACKAGE_COOKED_G = dict(_ovr.get('package_cooked_g', {}))
+        # v1.2 (2026-10-13) 국밥 밥 이중계산 방지 — «국만» 값 미리 계산(전체 − 흰밥 rice_g). tools/tests/test_gukbap_rice_v1.py
+        _gr = _ovr.get('gukbap_rice', {})
+        _rk, _rg = _gr.get('rice_key', '흰밥'), float(_gr.get('rice_g', 210))
+        if _rk in CORE_FOODS:
+            _rice = CORE_FOODS[_rk]
+            for _nm in _gr.get('items', []):
+                _d = CORE_FOODS.get(_nm)
+                if not _d or _d['serving'] <= _rg:
+                    continue
+                _sv = _d['serving'] - _rg
+                _soup = {'serving': _d['serving'] - _rg}
+                for _k in ('cal', 'prot', 'carbs', 'fat', 'fiber', 'sodium', 'sugar'):
+                    _tot = _d.get(_k, 0) * _d['serving'] / 100 - _rice.get(_k, 0) * _rg / 100
+                    _soup[_k] = round(max(0.0, _tot) / _sv * 100, 3)
+                GUKBAP_SOUP_ONLY[_nm] = _soup
         print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 · 라벨 {_n_lab}건 적용")
     else:
         PACKAGE_COOKED_G = {}
@@ -3269,6 +3285,9 @@ def match_with_db(analysis, foods_db):
     if "error" in analysis or "foods" not in analysis:
         return analysis
 
+    # v1.2 국밥 밥 이중계산 방지: 이 끼니에 «밥»이 별도 항목으로 있는가
+    _meal_has_rice = any(isinstance(_f, dict) and _f30_norm(_f.get('name_ko') or '') in _F30_RICE_ITEMS
+                         for _f in (analysis.get("foods") or []))
     for food in analysis["foods"]:
         ai_name = (food.get("name_ko") or "").strip()
         if not ai_name:
@@ -3278,6 +3297,10 @@ def match_with_db(analysis, foods_db):
 
         # ── 1순위: 골드 테이블 (1,771건, 100g 기준 통일) ──
         gold_key, gold_data = _search_gold(ai_name)
+        if (_meal_has_rice and gold_data and gold_data.get('source') == 'core'
+                and gold_key in GUKBAP_SOUP_ONLY):
+            gold_data = dict(gold_data, **GUKBAP_SOUP_ONLY[gold_key])   # 밥은 따로 잡혔으니 국만
+            food['rice_separated'] = True
         _gconf = _match_confidence(_normalize_food_name(ai_name), gold_key) if gold_data else 'none'
         if gold_data and _gconf == 'high':
             gold_serving = gold_data.get('serving') or 100

@@ -6,7 +6,7 @@
   "definition": "1인분 = 1명이 한 끼에 먹는 개인 몫, 국물·소스 포함 그릇 전체 (Q2 두 AI 합의)",
   "decision_doc": "IP/integration/core_serving_decision_v1.md · _detail.md · _v1.csv (영양공식 루트)",
   "apply": "food_analyzer: CORE_FOODS 로드 뒤 serving 덮어쓰기 → alias 는 표준 키의 영양값 복사 + 1인분",
-  "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선»)"
+  "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감)"
  },
  "serving": {
   "잔치국수": 500,
@@ -316,6 +316,70 @@
    "sodium": 1290,
    "product": "일반명 «편의점컵라면»(소컵) 대표값 = 신라면 컵 65g",
    "src": "https://www.costco.co.kr/Nongshim/Nongshim-Shin-Cup-Noodle-Soup-65g-x-30/p/603548"
+  }
+ },
+ "gukbap_rice": {
+  "rice_key": "흰밥",
+  "rice_g": 210,
+  "rule": "CORE 1인분 탄수 ≥50g 이고 흰밥 210g 을 빼도 국 열량 ≥50kcal 인 국밥류만 (판정 2026-10-13)",
+  "items": [
+   "국밥",
+   "굴국밥",
+   "돼지국밥",
+   "돼지머리국밥",
+   "순댓국",
+   "전주콩나물국밥",
+   "콩나물국밥"
+  ],
+  "excluded": {
+   "순대국": {
+    "carbs": 15,
+    "kcal": 300,
+    "soup_if_sub": -15,
+    "why": "탄수<50 (밥 미포함)"
+   },
+   "소머리국밥": {
+    "carbs": 5,
+    "kcal": 275,
+    "soup_if_sub": -40,
+    "why": "탄수<50 (밥 미포함)"
+   },
+   "뼈해장국": {
+    "carbs": 8,
+    "kcal": 180,
+    "soup_if_sub": -135,
+    "why": "탄수<50 (밥 미포함)"
+   },
+   "콩나물해장국": {
+    "carbs": 10,
+    "kcal": 100,
+    "soup_if_sub": -215,
+    "why": "탄수<50 (밥 미포함)"
+   },
+   "소고기국밥": {
+    "carbs": 55,
+    "kcal": 332,
+    "soup_if_sub": 17,
+    "why": "밥 빼면 국 열량<50 — 데이터 불일치"
+   },
+   "순대국밥": {
+    "carbs": 32,
+    "kcal": 652,
+    "soup_if_sub": 337,
+    "why": "탄수<50 (밥 미포함)"
+   },
+   "뼈다귀해장국": {
+    "carbs": 18,
+    "kcal": 430,
+    "soup_if_sub": 115,
+    "why": "탄수<50 (밥 미포함)"
+   },
+   "선지해장국": {
+    "carbs": 10,
+    "kcal": 187,
+    "soup_if_sub": -128,
+    "why": "탄수<50 (밥 미포함)"
+   }
   }
  }
 }
