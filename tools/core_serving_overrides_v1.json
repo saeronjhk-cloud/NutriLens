@@ -6,7 +6,7 @@
     "definition": "1인분 = 1명이 한 끼에 먹는 개인 몫, 국물·소스 포함 그릇 전체 (Q2 두 AI 합의)",
     "decision_doc": "IP/integration/core_serving_decision_v1.md · _detail.md · _v1.csv (영양공식 루트)",
     "apply": "food_analyzer: CORE_FOODS 로드 뒤 serving 덮어쓰기 → alias 는 표준 키의 영양값 복사 + 1인분",
-    "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감) · v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨, 식약처 비율 환산) — set_meal 보다 먼저 적용 · v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장) — 가장 먼저 적용 · set_meal 쌈밥 추가"
+    "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감) · v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨, 식약처 비율 환산) — set_meal 보다 먼저 적용 · v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장) — 가장 먼저 적용 · set_meal 쌈밥 추가 · v1.6 (2026-10-14) nutrient 나트륨 자문 v1 6종"
   },
   "add": {
     "쌈장": {
@@ -270,7 +270,8 @@
     "set_meal": "2026-10-13 제이 결정 «구성 합산» — CORE 백반·정식 5종이 찌개 한 그릇(400g)이라 ≈30% 과소. 흰밥 + 주메뉴(CORE 1인분, 고등어구이는 1토막 100g) + 기본 반찬 2종(배추김치 40·콩나물무침 60), 국 제외",
     "nutrient": "2026-10-14 제이 결정 «식약처 비율 환산» — CORE 수기 생선구이 4종이 소금 없는 생선 값(60~78mg/100g)이라 식약처 생선구이(297~1,364)보다 4~20배 낮음. 나트륨만 교체, 열량·단백질 유지. 참고: 비비고 고등어구이 라벨 483mg/100g · 시판 간고등어 염도 평균 2.9%(윤민석 외 2009). tools/tests/test_fish_sodium_v1.py",
     "add": "2026-10-14 쌈밥 구성 합산에 쌈장이 필요한데 CORE 에 없음 → 식약처 음식 DB 값으로 CORE 신규. 새 항목은 이 섹션으로만(출처 파일 수정 금지)",
-    "set_meal_ssambap": "2026-10-14 제이 결정 «제육쌈밥 기준 합산» — CORE 쌈밥 300g·330kcal 은 흰밥만 수준. 흰밥 210 + 제육볶음 150 + 상추쌈 50 + 쌈장 15 + 기본 반찬 2종 → 656.6kcal. 비빔쌈밥은 구성 불명이라 그대로"
+    "set_meal_ssambap": "2026-10-14 제이 결정 «제육쌈밥 기준 합산» — CORE 쌈밥 300g·330kcal 은 흰밥만 수준. 흰밥 210 + 제육볶음 150 + 상추쌈 50 + 쌈장 15 + 기본 반찬 2종 → 656.6kcal. 비빔쌈밥은 구성 불명이라 그대로",
+    "nutrient_advisory_v1": "2026-10-14 자문 1라운드(IP/integration/sodium_advisory_v1*, 답 reply_codex.csv 채택·제이 결론): 고기구이는 고기만 유지(곁들이 별도) · 스테이크 120 · 닭똥집구이 68 유지 · 짠 반찬 5종 출처값 · 어묵볶음 600 유지. 출처 원문은 robots 차단으로 Claude 직접 확인 못함"
   },
   "label": {
     "신라면": {
@@ -420,6 +421,30 @@
     "가자미구이": {
       "sodium": 372,
       "src": "식약처 음식 DB(gold_foods.json source=mfds) 단백질 1g당 나트륨 × CORE 단백질 — 291/14.7×18.8"
+    },
+    "스테이크": {
+      "sodium": 120,
+      "src": "CORE 식약처 등심스테이크 134.0·안심스테이크 102.7 평균 118.35 → 120 (조리 시 간)"
+    },
+    "오이지": {
+      "sodium": 1130,
+      "src": "오이지무침 기준 2,259mg/200g → 1,129.5/100g · 식약처 2017 나트륨 줄이기 실천음식점 지침 https://www.foodsafetykorea.go.kr/portal/board/boardDetail.do?bbs_no=bbs110&menu_grp=MENU_NEW0523Ministry&menu_no=2880&ntctxt_no=1065772"
+    },
+    "고추장아찌": {
+      "sodium": 2577,
+      "src": "고추장아찌 773mg/30g → 2,576.7/100g · 식약처 2017 나트륨 줄이기 실천음식점 지침 https://www.foodsafetykorea.go.kr/portal/board/boardDetail.do?bbs_no=bbs110&menu_grp=MENU_NEW0523Ministry&menu_no=2880&ntctxt_no=1065772"
+    },
+    "부추김치": {
+      "sodium": 767,
+      "src": "D00095 383.7mg/50g → 767.4/100g · 식약처 식품영양성분DB(~2023) https://www.foodsafetykorea.go.kr/api/openApiInfo.do?menu_grp=MENU_GRP31&menu_no=661&show_cnt=10&start_idx=1&svc_no=I2790&svc_type_cd=API_TYPE06"
+    },
+    "오이소박이": {
+      "sodium": 532,
+      "src": "D00098 266mg/50g → 532/100g · 식약처 식품영양성분DB(~2023) https://www.foodsafetykorea.go.kr/api/openApiInfo.do?menu_grp=MENU_GRP31&menu_no=661&show_cnt=10&start_idx=1&svc_no=I2790&svc_type_cd=API_TYPE06"
+    },
+    "고사리나물": {
+      "sodium": 515,
+      "src": "257.38mg/50g → 514.76/100g · 식약처 2014 명절·제사음식 영양성분 자료집 https://www.foodsafetykorea.go.kr/upload/mkisna/2014.pdf"
     }
   },
   "set_meal": {
