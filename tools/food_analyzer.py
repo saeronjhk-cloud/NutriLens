@@ -2813,6 +2813,15 @@ try:
                 CORE_FOODS[_nm] = _new
                 _n_lab += 1
         PACKAGE_COOKED_G = dict(_ovr.get('package_cooked_g', {}))
+        # v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨 — 식약처 비율 환산, 근거는 json src).
+        #   세트 합산보다 먼저 적용해야 생선구이정식에 반영된다. tools/tests/test_fish_sodium_v1.py
+        _n_nut = 0
+        for _nm, _nv in _ovr.get('nutrient', {}).items():
+            if _nm in CORE_FOODS:
+                _upd = {_k: _nv[_k] for _k in _SET_KEYS if _nv.get(_k) is not None}
+                if _upd:
+                    CORE_FOODS[_nm] = dict(CORE_FOODS[_nm], **_upd)
+                    _n_nut += 1
         # v1.3 (2026-10-13) 백반·정식 구성 합산 — 구성 음식의 최종 값(위 덮어쓰기 반영 후)으로 계산
         _sets, _built = _build_set_meals(_ovr.get('set_meal', {}), CORE_FOODS)
         for _nm, _v in _built.items():
@@ -2833,7 +2842,7 @@ try:
                     _tot = _d.get(_k, 0) * _d['serving'] / 100 - _rice.get(_k, 0) * _rg / 100
                     _soup[_k] = round(max(0.0, _tot) / _sv * 100, 3)
                 GUKBAP_SOUP_ONLY[_nm] = _soup
-        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 · 라벨 {_n_lab}건 · 세트 {len(SET_MEALS)}건 적용")
+        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 · 라벨 {_n_lab}건 · 영양 {_n_nut}건 · 세트 {len(SET_MEALS)}건 적용")
     else:
         PACKAGE_COOKED_G = {}
 except Exception as _e3:
