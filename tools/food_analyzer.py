@@ -2791,6 +2791,13 @@ try:
         with open(_ovr_path, 'r', encoding='utf-8') as _f:
             _ovr = json.load(_f)
         _n_alias = _n_sv = 0
+        # v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장 — 쌈밥 구성용, 식약처 음식 DB 값). 이미 있으면 덮지 않음.
+        #   tools/tests/test_set_meal_v1.py S8
+        _n_add = 0
+        for _nm, _nv in _ovr.get('add', {}).items():
+            if _nm not in CORE_FOODS and _nv.get('serving'):
+                CORE_FOODS[_nm] = {_k: _v for _k, _v in _nv.items() if _k != 'src'}
+                _n_add += 1
         for _a, _std in _ovr.get('alias', {}).items():
             if _std in CORE_FOODS:
                 CORE_FOODS[_a] = dict(CORE_FOODS[_std])
@@ -2842,7 +2849,7 @@ try:
                     _tot = _d.get(_k, 0) * _d['serving'] / 100 - _rice.get(_k, 0) * _rg / 100
                     _soup[_k] = round(max(0.0, _tot) / _sv * 100, 3)
                 GUKBAP_SOUP_ONLY[_nm] = _soup
-        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 · 라벨 {_n_lab}건 · 영양 {_n_nut}건 · 세트 {len(SET_MEALS)}건 적용")
+        print(f"[CORE 1인분 표] {CORE_SERVING_OVERRIDES_FILE}: 1인분 {_n_sv}건 · 동의어 {_n_alias}건 · 신규 {_n_add}건 · 라벨 {_n_lab}건 · 영양 {_n_nut}건 · 세트 {len(SET_MEALS)}건 적용")
     else:
         PACKAGE_COOKED_G = {}
 except Exception as _e3:

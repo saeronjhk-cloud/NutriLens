@@ -22,6 +22,9 @@ EXP = {  # 세트: (구성 [(이름, g)], 기대 kcal)
     '불고기백반':   ([('흰밥', 210), ('불고기', 200), ('배추김치', 40), ('콩나물무침', 60)], 656.8),
     '제육정식':     ([('흰밥', 210), ('제육볶음', 150), ('배추김치', 40), ('콩나물무침', 60)], 627.8),
     '생선구이정식': ([('흰밥', 210), ('고등어구이', 100), ('배추김치', 40), ('콩나물무침', 60)], 532.8),
+    # v1.1 (2026-10-14 제이 «제육쌈밥 기준 합산»): 쌈밥 = 흰밥 + 제육볶음 + 상추쌈 + 쌈장 15g + 기본 반찬 2종
+    #   315 + 285 + 7.5 + 21.3(쌈장 142/100g, 식약처 음식 DB) + 6.8 + 21 = 656.6
+    '쌈밥':         ([('흰밥', 210), ('제육볶음', 150), ('상추쌈', 50), ('쌈장', 15), ('배추김치', 40), ('콩나물무침', 60)], 656.6),
 }
 SM = getattr(fa, 'SET_MEALS', {})
 for name, (comps, kcal) in EXP.items():
@@ -43,6 +46,13 @@ for name, (comps, kcal) in EXP.items():
     check(abs(sum(c['calories_kcal'] for c in sc) - r['calories_kcal']) <= 1.5, f'S3 {name} 구성 합 {sum(c["calories_kcal"] for c in sc)} ≠ {r["calories_kcal"]}')
     for c in sc:
         check(not c.get('set_components'), f'S3 {name} 구성 안 중첩')
+# S8 (v1.1) 쌈장 CORE 신규(overrides «add», 식약처 음식 DB 값) · 1인분 15g
+_sj = fa.CORE_FOODS.get('쌈장', {})
+check(_sj.get('serving') == 15 and _sj.get('cal') == 142.0 and _sj.get('sodium') == 2335.0, f'S8 쌈장 {_sj}')
+with contextlib.redirect_stdout(io.StringIO()):
+    _r = fl.resolve_food('쌈밥')
+check(_r is not None and abs(_r['sodium_mg'] - 1781.95) <= 2, f'S8 쌈밥 나트륨 {_r and _r.get("sodium_mg")}')
+check(fa.CORE_FOODS.get('비빔쌈밥', {}).get('serving') == 300 and '비빔쌈밥' not in fa.SET_MEALS, 'S8 비빔쌈밥 바뀜')
 # S4 사진 무게가 있거나 양 선택이면 나누지 않음(한 줄 유지)
 with contextlib.redirect_stdout(io.StringIO()):
     r1 = fl.resolve_food('김치찌개백반', 355)
