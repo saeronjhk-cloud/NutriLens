@@ -41,12 +41,12 @@ ALIAS = {'수육': '돼지고기수육', '청양고추': '고추', '소시지': 
 GOLD_COPY = {'프레첼': '프레즐', '김': '김구이 조미김'}   # 식약처 음식 DB 값 복사(add). «조미 김구이»(25kcal/100g)는 이상값이라 «김구이 조미김»(470) 사용
 # N 확신 매칭 없어야 함(묶음·일반명·수식어만 맞음·값 없음) — 사진은 AI 추정 유지, 사진 없이 기록은 결과 없음
 NONE = ['구운 연어와 감자', '비프 스튜와 빵', '상추와 깻잎', '베이컨과 계란 프라이', '반찬', '디저트', '소스', '전', '나물무침',
-        '구운 고기', '크림 소스 요리', '새우 요리', '절인 채소', '아스파라거스 무침', '복숭아 통조림', '튀긴 마늘', '크랜베리 소스',
-        '호박 퓨레', '감자 퓌레',
-        # 값 필요(3단계) — 지금은 없음이 맞다
-        '베이컨', '생크림', '쿠키', '올리브', '피칸', '부리또', '볶음면', '새우깡', '과카몰리', '굴라쉬', '칠리 소스',
-        '할라피뇨 피클', '오크라', '나시 레막', '슈페츨레', '웨이퍼 롤', '크리스피 포크']
-DATA_UNSCORED = ['감자 경단']   # 중심어 «경단»(떡)으로 잡힘 — 값 확보 시 add
+        '구운 고기', '크림 소스 요리', '새우 요리', '절인 채소', '아스파라거스 무침']
+# F 값 채움 v1(10-15 제이 결정 «추천대로») — 이름 그대로 매칭(값은 tools/tests/test_fill_values_v1.py)
+FILLED = ['복숭아 통조림', '튀긴 마늘', '크랜베리 소스', '호박 퓨레', '감자 퓌레', '베이컨', '생크림', '쿠키', '올리브', '피칸',
+          '부리또', '볶음면', '새우깡', '과카몰리', '굴라쉬', '칠리 소스', '할라피뇨 피클', '오크라', '나시 레막', '슈페츨레',
+          '웨이퍼 롤', '크리스피 포크', '감자 경단']
+DATA_UNSCORED = []
 for d, tag in ((KEEP, 'K'), (EXACT, 'E'), (HEAD, 'H')):
     for nm, k in d.items():
         r = res(nm)
@@ -63,6 +63,9 @@ for nm, tgt in list(ALIAS.items()) + list(GOLD_COPY.items()):
 for nm in NONE:
     r = res(nm)
     check(r is None, f'N {nm} → {r and r.get("db_name")} (기대 없음)')
+for nm in FILLED:
+    r = res(nm)
+    check(r is not None and r.get('db_name') == nm, f'F {nm} → {r and r.get("db_name")} (기대 {nm})')
 # X 사진 분석(analysis_job) 이름 추가 확인 — 10-15 운영 조회
 for nm, k in (('고등어 구이', '고등어구이'), ('마르게리타 피자', '마르게리타피자'), ('시금치 무침', '시금치무침'),
               ('김치찌개', '김치찌개'), ('연어 샐러드', '연어 샐러드'), ('잡곡밥', '잡곡밥')):
@@ -70,9 +73,9 @@ for nm, k in (('고등어 구이', '고등어구이'), ('마르게리타 피자'
     check(r is not None and sp(r.get('db_name')) == sp(k), f'X {nm} → {r and r.get("db_name")} (기대 {k})')
 r = res('시금치 무침')
 check(r is not None and abs(r['calories_kcal'] - round(C['시금치나물']['cal'] * r['estimated_serving_g'] / 100, 1)) <= 0.2, 'X 시금치 무침 = 시금치나물 값')
-for nm in ('가지 구이', '호박 퓌레', '생선 요리', '절임 채소'):
+for nm in ('생선 요리', '절임 채소'):
     check(res(nm) is None, f'X {nm} 확신 매칭 없어야 함')
-total = len(KEEP) + len(EXACT) + len(HEAD) + len(ALIAS) + len(GOLD_COPY) + len(NONE) + len(DATA_UNSCORED)
+total = len(KEEP) + len(EXACT) + len(HEAD) + len(ALIAS) + len(GOLD_COPY) + len(NONE) + len(FILLED) + len(DATA_UNSCORED)
 check(total == 175, f'이름 수 {total} ≠ 175')  # X 11건은 별도
 print(f'test_real_names_v1: {n - len(fails)}/{n} 통과')
 for m in fails: print('  ✗', m)
