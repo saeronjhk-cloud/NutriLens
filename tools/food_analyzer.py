@@ -2798,10 +2798,6 @@ try:
             if _nm not in CORE_FOODS and _nv.get('serving'):
                 CORE_FOODS[_nm] = {_k: _v for _k, _v in _nv.items() if _k != 'src'}
                 _n_add += 1
-        for _a, _std in _ovr.get('alias', {}).items():
-            if _std in CORE_FOODS:
-                CORE_FOODS[_a] = dict(CORE_FOODS[_std])
-                _n_alias += 1
         for _nm, _g in _ovr.get('serving', {}).items():
             if _nm in CORE_FOODS:
                 CORE_FOODS[_nm] = dict(CORE_FOODS[_nm], serving=_g)
@@ -2829,6 +2825,13 @@ try:
                 if _upd:
                     CORE_FOODS[_nm] = dict(CORE_FOODS[_nm], **_upd)
                     _n_nut += 1
+        # alias 는 serving·label·nutrient 덮어쓰기 «뒤»에 복사한다(2026-10-15 실사용 이름 v1).
+        #   앞에서 복사하면 대상의 나중 교체(예: 고추장아찌 나트륨 자문값·상추겉절이 1인분)가 별칭에 안 따라간다.
+        #   기존 별칭 4종의 serving 항목은 대상과 같은 값이라 결과 변화 없음. tools/tests/test_core_serving_overrides_v1.py
+        for _a, _std in _ovr.get('alias', {}).items():
+            if _std in CORE_FOODS:
+                CORE_FOODS[_a] = dict(CORE_FOODS[_std])
+                _n_alias += 1
         # v1.3 (2026-10-13) 백반·정식 구성 합산 — 구성 음식의 최종 값(위 덮어쓰기 반영 후)으로 계산
         _sets, _built = _build_set_meals(_ovr.get('set_meal', {}), CORE_FOODS)
         for _nm, _v in _built.items():
@@ -2996,6 +2999,39 @@ def _normalize_food_name(name):
     n = n.strip()
     return n
 
+def _core_as_gold(core_data):
+    """CORE 항목 → gold 형식(dict, source='core')"""
+    return {
+        'cal': core_data['cal'], 'prot': core_data['prot'],
+        'carbs': core_data['carbs'], 'fat': core_data['fat'],
+        'fiber': core_data.get('fiber', 0), 'sodium': core_data.get('sodium', 0),
+        'sugar': core_data.get('sugar', 0), 'serving': core_data['serving'],
+        'category': core_data['category'], 'source': 'core',
+    }
+
+_NOSP_IDX_CACHE = {}
+def _core_nospace_index(cf):
+    """CORE 키의 «띄어쓰기 뺀 이름 → 키»(첫 키 우선). CORE 가 바뀌면(id·크기) 다시 만든다."""
+    import re
+    tag = ('core', id(cf), len(cf))
+    if tag not in _NOSP_IDX_CACHE:
+        idx = {}
+        for k in cf:
+            idx.setdefault(re.sub(r'\s+', '', k), k)
+        _NOSP_IDX_CACHE[tag] = idx
+    return _NOSP_IDX_CACHE[tag]
+
+def _gold_searchkey_index(gold):
+    """gold 검색키(한글·영숫자만, 소문자) → 키(첫 키 우선)"""
+    import re
+    tag = ('gold', id(gold), len(gold))
+    if tag not in _NOSP_IDX_CACHE:
+        idx = {}
+        for k, v in gold.items():
+            idx.setdefault(re.sub(r'[^가-힣a-zA-Z0-9]', '', k).lower(), k)
+        _NOSP_IDX_CACHE[tag] = idx
+    return _NOSP_IDX_CACHE[tag]
+
 def _search_gold(name, _core=None):
     """골드 테이블에서 음식 검색 — 정확→CORE→관련성 검증 매칭
 
@@ -3010,6 +3046,32 @@ def _search_gold(name, _core=None):
         return None, None
 
     clean = _normalize_food_name(name)
+
+    # 0) ★ 실사용 이름 v1 (2026-10-15, 제이 결정) — «정확한 이름 → 띄어쓰기 뺀 이름»을 부분 매칭보다 먼저.
+    #    결함: CORE 부분 매칭(«어묵»)이 gold 정확(«어묵탕»)보다 먼저 이겨 기각되고, «감자 샐러드»가 «감자샐러드»를 못 찾고 «샐러드».
+    #    순서: CORE 정확 → CORE 띄어쓰기 무시 정확 → gold 정확 → gold 검색키(띄어쓰기·기호 무시) 정확 → 뒤쪽 단어 조합 정확. 같은 이름이면 CORE 가 이김(원칙 유지).
+    #    tools/tests/test_real_names_v1.py
+    _cf0 = _core if _core is not None else CORE_FOODS
+    if clean in _cf0:
+        return clean, _core_as_gold(_cf0[clean])
+    _nosp = re.sub(r'\s+', '', clean)
+    if _nosp and _nosp != clean:
+        _ck = _core_nospace_index(_cf0).get(_nosp)
+        if _ck:
+            return _ck, _core_as_gold(_cf0[_ck])
+    if clean in gold:
+        return clean, gold[clean]
+    _gk = _gold_searchkey_index(gold).get(re.sub(r'[^가-힣a-zA-Z0-9]', '', clean).lower())
+    if _gk and _nosp != clean:
+        return _gk, gold[_gk]
+    #    뒤쪽 단어 조합 정확(긴 것 먼저) — «해산물 크림 파스타»는 접미사 «파스타»보다 «크림 파스타»가 먼저
+    _ws = clean.split()
+    for _st in range(1, len(_ws) - 1):
+        _combo = ' '.join(_ws[_st:])
+        if _combo in _cf0:
+            return _combo, _core_as_gold(_cf0[_combo])
+        if _combo in gold:
+            return _combo, gold[_combo]
 
     # 1) CORE_FOODS 매칭 (최우선 — 수동 검증 + 보정 데이터)
     #    Gold DB에 같은 이름이 있어도 CORE_FOODS가 이김
@@ -3286,14 +3348,43 @@ def _match_confidence(clean, key):
         return 'none'
     if clean == key:
         return 'high'
+    import re
+    _ns = lambda x: re.sub(r'[^가-힣a-zA-Z0-9]', '', x).lower()
+    if _ns(clean) and _ns(clean) == _ns(key):          # 띄어쓰기·기호만 다름 (실사용 이름 v1)
+        return 'high'
     words = clean.split()
     if len(words) > 1:
-        if key in words:
+        # ★ 실사용 이름 v1 (2026-10-15, 제이 결정): 여러 음식을 묶은 이름(«연어와 감자»·«베이컨과 계란»·«A 및 B»·«A, B»·«A & B»)은
+        #   한 음식으로 확정하지 않는다. 한 단어만 맞을 때는 «마지막 단어(중심어)»일 때만 확신 — «튀긴 마늘»→마늘 같은 수식어 매칭 차단.
+        #   tools/tests/test_real_names_v1.py
+        if _is_multi_food_name(clean):
+            return 'low'
+        if any(w in _OIL_COOKED_MODIFIERS for w in words[:-1]) and ' ' not in key:
+            return 'low'      # «튀긴 마늘»→마늘(생것) 처럼 기름 조리 수식어를 버린 매칭은 값이 크게 틀린다
+        if words[-1] == key:
             return 'high'
-        for st in range(len(words)):
+        for st in range(1, len(words)):
             if ' '.join(words[st:]) == key:
                 return 'high'
     return 'low'
+
+
+_OIL_COOKED_MODIFIERS = ('튀긴', '볶은')
+
+
+def _is_multi_food_name(clean):
+    """«A와 B»·«A과 B»(조사 규칙: 받침 없으면 와, 있으면 과)·«및»·«,»·«&»·«+» 로 음식 여럿을 묶은 이름인가"""
+    if any(t in clean for t in (',', '&', '+', ' 및 ')):
+        return True
+    words = clean.split()
+    for w in words[:-1]:
+        if len(w) >= 2 and w[-1] in '와과':
+            prev = w[-2]
+            if '가' <= prev <= '힣':
+                has_batchim = (ord(prev) - 0xAC00) % 28 != 0
+                if (w[-1] == '와' and not has_batchim) or (w[-1] == '과' and has_batchim):
+                    return True
+    return False
 
 
 def gold_match_class(name, exclude_v2=False):
