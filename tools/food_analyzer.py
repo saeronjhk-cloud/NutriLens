@@ -3055,7 +3055,9 @@ def _search_gold(name, _core=None):
     if clean in _cf0:
         return clean, _core_as_gold(_cf0[clean])
     _nosp = re.sub(r'\s+', '', clean)
-    if _nosp and _nosp != clean:
+    #    ★ 멕시코 이름 v1 (2026-10-17): 양방향. 전에는 입력에 공백이 있을 때만 봐서 «치즈소스»·«시저샐러드»·«돼지안심»이
+    #    띄어 쓴 CORE 키(«치즈 소스»·«시저 샐러드»·«돼지 안심»)를 놓치고 «샐러드»·«돼지안심돈가스» 등으로 갔다(66개). tests/test_mexican_names_v1.py F
+    if _nosp:
         _ck = _core_nospace_index(_cf0).get(_nosp)
         if _ck:
             return _ck, _core_as_gold(_cf0[_ck])

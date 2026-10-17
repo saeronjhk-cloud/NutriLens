@@ -6,7 +6,7 @@
     "definition": "1인분 = 1명이 한 끼에 먹는 개인 몫, 국물·소스 포함 그릇 전체 (Q2 두 AI 합의)",
     "decision_doc": "IP/integration/core_serving_decision_v1.md · _detail.md · _v1.csv (영양공식 루트)",
     "apply": "food_analyzer: CORE_FOODS 로드 뒤 serving 덮어쓰기 → alias 는 표준 키의 영양값 복사 + 1인분",
-    "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감) · v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨, 식약처 비율 환산) — set_meal 보다 먼저 적용 · v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장) — 가장 먼저 적용 · set_meal 쌈밥 추가 · v1.6 (2026-10-14) nutrient 나트륨 자문 v1 6종 · v1.7 (2026-10-15) add 닭똥집소금구이(Na 380, 식당 실제값)·닭똥집볶음(식약처 닭모래집볶음) + alias 5종(닭똥집·소금닭똥집·똥집소금구이·닭모래집소금구이·닭근위소금구이 → 닭똥집소금구이). tools/tests/test_gizzard_v1.py · v1.8 (2026-10-15) 실사용 이름 v1: alias 17(시금치무침→시금치나물 포함, 수육·청양고추·소시지·애플 파이·콘·절임 3·상추무침·돼지고기 육포·그릴드 치킨·치킨 스테이크·치킨 커틀릿·슈니첼 2·소고기 구이) + add 2(프레첼·김, 식약처 값 복사). 검색 순서·확신 규칙 수정은 food_analyzer. tools/tests/test_real_names_v1.py · v1.9 (2026-10-15) 값 채움 v1: add 23(식약처·USDA FDC·국내 라벨, 출처 src) + alias 3(감자 퓨레·호박 퓌레·복숭아 통조림→황도) + serving 돼지고기수육 300→200(값 406.1 유지). tools/tests/test_fill_values_v1.py"
+    "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감) · v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨, 식약처 비율 환산) — set_meal 보다 먼저 적용 · v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장) — 가장 먼저 적용 · set_meal 쌈밥 추가 · v1.6 (2026-10-14) nutrient 나트륨 자문 v1 6종 · v1.7 (2026-10-15) add 닭똥집소금구이(Na 380, 식당 실제값)·닭똥집볶음(식약처 닭모래집볶음) + alias 5종(닭똥집·소금닭똥집·똥집소금구이·닭모래집소금구이·닭근위소금구이 → 닭똥집소금구이). tools/tests/test_gizzard_v1.py · v1.8 (2026-10-15) 실사용 이름 v1: alias 17(시금치무침→시금치나물 포함, 수육·청양고추·소시지·애플 파이·콘·절임 3·상추무침·돼지고기 육포·그릴드 치킨·치킨 스테이크·치킨 커틀릿·슈니첼 2·소고기 구이) + add 2(프레첼·김, 식약처 값 복사). 검색 순서·확신 규칙 수정은 food_analyzer. tools/tests/test_real_names_v1.py · v1.9 (2026-10-15) 값 채움 v1: add 23(식약처·USDA FDC·국내 라벨, 출처 src) + alias 3(감자 퓨레·호박 퓌레·복숭아 통조림→황도) + serving 돼지고기수육 300→200(값 406.1 유지). tools/tests/test_fill_values_v1.py · v1.10 (2026-10-17) 멕시코 음식 이름 v1: add 5(치즈 소스·치즈 퀘소·살사 소스·피코 데 가요·나초 칩 — USDA FNDDS 2024-10-31, 규칙 136 ②가 SQLite 제품 값보다 우선) + alias 10(치즈 딥·나초 치즈·나초 치즈 소스→치즈 소스 · 퀘소·퀘소 딥·케소→치즈 퀘소 · 살사→살사 소스 · 나쵸칩·토르티야 칩·또띠아 칩→나초 칩). tools/tests/test_mexican_names_v1.py"
   },
   "add": {
     "쌈장": {
@@ -344,6 +344,66 @@
       "serving": 100,
       "category": "korean",
       "src": "식약처 음식 DB «가지볶음 가지» 100g당 · 가지볶음 근사(구이 항목 없음) · 1인분 100g · 값 채움 v1 제이 결정 2026-10-15(«추천대로»)"
+    },
+    "치즈 소스": {
+      "cal": 163.0,
+      "prot": 3.14,
+      "carbs": 7.86,
+      "fat": 13.3,
+      "fiber": 0.3,
+      "sodium": 656.0,
+      "sugar": 0.29,
+      "serving": 32,
+      "category": "foreign_popular",
+      "src": "USDA FoodData Central fdcId 2705808 «Cheese sauce» (FNDDS 2024-10-31) 100g당 · FNDDS Quantity not specified 32g(2큰술) · 같은 값 2705786 «Cheese dip». 기존 SQLite 제품 «치즈 소스»(442kcal·지방 39.5, 마요형)는 나초 치즈와 다름 · 1인분 32g · 멕시코 음식 이름 v1 제이 결정 2026-10-17(«진행»)"
+    },
+    "치즈 퀘소": {
+      "cal": 143.0,
+      "prot": 3.14,
+      "carbs": 11.1,
+      "fat": 9.51,
+      "fiber": 0.7,
+      "sodium": 796.0,
+      "sugar": 1.95,
+      "serving": 60,
+      "category": "foreign_popular",
+      "src": "USDA FoodData Central fdcId 2705785 «Cheese dip with chili pepper» (FNDDS 2024-10-31) 100g당 · = SR Legacy 174068 «Dip, salsa con queso» · FNDDS Quantity not specified 60g · 1인분 60g · 멕시코 음식 이름 v1 제이 결정 2026-10-17(«진행»)"
+    },
+    "살사 소스": {
+      "cal": 34.0,
+      "prot": 1.44,
+      "carbs": 6.74,
+      "fat": 0.19,
+      "fiber": 1.8,
+      "sodium": 656.0,
+      "sugar": 3.81,
+      "serving": 32,
+      "category": "foreign_popular",
+      "src": "USDA FoodData Central fdcId 2709736 «Salsa, NFS» (FNDDS 2024-10-31) 100g당 · FNDDS Quantity not specified 32g(2큰술) · 1인분 32g · 멕시코 음식 이름 v1 제이 결정 2026-10-17(«진행»)"
+    },
+    "피코 데 가요": {
+      "cal": 17.0,
+      "prot": 0.71,
+      "carbs": 3.7,
+      "fat": 0.14,
+      "fiber": 1.1,
+      "sodium": 443.0,
+      "sugar": 2.13,
+      "serving": 32,
+      "category": "foreign_popular",
+      "src": "USDA FoodData Central fdcId 2709737 «Salsa, pico de gallo» (FNDDS 2024-10-31) 100g당 · FNDDS Quantity not specified 32g · 1인분 32g · 멕시코 음식 이름 v1 제이 결정 2026-10-17(«진행»)"
+    },
+    "나초 칩": {
+      "cal": 472.0,
+      "prot": 7.1,
+      "carbs": 67.8,
+      "fat": 20.7,
+      "fiber": 5.4,
+      "sodium": 328.0,
+      "sugar": 0.78,
+      "serving": 30,
+      "category": "foreign_popular",
+      "src": "USDA FoodData Central fdcId 2708202 «Tortilla chips, plain» (FNDDS 2024-10-31) 100g당 · = SR Legacy 167558 · FNDDS Quantity not specified 30g. CORE «나초»(350, 치즈 얹은 요리)와 다른 음식 · 1인분 30g · 멕시코 음식 이름 v1 제이 결정 2026-10-17(«진행»)"
     }
   },
   "serving": {
@@ -490,7 +550,17 @@
     "시금치무침": "시금치나물",
     "감자 퓨레": "감자 퓌레",
     "호박 퓌레": "호박 퓨레",
-    "복숭아 통조림": "황도"
+    "복숭아 통조림": "황도",
+    "치즈 딥": "치즈 소스",
+    "나초 치즈": "치즈 소스",
+    "나초 치즈 소스": "치즈 소스",
+    "퀘소": "치즈 퀘소",
+    "퀘소 딥": "치즈 퀘소",
+    "케소": "치즈 퀘소",
+    "살사": "살사 소스",
+    "나쵸칩": "나초 칩",
+    "토르티야 칩": "나초 칩",
+    "또띠아 칩": "나초 칩"
   },
   "package_cooked_g": {
     "라면": 600,

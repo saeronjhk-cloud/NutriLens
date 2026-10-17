@@ -29,6 +29,8 @@ TRUTH = {
     '진라면 매운맛 업소용': (417, 10.0, 13.33, 64.17, 3.83, None, 1467), '고추장새우깡': (493, 6.67, 22.67, 65.33, 10.67, None, 960),
     '바나나맛우유': (90, 2.63, 3.02, 13.13, 9.18, 0.0, 34), '신라면건면': (361, 9.28, 4.74, 70.10, 4.12, None, 1845),
     '카라멜팝콘': (470, 2.0, 16.0, 79.0, 55.0, None, 320), '코카콜라제로': (0, 0, 0, 0, 0, None, 6),
+    # 10-17 멕시코 이름 v1: 엔진 2순위 예시용(치즈 소스·살사 소스는 CORE 로) — 갱신 DB 값
+    '갈릭치즈마요소스': (475, 1.0, 47.0, 12.0, 11.0, None, 720), '피자용 소스': (56, 2.3, 0.4, 10.8, 9.2, None, 600),
     '새우깡 그린': (483, 7.22, 21.11, 66.67, 6.67, None, 667), '서울우유 크림도넛': (333, 6.0, 21.0, 30.0, 11.0, None, 280),
 }
 c = sqlite3.connect(DB)
@@ -55,7 +57,7 @@ def run(name, g):
     f = dict(AI, name_ko=name, estimated_serving_g=g)
     with contextlib.redirect_stdout(io.StringIO()):
         return fa.match_with_db({'foods': [f]}, None)['foods'][0]
-for nm, g in [('치즈 소스', 80), ('살사 소스', 50), ('코카콜라', 250), ('허니버터칩', 60), ('코카콜라제로', 500)]:
+for nm, g in [('갈릭치즈마요소스', 80), ('피자용 소스', 50), ('코카콜라', 250), ('허니버터칩', 60), ('코카콜라제로', 500)]:
     k, p, f, ca, su, fi, na = TRUTH[nm]
     r = run(nm, g)
     check(r.get('source') == 'DB_MATCHED', f'E0 {nm} source {r.get("source")}')
@@ -63,8 +65,8 @@ for nm, g in [('치즈 소스', 80), ('살사 소스', 50), ('코카콜라', 250
     check(near(r.get('sugar_g'), round(su * g / 100, 1), 0.2), f'E2 {nm} {g}g 당 {r.get("sugar_g")} ≠ {round(su*g/100,1)}')
     check(r.get('fiber_g') == AI['fiber_g'], f'E3 {nm} 섬유 {r.get("fiber_g")} — DB 없음 → AI 값')
     check(near(r.get('carbs_g'), round(ca * g / 100, 1), 0.2), f'E4 {nm} 탄수 {r.get("carbs_g")}')
-# 운영 사례: 치즈 소스 80g 나트륨 1,407mg (AI 400 이 아니라)
-check(near(run('치즈 소스', 80).get('sodium_mg'), 1407.2, 1), 'E5 치즈 소스 80g 나트륨 1,407')
+# 운영 사례: 치즈 소스 80g 나트륨 — AI 400 도 SQLite 제품(마요형) 1,407 도 아니고 CORE USDA 656/100g → 524.8 (10-17 멕시코 이름 v1)
+check(near(run('치즈 소스', 80).get('sodium_mg'), 524.8, 1), 'E5 치즈 소스 80g 나트륨 524.8')
 
 print(f'test_sqlite_nutrients_v1: {n - len(fails)}/{n} 통과')
 for m in fails: print('  ✗', m)

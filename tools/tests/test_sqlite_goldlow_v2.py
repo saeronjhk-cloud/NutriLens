@@ -51,8 +51,8 @@ check(r.get('source') == 'AI_ESTIMATED', f'M1 햄&스위스 샌드위치 {r.get(
 # 4) 회귀: gold high 그대로 · 2순위 v1 사례 그대로
 r = run('신라면', 120)
 check(r.get('source') in ('GOLD_REF', 'GOLD_DB') and r.get('db_name') == '신라면', f'R1 신라면 {r.get("source")}')
-r = run('치즈 소스', 80)
-check(r.get('source') == 'DB_MATCHED' and near(r.get('calories_kcal'), 353.6), f'R2 치즈 소스 {r.get("source"), r.get("calories_kcal")}')
+r = run('갈릭치즈마요소스', 80)   # 10-17 멕시코 이름 v1: «치즈 소스»는 CORE 로 → 2순위 예시 교체
+check(r.get('source') == 'DB_MATCHED' and near(r.get('calories_kcal'), 380.0), f'R2 갈릭치즈마요소스 {r.get("source"), r.get("calories_kcal")}')
 r = run('나초', 100)
 check(r.get('source') == 'GOLD_REF', f'R3 나초 {r.get("source")}')
 
