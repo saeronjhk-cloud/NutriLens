@@ -68,9 +68,9 @@ r = run('나초', 100)
 check(r.get('source') == 'GOLD_REF' and near(r.get('calories_kcal'), 350.0), f'E1 나초 {r.get("source"), r.get("calories_kcal")}')
 r = run('신라면', 120)
 check(r.get('source') in ('GOLD_REF', 'GOLD_DB') and r.get('db_name') == '신라면', f'E2 신라면 {r.get("source"), r.get("db_name")}')
-# 회귀: gold low 는 AI 값(이번 범위 밖 — 바뀌면 안 됨)
+# gold low + SQLite 정확 일치: 10-17 v2 부터 SQLite 값(test_sqlite_goldlow_v2) — v1 땐 AI 값이었음
 r = run('새우깡블랙', 30)
-check(r.get('source') == 'AI_ESTIMATED' and r.get('calories_kcal') == AI['calories_kcal'], f'E3 새우깡블랙 {r.get("source"), r.get("calories_kcal")}')
+check(r.get('source') == 'DB_MATCHED' and abs(r.get('calories_kcal', 0) - 148.2) <= 0.6, f'E3 새우깡블랙 {r.get("source"), r.get("calories_kcal")}')
 
 print(f'test_sqlite_tier2_v1: {n - len(fails)}/{n} 통과')
 for m in fails: print('  ✗', m)

@@ -3404,6 +3404,78 @@ def gold_match_class(name, exclude_v2=False):
     return ('high' if conf == 'high' else 'low'), key
 
 
+_MFDS_AMBIGUOUS = None
+
+def _mfds_ambiguous_names():
+    """식약처에서 같은 이름인데 값이 제각각인 이름(11,021개) — SQLite 값을 쓰지 않는다. tools/mfds_ambiguous_names_v1.json"""
+    global _MFDS_AMBIGUOUS
+    if _MFDS_AMBIGUOUS is None:
+        try:
+            with open(Path(__file__).parent / 'mfds_ambiguous_names_v1.json', encoding='utf-8') as fh:
+                _MFDS_AMBIGUOUS = set(json.load(fh).get('names', {}))
+        except Exception:
+            _MFDS_AMBIGUOUS = set()
+    return _MFDS_AMBIGUOUS
+
+
+def _sqlite_exact_usable(ai_name):
+    """2순위 — 가공식품 SQLite 에서 «쓸 수 있는» 정확 일치 행 또는 None.
+    정확한 이름만 · 묶음 이름 제외 · 모호한 이름 제외 · (식약처 검증 MFDS 행 또는 품질 3점↑·kcal>0)"""
+    if _is_multi_food_name(_normalize_food_name(ai_name)):
+        return None
+    if ai_name.strip() in _mfds_ambiguous_names():
+        return None
+    exact, _unused = search_food_db(ai_name)
+    if not exact:
+        return None
+    # 100g당 값인 행만: MFDS_(식약처) · PROC_(가공식품 CSV, 기준량 100g). FC·FP·KR·SD·DF 는 «1인분당» 값이라 제외(gold 가 맡음)
+    #   10-17 발견: «양꼬치 (10꼬치)»(FP 550kcal/250g) 를 100g당으로 읽으면 250g → 1,375kcal
+    _fid = str(exact.get('food_id', ''))
+    if not (_fid.startswith('MFDS_') or (_fid.startswith('PROC_') and exact.get('serving_size_g') == 100)):
+        return None
+    # 식약처 API 로 다시 채운 MFDS 행(나트륨 NULL 아님)은 0kcal 음료(코카콜라제로 등)도 진짜 값 → 품질 점수 대신 통과
+    verified = str(exact.get('food_id', '')).startswith('MFDS_') \
+        and exact.get('sodium_mg') is not None and exact.get('calories_kcal') is not None
+    if verified or (_db_quality_score(exact) >= 3 and (exact.get('calories_kcal') or 0) > 0):
+        return exact
+    return None
+
+
+def _apply_sqlite_row(food, exact, ai_name):
+    """2순위 값 적용(100g 기준). 오염 검출 시 AI 값 복원 후 False.
+    2순위 수정 v1 (2026-10-17): 운영 «치즈 소스» 80g → 2,357kcal — D1 100g당 값을 1회 제공량 배율로 곱함 ·
+    D2 나트륨 열 오값(→ 영양값 바로잡기 v1 로 해결) · D3 부분 매칭이 규칙 131~133 우회. tests: test_sqlite_tier2_v1 · nutrients_v1 · goldlow_v2"""
+    ai_serving = food.get('estimated_serving_g') or 0
+    db_serving = exact.get('serving_size_g') or 0
+    effective_serving = ai_serving if ai_serving > 0 else (db_serving if db_serving > 0 else 100)
+    ratio = effective_serving / 100  # SQLite 값 = 100g당
+
+    ai_original = _backup_ai_estimates(food)
+    food['db_matched'] = True
+    food['db_food_id'] = exact.get('food_id', '')
+    food['db_name'] = exact.get('name_ko', '')
+    food.pop('match_confidence', None)
+    food.pop('db_candidate', None)
+    # 나트륨·당·섬유도 DB 값(식약처 원값). NULL(식약처에 없음)이면 AI 값 유지
+    for fld in ('calories_kcal', 'protein_g', 'carbs_g', 'fat_g', 'sodium_mg', 'sugar_g', 'fiber_g'):
+        v = exact.get(fld)
+        if isinstance(v, (int, float)) and v >= 0:
+            food[fld] = round(v * ratio, 1)
+    if not ai_serving:
+        food['estimated_serving_g'] = effective_serving
+
+    if _is_polluted_db_data(food.get('calories_kcal', 0) or 0, food.get('carbs_g', 0) or 0):
+        print(f"[오염 검출] {ai_name}: DB 탄수={food.get('carbs_g')}g, 칼로리={food.get('calories_kcal')}kcal → AI 원본값으로 복원")
+        _restore_ai_estimates(food, ai_original)
+        if ai_serving > 0:
+            _cap_nutrients_by_serving(food, ai_serving)
+        return False
+
+    food['source'] = 'DB_MATCHED'
+    _cap_nutrients_by_serving(food, effective_serving)
+    return True
+
+
 def match_with_db(analysis, foods_db):
     """
     AI 분석 결과를 DB와 매칭하여 보정
@@ -3517,6 +3589,11 @@ def match_with_db(analysis, foods_db):
 
         # ── 저신뢰 매칭: 덮어쓰지 않고 AI 추정값 유지 (보수 — 약한 매칭이 확신값 대체 차단) ──
         if gold_data:  # 매칭됐지만 _gconf != 'high'
+            # 2순위 v2 (2026-10-17, 제이 «진행»): gold 가 «확신 낮음»이어도 SQLite 에 정확히 같은 이름(일관된 값)이 있으면 그 값
+            #   (신라면블랙→gold 신라면 low · 바나나맛우유→gold 바나나 low). tools/tests/test_sqlite_goldlow_v2.py
+            _ex = _sqlite_exact_usable(ai_name)
+            if _ex and _apply_sqlite_row(food, _ex, ai_name):
+                continue
             food['db_matched'] = False
             food['source'] = 'AI_ESTIMATED'
             food['match_confidence'] = 'low'
@@ -3526,47 +3603,12 @@ def match_with_db(analysis, foods_db):
         # ── 2순위: 가공식품 SQLite DB — 수정 v1 (2026-10-17, 제이 결정 «2순위 수정 v1») ──
         #   운영 사진 분석(10-15) «치즈 소스» 80g → 2,357kcal 에서 결함 3가지 확인:
         #   D1 SQLite 값은 100g당인데 (GPT g ÷ 1회 제공량 g) 배율을 곱했음 → ×(100/1회 제공량) 오차
-        #   D2 sodium_mg 열은 나트륨이 아님(탄수화물 비슷한 값) · sugar·fiber 는 0 → 쓰지 않는다
+        #   D2 sodium_mg 열은 나트륨이 아니었음(탄수화물) · sugar·fiber 0 → 10-17 «영양값 바로잡기 v1» 로 식약처 원값
         #   D3 부분·역방향 매칭이 규칙 131~133(중심어·묶음 이름)을 거치지 않았음(«베이컨과 계란 프라이»→«프라이»)
-        #   → 정확한 이름만 · 묶음 이름 제외 · 100g 기준 (D2 는 아래 «영양값 바로잡기 v1» 로 해결)
-        #   tools/tests/test_sqlite_tier2_v1.py
-        exact = None
-        if not _is_multi_food_name(_normalize_food_name(ai_name)):
-            exact, _partials_unused = search_food_db(ai_name)
-
-        # 식약처 API 로 다시 채운 MFDS 행(나트륨 NULL 아님)은 0kcal 음료(코카콜라제로 등)도 진짜 값 → 품질 점수 대신 통과
-        _mfds_verified = bool(exact) and str(exact.get('food_id', '')).startswith('MFDS_') \
-            and exact.get('sodium_mg') is not None and exact.get('calories_kcal') is not None
-        if exact and (_mfds_verified or (_db_quality_score(exact) >= 3 and (exact.get('calories_kcal') or 0) > 0)):
-            ai_serving = food.get('estimated_serving_g') or 0
-            db_serving = exact.get('serving_size_g') or 0
-            effective_serving = ai_serving if ai_serving > 0 else (db_serving if db_serving > 0 else 100)
-            ratio = effective_serving / 100  # SQLite 값 = 100g당
-
-            ai_original = _backup_ai_estimates(food)
-            food['db_matched'] = True
-            food['db_food_id'] = exact.get('food_id', '')
-            food['db_name'] = exact.get('name_ko', '')
-            # 영양값 바로잡기 v1 (2026-10-17): SQLite MFDS 행을 식약처 API 로 다시 채움(tools/tests/test_sqlite_nutrients_v1.py)
-            #   → 나트륨·당·섬유도 DB 값. 값이 NULL(식약처에 없음)이면 AI 값 유지
-            for fld in ('calories_kcal', 'protein_g', 'carbs_g', 'fat_g', 'sodium_mg', 'sugar_g', 'fiber_g'):
-                v = exact.get(fld)
-                if isinstance(v, (int, float)) and v >= 0:
-                    food[fld] = round(v * ratio, 1)
-            if not ai_serving:
-                food['estimated_serving_g'] = effective_serving
-
-            # ── 안전장치: 수분→탄수화물 오염 데이터 차단 (P0-1) ──
-            if _is_polluted_db_data(food.get('calories_kcal', 0) or 0, food.get('carbs_g', 0) or 0):
-                print(f"[오염 검출] {ai_name}: DB 탄수={food.get('carbs_g')}g, 칼로리={food.get('calories_kcal')}kcal "
-                      f"→ AI 원본값으로 복원")
-                _restore_ai_estimates(food, ai_original)
-                if ai_serving > 0:
-                    _cap_nutrients_by_serving(food, ai_serving)
-                continue
-
-            food['source'] = 'DB_MATCHED'
-            _cap_nutrients_by_serving(food, effective_serving)
+        #   → 정확한 이름만 · 묶음·모호 이름 제외 · 100g 기준 — _sqlite_exact_usable · _apply_sqlite_row
+        #   tools/tests/test_sqlite_tier2_v1.py · test_sqlite_nutrients_v1.py · test_sqlite_goldlow_v2.py
+        exact = _sqlite_exact_usable(ai_name)
+        if exact and _apply_sqlite_row(food, exact, ai_name):
             continue
 
         # ── 3순위: AI 추정값 그대로 유지 ──
