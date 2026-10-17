@@ -3523,78 +3523,46 @@ def match_with_db(analysis, foods_db):
             food['db_candidate'] = gold_key
             continue
 
-        # ── 2순위: 기존 SQLite DB (품질 필터 + 관련성 검증) ──
-        exact, partials = search_food_db(ai_name)
-        match = exact or (partials[0] if partials else None)
+        # ── 2순위: 가공식품 SQLite DB — 수정 v1 (2026-10-17, 제이 결정 «2순위 수정 v1») ──
+        #   운영 사진 분석(10-15) «치즈 소스» 80g → 2,357kcal 에서 결함 3가지 확인:
+        #   D1 SQLite 값은 100g당인데 (GPT g ÷ 1회 제공량 g) 배율을 곱했음 → ×(100/1회 제공량) 오차
+        #   D2 sodium_mg 열은 나트륨이 아님(탄수화물 비슷한 값) · sugar·fiber 는 0 → 쓰지 않는다
+        #   D3 부분·역방향 매칭이 규칙 131~133(중심어·묶음 이름)을 거치지 않았음(«베이컨과 계란 프라이»→«프라이»)
+        #   → 정확한 이름만 · 묶음 이름 제외 · 100g 기준 · 열량·단백·탄수·지방만 DB 값, 나트륨·당·섬유는 AI 값 유지
+        #   tools/tests/test_sqlite_tier2_v1.py
+        exact = None
+        if not _is_multi_food_name(_normalize_food_name(ai_name)):
+            exact, _partials_unused = search_food_db(ai_name)
 
-        # 관련성 체크: 부분매칭된 이름이 원본과 너무 다르면 기각
-        if match and not exact:
-            db_name = match.get('name_ko', '')
-            # 원본 이름이 DB 이름에 포함되어 있거나 그 반대여야 함
-            # "물" → "냉면 (물냉면)" 같은 느슨한 매칭 방지
-            name_clean = ai_name.replace(' ', '')
-            db_clean = db_name.replace(' ', '').replace('(', '').replace(')', '')
-            # 최소 3자 이상 겹치거나, 짧은 이름이 긴 이름의 50% 이상이어야 함
-            shorter = min(len(name_clean), len(db_clean))
-            if shorter < 3 or (shorter / max(len(name_clean), len(db_clean)) < 0.3):
-                match = None  # 관련성 부족 → 기각
+        if exact and _db_quality_score(exact) >= 3 and (exact.get('calories_kcal') or 0) > 0:
+            ai_serving = food.get('estimated_serving_g') or 0
+            db_serving = exact.get('serving_size_g') or 0
+            effective_serving = ai_serving if ai_serving > 0 else (db_serving if db_serving > 0 else 100)
+            ratio = effective_serving / 100  # SQLite 값 = 100g당
 
-        if match:
-            quality = _db_quality_score(match)
+            ai_original = _backup_ai_estimates(food)
+            food['db_matched'] = True
+            food['db_food_id'] = exact.get('food_id', '')
+            food['db_name'] = exact.get('name_ko', '')
+            for fld in ('calories_kcal', 'protein_g', 'carbs_g', 'fat_g'):
+                v = exact.get(fld)
+                if isinstance(v, (int, float)) and v >= 0:
+                    food[fld] = round(v * ratio, 1)
+            if not ai_serving:
+                food['estimated_serving_g'] = effective_serving
 
-            # 품질 3점 이상만 사용 (칼로리+단백질+탄수+지방+서빙 중 3개 이상)
-            if quality >= 3:
-                db_serving = match.get('serving_size_g') or 0
-                ai_serving = food.get('estimated_serving_g') or 0
-
-                if db_serving > 0 and ai_serving > 0:
-                    ratio = ai_serving / db_serving
-                else:
-                    ratio = 1.0
-
-                # ── P0-1: AI 원본 영양소 백업 (오염 검출 시 진짜 복원용) ──
-                # 아래에서 food[ai_field]를 DB 값으로 덮어쓰기 전에 사본 떠둠
-                ai_original = _backup_ai_estimates(food)
-
-                food['db_matched'] = True
-                food['db_food_id'] = match.get('food_id', '')
-                food['db_name'] = match.get('name_ko', '')
-
-                for field_pair in [
-                    ('calories_kcal', 'calories_kcal'),
-                    ('protein_g', 'protein_g'),
-                    ('carbs_g', 'carbs_g'),
-                    ('fat_g', 'fat_g'),
-                    ('fiber_g', 'fiber_g'),
-                    ('sodium_mg', 'sodium_mg'),
-                    ('sugar_g', 'sugar_g'),
-                ]:
-                    ai_field, db_field = field_pair
-                    db_val = match.get(db_field)
-                    if db_val is not None and isinstance(db_val, (int, float)) and db_val > 0:
-                        food[ai_field] = round(db_val * ratio, 1)
-
-                # ── 안전장치: 수분→탄수화물 오염 데이터 차단 ──
-                # 탄수화물(g)*4 > 칼로리*2 이면 물리적으로 불가능 (수분이 탄수화물로 잘못 들어간 데이터)
-                # P0-1 (2026-05-03): db_matched=False만 설정하던 버그 수정 — AI 원본값으로 진짜 복원
-                db_cal = food.get('calories_kcal', 0) or 0
-                db_carbs = food.get('carbs_g', 0) or 0
-                if _is_polluted_db_data(db_cal, db_carbs):
-                    print(f"[오염 검출] {ai_name}: DB 탄수={db_carbs}g, 칼로리={db_cal}kcal "
-                          f"→ AI 원본값으로 복원")
-                    _restore_ai_estimates(food, ai_original)
-                    # AI 추정값에도 안전장치 적용 (복원 후)
-                    ai_sv = food.get('estimated_serving_g') or 0
-                    if ai_sv > 0:
-                        _cap_nutrients_by_serving(food, ai_sv)
-                    continue
-
-                food['source'] = 'DB_MATCHED'
-
-                # ── 안전장치: 영양소(g)는 음식 총 중량(g)을 초과할 수 없음 ──
-                db_effective_serving = ai_serving if ai_serving > 0 else db_serving
-                _cap_nutrients_by_serving(food, db_effective_serving)
+            # ── 안전장치: 수분→탄수화물 오염 데이터 차단 (P0-1) ──
+            if _is_polluted_db_data(food.get('calories_kcal', 0) or 0, food.get('carbs_g', 0) or 0):
+                print(f"[오염 검출] {ai_name}: DB 탄수={food.get('carbs_g')}g, 칼로리={food.get('calories_kcal')}kcal "
+                      f"→ AI 원본값으로 복원")
+                _restore_ai_estimates(food, ai_original)
+                if ai_serving > 0:
+                    _cap_nutrients_by_serving(food, ai_serving)
                 continue
+
+            food['source'] = 'DB_MATCHED'
+            _cap_nutrients_by_serving(food, effective_serving)
+            continue
 
         # ── 3순위: AI 추정값 그대로 유지 ──
         food['db_matched'] = False
