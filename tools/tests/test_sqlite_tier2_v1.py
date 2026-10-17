@@ -30,9 +30,10 @@ for nm in ['치즈 소스', '살사 소스', '허니버터칩', '코카콜라', 
     gk, gd = fa._search_gold(nm)
     check(gd is None, f'P0 {nm} gold 매칭 {gk} — 전제 깨짐')
 
-# DB 100g당 값(10-17 확인): (kcal, 단백, 탄수, 지방, 1회 제공량 g)
-DB = {'치즈 소스': (442, 3.6, 18.0, 39.5, 15), '살사 소스': (32, 2.1, 5.7, 0.1, 15),
-      '허니버터칩': (542, 5.0, 59.2, 31.7, 30), '코카콜라': (43, 0.0, 10.8, 0.0, 200), '햇반참기름': (900, 0, 0, 100, 10)}
+# DB 100g당 값(10-17 확인 · 영양값 바로잡기 v1 뒤 탄수는 식약처 원값): (kcal, 단백, 탄수, 지방, 1회 제공량 g)
+DB = {'치즈 소스': (442, 3.6, 18.1, 39.5, 15), '살사 소스': (32, 2.09, 5.87, 0.05, 15),
+      '허니버터칩': (542, 5.0, 58.34, 31.67, 30), '코카콜라': (43, 0.0, 10.67, 0.0, 200), '햇반참기름': (900, 0, 0, 100, 10)}
+DB_OLD_NA = {'치즈 소스': 18.1, '살사 소스': 5.9, '허니버터칩': 58.3, '코카콜라': 10.7, '햇반참기름': 0.0}
 CASES = [('치즈 소스', 80), ('살사 소스', 50), ('허니버터칩', 60), ('코카콜라', 250), ('햇반참기름', 5), ('치즈 소스', None)]
 for nm, g in CASES:
     kcal, p, c, fat, sv = DB[nm]
@@ -44,8 +45,9 @@ for nm, g in CASES:
     check(near(r.get('protein_g'), round(p * eg / 100, 1)), f'A3 {tag} 단백 {r.get("protein_g")}')
     check(near(r.get('carbs_g'), round(c * eg / 100, 1)), f'A4 {tag} 탄수 {r.get("carbs_g")}')
     check(near(r.get('fat_g'), min(round(fat * eg / 100, 1), eg)), f'A5 {tag} 지방 {r.get("fat_g")}')
-    check(r.get('sodium_mg') == AI['sodium_mg'], f'A6 {tag} 나트륨 {r.get("sodium_mg")} — AI 값 유지여야')
-    check(r.get('sugar_g') == AI['sugar_g'] and r.get('fiber_g') == AI['fiber_g'], f'A7 {tag} 당·섬유 {r.get("sugar_g"), r.get("fiber_g")} — AI 값 유지여야')
+    # 10-17 영양값 바로잡기 v1 이후: 나트륨·당은 DB 값(test_sqlite_nutrients_v1 이 값 검증) · 섬유는 DB 없음 → AI 값
+    check(nm == '햇반참기름' or r.get('sodium_mg') != round(DB_OLD_NA[nm] * eg / 15, 1), f'A6 {tag} 나트륨 {r.get("sodium_mg")} — 예전 오값(탄수 열) 아님')
+    check(r.get('fiber_g') == AI['fiber_g'], f'A7 {tag} 섬유 {r.get("fiber_g")} — DB 없음 → AI 값')
 
 # 운영 사례 그대로: 치즈 소스 80g 은 2,357kcal 이 아니라 353.6
 r = run('치즈 소스', 80)

@@ -61,6 +61,9 @@ API_MODE = None  # "foodsafety" 또는 "data_go_kr" (자동 감지)
 
 # ── API 필드 매핑 ──
 # I2790 응답 필드 → 우리 DB 필드
+# ★ 2026-10-17 data.go.kr FoodNtrCpntDbInfo02 AMT_NUM 순서(코카콜라 대조 확정):
+#   1 kcal · 2 수분 · 3 단백 · 4 지방 · 5 회분 · 6 탄수 · 7 당류 · 8 식이섬유 · 9 칼슘 · 10 철 · 11 인 · 12 칼륨 · 13 나트륨
+#   예전 매핑(2→탄수, 5→당, 6→나트륨)으로 nutrilens_db.sqlite 나트륨 열이 탄수화물이 됐었음 → tools/tests/test_sqlite_nutrients_v1.py
 FIELD_MAP = {
     "DESC_KOR": "name_ko",           # 식품이름
     "FOOD_CD": "food_id_mfds",       # 식품코드
@@ -407,7 +410,7 @@ def convert_row(row, idx_offset=0):
 
     cal = safe_float(get_nutr(["NUTR_CONT1", "enerc", "ENERC", "AMT_NUM1", "calorie"]))
     prot = safe_float(get_nutr(["NUTR_CONT3", "prot", "PROT", "AMT_NUM3", "protein"]))
-    carbs = safe_float(get_nutr(["NUTR_CONT2", "chocdf", "CHOCDF", "AMT_NUM2", "carbohydrate"]))
+    carbs = safe_float(get_nutr(["NUTR_CONT2", "chocdf", "CHOCDF", "AMT_NUM6", "carbohydrate"]))  # 10-17: AMT_NUM2 는 수분(오매핑이었음)
     fat = safe_float(get_nutr(["NUTR_CONT4", "fatce", "FATCE", "AMT_NUM4", "fat"]))
     serving = safe_float(get_nutr(["SERVING_SIZE", "serving_size", "SERVING_WT", "servingWt", "NUTRI_AMOUNT_SERVING"]))
 
@@ -447,11 +450,11 @@ def convert_row(row, idx_offset=0):
         "protein_g": prot,
         "carbs_g": carbs,
         "fat_g": fat,
-        "fiber_g": safe_float(get_nutr(["NUTR_CONT10", "fibtg", "FIBTG", "dietary_fiber"])),
-        "sodium_mg": safe_float(get_nutr(["NUTR_CONT6", "na", "NA", "AMT_NUM6", "sodium"])),
-        "sugar_g": safe_float(get_nutr(["NUTR_CONT5", "sugar", "SUGAR", "AMT_NUM5"])),
-        "sat_fat_g": safe_float(get_nutr(["NUTR_CONT8", "fasat", "FASAT", "AMT_NUM8", "saturated_fat"])),
-        "cholesterol_mg": safe_float(get_nutr(["NUTR_CONT7", "chole", "CHOLE", "AMT_NUM7", "cholesterol"])),
+        "fiber_g": safe_float(get_nutr(["NUTR_CONT10", "fibtg", "FIBTG", "AMT_NUM8", "dietary_fiber"])),
+        "sodium_mg": safe_float(get_nutr(["NUTR_CONT6", "na", "NA", "AMT_NUM13", "sodium"])),  # 10-17: AMT_NUM6 은 탄수(오매핑이었음)
+        "sugar_g": safe_float(get_nutr(["NUTR_CONT5", "sugar", "SUGAR", "AMT_NUM7"])),  # 10-17: AMT_NUM5 는 회분
+        "sat_fat_g": safe_float(get_nutr(["NUTR_CONT8", "fasat", "FASAT", "saturated_fat"])),  # AMT_NUM 위치 미확인 → 뺌
+        "cholesterol_mg": safe_float(get_nutr(["NUTR_CONT7", "chole", "CHOLE", "cholesterol"])),  # AMT_NUM 위치 미확인 → 뺌
         "source": "MFDS_API",
         "brand": maker or "",
         "cooking_method": "",

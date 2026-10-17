@@ -3528,13 +3528,16 @@ def match_with_db(analysis, foods_db):
         #   D1 SQLite 값은 100g당인데 (GPT g ÷ 1회 제공량 g) 배율을 곱했음 → ×(100/1회 제공량) 오차
         #   D2 sodium_mg 열은 나트륨이 아님(탄수화물 비슷한 값) · sugar·fiber 는 0 → 쓰지 않는다
         #   D3 부분·역방향 매칭이 규칙 131~133(중심어·묶음 이름)을 거치지 않았음(«베이컨과 계란 프라이»→«프라이»)
-        #   → 정확한 이름만 · 묶음 이름 제외 · 100g 기준 · 열량·단백·탄수·지방만 DB 값, 나트륨·당·섬유는 AI 값 유지
+        #   → 정확한 이름만 · 묶음 이름 제외 · 100g 기준 (D2 는 아래 «영양값 바로잡기 v1» 로 해결)
         #   tools/tests/test_sqlite_tier2_v1.py
         exact = None
         if not _is_multi_food_name(_normalize_food_name(ai_name)):
             exact, _partials_unused = search_food_db(ai_name)
 
-        if exact and _db_quality_score(exact) >= 3 and (exact.get('calories_kcal') or 0) > 0:
+        # 식약처 API 로 다시 채운 MFDS 행(나트륨 NULL 아님)은 0kcal 음료(코카콜라제로 등)도 진짜 값 → 품질 점수 대신 통과
+        _mfds_verified = bool(exact) and str(exact.get('food_id', '')).startswith('MFDS_') \
+            and exact.get('sodium_mg') is not None and exact.get('calories_kcal') is not None
+        if exact and (_mfds_verified or (_db_quality_score(exact) >= 3 and (exact.get('calories_kcal') or 0) > 0)):
             ai_serving = food.get('estimated_serving_g') or 0
             db_serving = exact.get('serving_size_g') or 0
             effective_serving = ai_serving if ai_serving > 0 else (db_serving if db_serving > 0 else 100)
@@ -3544,7 +3547,9 @@ def match_with_db(analysis, foods_db):
             food['db_matched'] = True
             food['db_food_id'] = exact.get('food_id', '')
             food['db_name'] = exact.get('name_ko', '')
-            for fld in ('calories_kcal', 'protein_g', 'carbs_g', 'fat_g'):
+            # 영양값 바로잡기 v1 (2026-10-17): SQLite MFDS 행을 식약처 API 로 다시 채움(tools/tests/test_sqlite_nutrients_v1.py)
+            #   → 나트륨·당·섬유도 DB 값. 값이 NULL(식약처에 없음)이면 AI 값 유지
+            for fld in ('calories_kcal', 'protein_g', 'carbs_g', 'fat_g', 'sodium_mg', 'sugar_g', 'fiber_g'):
                 v = exact.get(fld)
                 if isinstance(v, (int, float)) and v >= 0:
                     food[fld] = round(v * ratio, 1)
