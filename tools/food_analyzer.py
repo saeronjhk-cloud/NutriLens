@@ -2955,6 +2955,18 @@ def _load_gold_db():
     if gold_path.exists():
         with open(gold_path, 'r', encoding='utf-8') as f:
             _GOLD_DATA = json.load(f)
+        # ★ gold mfds 100mL 행 바로잡기 v1 (2026-10-18, 규칙 169) — 식약처 음식 D4~D7(기준 100mL) 행에서 온 값을
+        #    같은 이름 D1~D3 100g 행 중앙값으로. 원본 gold_foods.json 은 그대로 두고 로드 때 덮어씀. tests/test_gold_basis_v1.py
+        _fix_path = Path(__file__).parent / 'gold_basis_fix_v1.json'
+        if _fix_path.exists():
+            with open(_fix_path, 'r', encoding='utf-8') as f:
+                _fix = json.load(f).get('items', {})
+            for _k, _v in _fix.items():
+                if _k in _GOLD_DATA:
+                    for _f in ('cal', 'prot', 'fat', 'carbs', 'sugar', 'fiber', 'sodium'):
+                        if _f in _v:
+                            _GOLD_DATA[_k][_f] = _v[_f]
+                    _GOLD_DATA[_k]['basis_fix'] = 'mfds_D13_100g'
         return _GOLD_DATA
     return None
 
