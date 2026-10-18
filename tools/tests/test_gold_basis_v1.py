@@ -23,11 +23,12 @@ A = [('된장국배추', 20.0, 223.0, 17.0), ('김치볶음 참치', 122.0, 480.
 for nm, kcal, na, old in A:
     k, d = g(nm)
     check(d is not None and k == nm and abs(d['cal'] - kcal) <= 1 and abs((d.get('sodium') or 0) - (na or 0)) <= 2, f"A 교체 {nm} → {k} {d and (d['cal'], d.get('sodium'))} (기대 {kcal}·{na}, 전 {old})")
-# B 전량: 교체 파일 416 키가 모두 gold 에 반영
+# B 전량: 교체 파일 v1 240 키가 모두 gold 에 반영
 fx = json.load(open(os.path.join(T, 'gold_basis_fix_v1.json'), encoding='utf-8')) if os.path.exists(os.path.join(T, 'gold_basis_fix_v1.json')) else {'items': {}}
 gold = fa._load_gold_db()
+v1 = {k: v for k, v in fx.get('items', {}).items() if '규칙 169' in v.get('src', '')}   # v1.1 부터 자문 반영분이 같은 파일에 추가됨
 bad = [k for k, v in fx.get('items', {}).items() if abs(gold[k]['cal'] - v['cal']) > 0.01]
-check(len(fx.get('items', {})) == 240 and not bad, f"B 전량 {len(fx.get('items', {}))}/240 · 불일치 {bad[:5]}")
+check(len(v1) == 240 and not bad, f"B 전량 {len(v1)}/240 · 불일치 {bad[:5]}")
 # C 유지
 C = [('누룽지', 87.0), ('우엉볶음', 160.0), ('오징어탕수', 247.0), ('부추잡채', 108.0), ('게조림', 93.0),
      ('어묵탕', 21.0), ('감자구이', 123.0), ('김부각', 415.0), ('마카로니 샐러드', 138.0)]
