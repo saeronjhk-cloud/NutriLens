@@ -3064,7 +3064,9 @@ def _search_gold(name, _core=None):
     if clean in gold:
         return clean, gold[clean]
     _gk = _gold_searchkey_index(gold).get(re.sub(r'[^가-힣a-zA-Z0-9]', '', clean).lower())
-    if _gk and _nosp != clean:
+    #    ★ 흔한 이름 v1 (2026-10-18): gold 검색키도 양방향(규칙 157 후속). 전엔 입력에 공백 없으면 건너뛰어
+    #    «달걀샐러드»→«샐러드»(25kcal, 실제 «달걀 샐러드» 158) 등 2,872개. tests/test_common_names_v1.py A
+    if _gk:
         return _gk, gold[_gk]
     #    뒤쪽 단어 조합 정확(긴 것 먼저) — «해산물 크림 파스타»는 접미사 «파스타»보다 «크림 파스타»가 먼저
     _ws = clean.split()
@@ -3420,12 +3422,18 @@ def _mfds_ambiguous_names():
     return _MFDS_AMBIGUOUS
 
 
+_SQLITE_CATEGORY_NAMES = frozenset({'소스', '채소', '야채'})
+
+
 def _sqlite_exact_usable(ai_name):
     """2순위 — 가공식품 SQLite 에서 «쓸 수 있는» 정확 일치 행 또는 None.
     정확한 이름만 · 묶음 이름 제외 · 모호한 이름 제외 · (식약처 검증 MFDS 행 또는 품질 3점↑·kcal>0)"""
     if _is_multi_food_name(_normalize_food_name(ai_name)):
         return None
     if ai_name.strip() in _mfds_ambiguous_names():
+        return None
+    # 흔한 이름 v1 (2026-10-18): 범주 이름은 단일 제품으로 확정 안 함(«소스»→0kcal 제품 · «채소»→506kcal 과자)
+    if ai_name.strip() in _SQLITE_CATEGORY_NAMES:
         return None
     exact, _unused = search_food_db(ai_name)
     if not exact:

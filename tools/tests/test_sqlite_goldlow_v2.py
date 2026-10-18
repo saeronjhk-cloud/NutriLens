@@ -39,7 +39,7 @@ for nm, v in LOW_OK.items():
 
 # 2) 같은 이름 값이 제각각(모호) → AI 값 (gold low 든 gold 없음이든)
 AMB = json.load(open(os.path.join(T, 'mfds_ambiguous_names_v1.json'), encoding='utf-8'))['names']
-for nm in ['양념장', '크림', '물짜장', '갈릭토스트', '오징어채']:
+for nm in ['양념장', '굴소스', '물짜장', '갈릭토스트', '오징어채']:   # 10-18: «크림»은 CORE 별칭(→생크림)이 맡게 돼 «굴소스»로 교체
     check(nm in AMB, f'P2 {nm} 모호 목록에 없음')
     r = run(nm, 100)
     check(r.get('source') == 'AI_ESTIMATED' and r.get('calories_kcal') == AI['calories_kcal'], f'A1 {nm} 모호인데 {r.get("source"), r.get("db_name"), r.get("calories_kcal")}')

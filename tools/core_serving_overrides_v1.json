@@ -6,7 +6,7 @@
     "definition": "1인분 = 1명이 한 끼에 먹는 개인 몫, 국물·소스 포함 그릇 전체 (Q2 두 AI 합의)",
     "decision_doc": "IP/integration/core_serving_decision_v1.md · _detail.md · _v1.csv (영양공식 루트)",
     "apply": "food_analyzer: CORE_FOODS 로드 뒤 serving 덮어쓰기 → alias 는 표준 키의 영양값 복사 + 1인분",
-    "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감) · v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨, 식약처 비율 환산) — set_meal 보다 먼저 적용 · v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장) — 가장 먼저 적용 · set_meal 쌈밥 추가 · v1.6 (2026-10-14) nutrient 나트륨 자문 v1 6종 · v1.7 (2026-10-15) add 닭똥집소금구이(Na 380, 식당 실제값)·닭똥집볶음(식약처 닭모래집볶음) + alias 5종(닭똥집·소금닭똥집·똥집소금구이·닭모래집소금구이·닭근위소금구이 → 닭똥집소금구이). tools/tests/test_gizzard_v1.py · v1.8 (2026-10-15) 실사용 이름 v1: alias 17(시금치무침→시금치나물 포함, 수육·청양고추·소시지·애플 파이·콘·절임 3·상추무침·돼지고기 육포·그릴드 치킨·치킨 스테이크·치킨 커틀릿·슈니첼 2·소고기 구이) + add 2(프레첼·김, 식약처 값 복사). 검색 순서·확신 규칙 수정은 food_analyzer. tools/tests/test_real_names_v1.py · v1.9 (2026-10-15) 값 채움 v1: add 23(식약처·USDA FDC·국내 라벨, 출처 src) + alias 3(감자 퓨레·호박 퓌레·복숭아 통조림→황도) + serving 돼지고기수육 300→200(값 406.1 유지). tools/tests/test_fill_values_v1.py · v1.10 (2026-10-17) 멕시코 음식 이름 v1: add 5(치즈 소스·치즈 퀘소·살사 소스·피코 데 가요·나초 칩 — USDA FNDDS 2024-10-31, 규칙 136 ②가 SQLite 제품 값보다 우선) + alias 10(치즈 딥·나초 치즈·나초 치즈 소스→치즈 소스 · 퀘소·퀘소 딥·케소→치즈 퀘소 · 살사→살사 소스 · 나쵸칩·토르티야 칩·또띠아 칩→나초 칩). tools/tests/test_mexican_names_v1.py"
+    "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감) · v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨, 식약처 비율 환산) — set_meal 보다 먼저 적용 · v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장) — 가장 먼저 적용 · set_meal 쌈밥 추가 · v1.6 (2026-10-14) nutrient 나트륨 자문 v1 6종 · v1.7 (2026-10-15) add 닭똥집소금구이(Na 380, 식당 실제값)·닭똥집볶음(식약처 닭모래집볶음) + alias 5종(닭똥집·소금닭똥집·똥집소금구이·닭모래집소금구이·닭근위소금구이 → 닭똥집소금구이). tools/tests/test_gizzard_v1.py · v1.8 (2026-10-15) 실사용 이름 v1: alias 17(시금치무침→시금치나물 포함, 수육·청양고추·소시지·애플 파이·콘·절임 3·상추무침·돼지고기 육포·그릴드 치킨·치킨 스테이크·치킨 커틀릿·슈니첼 2·소고기 구이) + add 2(프레첼·김, 식약처 값 복사). 검색 순서·확신 규칙 수정은 food_analyzer. tools/tests/test_real_names_v1.py · v1.9 (2026-10-15) 값 채움 v1: add 23(식약처·USDA FDC·국내 라벨, 출처 src) + alias 3(감자 퓨레·호박 퓌레·복숭아 통조림→황도) + serving 돼지고기수육 300→200(값 406.1 유지). tools/tests/test_fill_values_v1.py · v1.10 (2026-10-17) 멕시코 음식 이름 v1: add 5(치즈 소스·치즈 퀘소·살사 소스·피코 데 가요·나초 칩 — USDA FNDDS 2024-10-31, 규칙 136 ②가 SQLite 제품 값보다 우선) + alias 10(치즈 딥·나초 치즈·나초 치즈 소스→치즈 소스 · 퀘소·퀘소 딥·케소→치즈 퀘소 · 살사→살사 소스 · 나쵸칩·토르티야 칩·또띠아 칩→나초 칩). tools/tests/test_mexican_names_v1.py · v1.11 (2026-10-18) 흔한 이름 v1: 새우깡 국내 라벨(517·Na678) · 1인분 FNDDS QNS(굴라쉬 255·나시 레막 150·감자 경단 188·슈페츨레 160) · add 5(간장·버터·참기름·딸기잼·크림치즈, FNDDS) · alias 11(계란말이 소시지·소시지 계란말이→계란말이 · 라떼→카페라떼 · 크림→생크림 · 모짜렐라→모짜렐라치즈 · 명란→명란젓 · 찐만두→만두 · 계란국→달걀국 · 묵은지·맛김치→김치 · 단팥죽→팥죽). tools/tests/test_common_names_v1.py — 약밥→약식 보류: 약식 1인분 100g 이라 이름 규칙(«밥» 끝 400g)이 덮어써 928kcal(가지 구이와 같은 구조 문제)"
   },
   "add": {
     "쌈장": {
@@ -154,16 +154,16 @@
       "src": "식약처 음식 DB «볶음면 간편조리세트 소고기 야끼소바» 100g당 · 1인분 300g · 값 채움 v1 제이 결정 2026-10-15(«추천대로»)"
     },
     "새우깡": {
-      "cal": 426.0,
-      "prot": 7.14,
-      "carbs": 59.1,
-      "fat": 17.9,
+      "cal": 517.0,
+      "prot": 6.67,
+      "carbs": 60.0,
+      "fat": 27.78,
       "fiber": 5.6,
-      "sodium": 571.0,
-      "sugar": 21.4,
+      "sodium": 678.0,
+      "sugar": 5.56,
       "serving": 30,
       "category": "korean",
-      "src": "USDA FoodData Central fdcId 2708246 «Shrimp chips» (FNDDS 2024-10-31) 100g당 · 새우칩(국내 제품 라벨 미확보) · 1인분 30g · 값 채움 v1 제이 결정 2026-10-15(«추천대로»)"
+      "src": "국내 제품 라벨 — 가공식품 SQLite MFDS_P101-106000100-0968 «새우깡»(식약처 API 원값) 100g당 · 1회 30g · 식이섬유 라벨 미표시 → FNDDS 2708246 Shrimp chips 값(5.6) 유지 · 흔한 이름 v1 제이 결정 2026-10-18(«추천대로») (전: FNDDS 2708246 426kcal·Na571 — 같은 음식 아님)"
     },
     "과카몰리": {
       "cal": 155.0,
@@ -185,9 +185,9 @@
       "fiber": 1.3,
       "sodium": 307.0,
       "sugar": 1.57,
-      "serving": 300,
+      "serving": 255,
       "category": "korean",
-      "src": "USDA FoodData Central fdcId 2706592 «Stew, beef» (FNDDS 2024-10-31) 100g당 · 소고기 스튜 근사(헝가리식 굴라쉬 항목 없음) · 1인분 300g · 값 채움 v1 제이 결정 2026-10-15(«추천대로»)"
+      "src": "USDA FoodData Central fdcId 2706592 «Stew, beef» (FNDDS 2024-10-31) 100g당 · 소고기 스튜 같은 음식(FNDDS 속성 goulash)(헝가리식 굴라쉬 항목 없음) · 1인분 300g · 값 채움 v1 제이 결정 2026-10-15(«추천대로») · 1인분 FNDDS 2706592 Quantity not specified 255g (전 300g) — 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
     },
     "칠리 소스": {
       "cal": 180.0,
@@ -233,9 +233,9 @@
       "fiber": 1.9,
       "sodium": 182.0,
       "sugar": 3.34,
-      "serving": 200,
+      "serving": 150,
       "category": "korean",
-      "src": "USDA FoodData Central fdcId 2709032 «Rice, cooked with coconut milk» (FNDDS 2024-10-31) 100g당 · 코코넛밀크 밥 부분만 — 곁들이(삼발·멸치·달걀·땅콩)는 별도 음식 · 1인분 200g · 값 채움 v1 제이 결정 2026-10-15(«추천대로»)"
+      "src": "USDA FoodData Central fdcId 2709032 «Rice, cooked with coconut milk» (FNDDS 2024-10-31) 100g당 · 코코넛밀크 밥 부분만 — 곁들이(삼발·멸치·달걀·땅콩)는 별도 음식 · 1인분 200g · 값 채움 v1 제이 결정 2026-10-15(«추천대로») · 1인분 FNDDS 2709032 Quantity not specified 150g (전 200g = 1 cup) — 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
     },
     "슈페츨레": {
       "cal": 138.0,
@@ -245,9 +245,9 @@
       "fiber": 1.2,
       "sodium": 165.0,
       "sugar": 0.4,
-      "serving": 200,
+      "serving": 160,
       "category": "korean",
-      "src": "USDA FoodData Central fdcId 168919 «Noodles, egg, cooked, enriched, with added salt» (SR Legacy 2018-04) 100g당 · 에그누들(소금 조리) 근사 · 1인분 200g · 값 채움 v1 제이 결정 2026-10-15(«추천대로»)"
+      "src": "USDA FoodData Central fdcId 168919 «Noodles, egg, cooked, enriched, with added salt» (SR Legacy 2018-04) 100g당 · 에그누들(소금 조리) 근사 · 1인분 200g · 값 채움 v1 제이 결정 2026-10-15(«추천대로») · 1인분 FNDDS 2708352 Noodles, cooked(egg noodles) Quantity not specified 160g (전 200g, 근거 없음) — 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
     },
     "웨이퍼 롤": {
       "cal": 528.0,
@@ -329,9 +329,9 @@
       "fiber": 1.0,
       "sodium": 279.0,
       "sugar": 0.99,
-      "serving": 150,
+      "serving": 188,
       "category": "korean",
-      "src": "USDA FoodData Central fdcId 2708722 «Gnocchi, potato» (FNDDS 2024-10-31) 100g당 · 감자 뇨끼 근사 · 1인분 150g · 값 채움 v1 제이 결정 2026-10-15(«추천대로»)"
+      "src": "USDA FoodData Central fdcId 2708722 «Gnocchi, potato» (FNDDS 2024-10-31) 100g당 · 감자 뇨끼 근사 · 1인분 150g · 값 채움 v1 제이 결정 2026-10-15(«추천대로») · 1인분 FNDDS 2708722 Quantity not specified 188g (전 150g) — 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
     },
     "가지 구이": {
       "cal": 35.0,
@@ -404,6 +404,66 @@
       "serving": 30,
       "category": "foreign_popular",
       "src": "USDA FoodData Central fdcId 2708202 «Tortilla chips, plain» (FNDDS 2024-10-31) 100g당 · = SR Legacy 167558 · FNDDS Quantity not specified 30g. CORE «나초»(350, 치즈 얹은 요리)와 다른 음식 · 1인분 30g · 멕시코 음식 이름 v1 제이 결정 2026-10-17(«진행»)"
+    },
+    "간장": {
+      "cal": 53.0,
+      "prot": 8.14,
+      "carbs": 4.93,
+      "fat": 0.57,
+      "fiber": 0.8,
+      "sodium": 5490.0,
+      "sugar": 0.4,
+      "serving": 16,
+      "category": "korean",
+      "src": "USDA FoodData Central fdcId 2707442 «Soy sauce» (FNDDS 2024-10-31) 100g당 · 1큰술 16g · 1인분 16g(Quantity not specified) · 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
+    },
+    "버터": {
+      "cal": 743.0,
+      "prot": 0.85,
+      "carbs": 0.06,
+      "fat": 82.2,
+      "fiber": 0.0,
+      "sodium": 524.0,
+      "sugar": 0.58,
+      "serving": 14,
+      "category": "korean",
+      "src": "USDA FoodData Central fdcId 2710154 «Butter, NFS» (FNDDS 2024-10-31) 100g당 · 가염 기준(NFS) · 1인분 14g(Quantity not specified) · 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
+    },
+    "참기름": {
+      "cal": 884.0,
+      "prot": 0.0,
+      "carbs": 0.0,
+      "fat": 100.0,
+      "fiber": 0.0,
+      "sodium": 0.0,
+      "sugar": 0.0,
+      "serving": 14,
+      "category": "korean",
+      "src": "USDA FoodData Central fdcId 2710190 «Sesame oil» (FNDDS 2024-10-31) 100g당 · 1큰술 14g · 1인분 14g(Quantity not specified) · 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
+    },
+    "딸기잼": {
+      "cal": 278.0,
+      "prot": 0.37,
+      "carbs": 68.9,
+      "fat": 0.07,
+      "fiber": 1.1,
+      "sodium": 32.0,
+      "sugar": 48.5,
+      "serving": 20,
+      "category": "korean",
+      "src": "USDA FoodData Central fdcId 2710301 «Jam» (FNDDS 2024-10-31) 100g당 · 1큰술 20g · = SR 169641 Jams and preserves · 1인분 20g(Quantity not specified) · 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
+    },
+    "크림치즈": {
+      "cal": 343.0,
+      "prot": 5.79,
+      "carbs": 4.56,
+      "fat": 33.5,
+      "fiber": 0.0,
+      "sodium": 368.0,
+      "sugar": 3.76,
+      "serving": 30,
+      "category": "korean",
+      "src": "USDA FoodData Central fdcId 2705760 «Cream cheese, regular, plain» (FNDDS 2024-10-31) 100g당 · 식약처 크림치즈 중앙값 342와 일치 · 1인분 30g(Quantity not specified) · 흔한 이름 v1 제이 결정 2026-10-18(«추천대로»)"
     }
   },
   "serving": {
@@ -560,7 +620,18 @@
     "살사": "살사 소스",
     "나쵸칩": "나초 칩",
     "토르티야 칩": "나초 칩",
-    "또띠아 칩": "나초 칩"
+    "또띠아 칩": "나초 칩",
+    "계란말이 소시지": "계란말이",
+    "소시지 계란말이": "계란말이",
+    "라떼": "카페라떼",
+    "크림": "생크림",
+    "모짜렐라": "모짜렐라치즈",
+    "명란": "명란젓",
+    "찐만두": "만두",
+    "계란국": "달걀국",
+    "묵은지": "김치",
+    "맛김치": "김치",
+    "단팥죽": "팥죽"
   },
   "package_cooked_g": {
     "라면": 600,
