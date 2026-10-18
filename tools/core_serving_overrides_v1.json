@@ -6,7 +6,7 @@
     "definition": "1인분 = 1명이 한 끼에 먹는 개인 몫, 국물·소스 포함 그릇 전체 (Q2 두 AI 합의)",
     "decision_doc": "IP/integration/core_serving_decision_v1.md · _detail.md · _v1.csv (영양공식 루트)",
     "apply": "food_analyzer: CORE_FOODS 로드 뒤 serving 덮어쓰기 → alias 는 표준 키의 영양값 복사 + 1인분",
-    "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감) · v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨, 식약처 비율 환산) — set_meal 보다 먼저 적용 · v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장) — 가장 먼저 적용 · set_meal 쌈밥 추가 · v1.6 (2026-10-14) nutrient 나트륨 자문 v1 6종 · v1.7 (2026-10-15) add 닭똥집소금구이(Na 380, 식당 실제값)·닭똥집볶음(식약처 닭모래집볶음) + alias 5종(닭똥집·소금닭똥집·똥집소금구이·닭모래집소금구이·닭근위소금구이 → 닭똥집소금구이). tools/tests/test_gizzard_v1.py · v1.8 (2026-10-15) 실사용 이름 v1: alias 17(시금치무침→시금치나물 포함, 수육·청양고추·소시지·애플 파이·콘·절임 3·상추무침·돼지고기 육포·그릴드 치킨·치킨 스테이크·치킨 커틀릿·슈니첼 2·소고기 구이) + add 2(프레첼·김, 식약처 값 복사). 검색 순서·확신 규칙 수정은 food_analyzer. tools/tests/test_real_names_v1.py · v1.9 (2026-10-15) 값 채움 v1: add 23(식약처·USDA FDC·국내 라벨, 출처 src) + alias 3(감자 퓨레·호박 퓌레·복숭아 통조림→황도) + serving 돼지고기수육 300→200(값 406.1 유지). tools/tests/test_fill_values_v1.py · v1.10 (2026-10-17) 멕시코 음식 이름 v1: add 5(치즈 소스·치즈 퀘소·살사 소스·피코 데 가요·나초 칩 — USDA FNDDS 2024-10-31, 규칙 136 ②가 SQLite 제품 값보다 우선) + alias 10(치즈 딥·나초 치즈·나초 치즈 소스→치즈 소스 · 퀘소·퀘소 딥·케소→치즈 퀘소 · 살사→살사 소스 · 나쵸칩·토르티야 칩·또띠아 칩→나초 칩). tools/tests/test_mexican_names_v1.py · v1.11 (2026-10-18) 흔한 이름 v1: 새우깡 국내 라벨(517·Na678) · 1인분 FNDDS QNS(굴라쉬 255·나시 레막 150·감자 경단 188·슈페츨레 160) · add 5(간장·버터·참기름·딸기잼·크림치즈, FNDDS) · alias 11(계란말이 소시지·소시지 계란말이→계란말이 · 라떼→카페라떼 · 크림→생크림 · 모짜렐라→모짜렐라치즈 · 명란→명란젓 · 찐만두→만두 · 계란국→달걀국 · 묵은지·맛김치→김치 · 단팥죽→팥죽). tools/tests/test_common_names_v1.py — 약밥→약식 보류: 약식 1인분 100g 이라 이름 규칙(«밥» 끝 400g)이 덮어써 928kcal(가지 구이와 같은 구조 문제) · v1.12 (2026-10-18) 1인분 이름 규칙 구조 v1: alias 약밥→약식(보류 해제 — food_analyzer 가 명시 1인분·별칭 표준 키로 이름 규칙 판단). tools/tests/test_serving_fixed_v1.py · v1.13 (2026-10-18) 값 차이 89개 근거 대조 v1: nutrient 19(식약처 음식 100g 대표 행 — 내장탕·도가니탕·율무차·부추김치(Na 자문값 유지)·볶음우동·연근조림·참치샐러드·알밥·오징어덮밥·조기구이·코다리찜·파래무침·카페모카·미역줄기볶음·갈비탕·감자볶음·어묵·오리불고기·수제비) + add 닭모래집볶음 + 닭똥집볶음 값 갱신(100mL 행 → 100g 행). tools/tests/test_value_check_v1.py"
+    "revision": "v1.1 (2026-10-13) — label 섹션 추가: 포장제품 제조사 라벨 1회분 영양(ChatGPT 자문 «제품 라벨 1회 제공량 우선») · v1.2 (2026-10-13) gukbap_rice: 같은 끼니에 밥이 따로 있으면 밥 포함 국밥은 «국만» 값(공깃밥 흰밥 210g 차감) · v1.4 (2026-10-14) nutrient: 영양값 일부 교체(생선구이 4종 나트륨, 식약처 비율 환산) — set_meal 보다 먼저 적용 · v1.5 (2026-10-14) add: CORE 에 없는 항목 신규(쌈장) — 가장 먼저 적용 · set_meal 쌈밥 추가 · v1.6 (2026-10-14) nutrient 나트륨 자문 v1 6종 · v1.7 (2026-10-15) add 닭똥집소금구이(Na 380, 식당 실제값)·닭똥집볶음(식약처 닭모래집볶음) + alias 5종(닭똥집·소금닭똥집·똥집소금구이·닭모래집소금구이·닭근위소금구이 → 닭똥집소금구이). tools/tests/test_gizzard_v1.py · v1.8 (2026-10-15) 실사용 이름 v1: alias 17(시금치무침→시금치나물 포함, 수육·청양고추·소시지·애플 파이·콘·절임 3·상추무침·돼지고기 육포·그릴드 치킨·치킨 스테이크·치킨 커틀릿·슈니첼 2·소고기 구이) + add 2(프레첼·김, 식약처 값 복사). 검색 순서·확신 규칙 수정은 food_analyzer. tools/tests/test_real_names_v1.py · v1.9 (2026-10-15) 값 채움 v1: add 23(식약처·USDA FDC·국내 라벨, 출처 src) + alias 3(감자 퓨레·호박 퓌레·복숭아 통조림→황도) + serving 돼지고기수육 300→200(값 406.1 유지). tools/tests/test_fill_values_v1.py · v1.10 (2026-10-17) 멕시코 음식 이름 v1: add 5(치즈 소스·치즈 퀘소·살사 소스·피코 데 가요·나초 칩 — USDA FNDDS 2024-10-31, 규칙 136 ②가 SQLite 제품 값보다 우선) + alias 10(치즈 딥·나초 치즈·나초 치즈 소스→치즈 소스 · 퀘소·퀘소 딥·케소→치즈 퀘소 · 살사→살사 소스 · 나쵸칩·토르티야 칩·또띠아 칩→나초 칩). tools/tests/test_mexican_names_v1.py · v1.11 (2026-10-18) 흔한 이름 v1: 새우깡 국내 라벨(517·Na678) · 1인분 FNDDS QNS(굴라쉬 255·나시 레막 150·감자 경단 188·슈페츨레 160) · add 5(간장·버터·참기름·딸기잼·크림치즈, FNDDS) · alias 11(계란말이 소시지·소시지 계란말이→계란말이 · 라떼→카페라떼 · 크림→생크림 · 모짜렐라→모짜렐라치즈 · 명란→명란젓 · 찐만두→만두 · 계란국→달걀국 · 묵은지·맛김치→김치 · 단팥죽→팥죽). tools/tests/test_common_names_v1.py — 약밥→약식 보류: 약식 1인분 100g 이라 이름 규칙(«밥» 끝 400g)이 덮어써 928kcal(가지 구이와 같은 구조 문제) · v1.12 (2026-10-18) 1인분 이름 규칙 구조 v1: alias 약밥→약식(보류 해제 — food_analyzer 가 명시 1인분·별칭 표준 키로 이름 규칙 판단). tools/tests/test_serving_fixed_v1.py · v1.13 (2026-10-18) 값 차이 89개 근거 대조 v1: nutrient 19(식약처 음식 100g 대표 행 — 내장탕·도가니탕·율무차·부추김치(Na 자문값 유지)·볶음우동·연근조림·참치샐러드·알밥·오징어덮밥·조기구이·코다리찜·파래무침·카페모카·미역줄기볶음·갈비탕·감자볶음·어묵·오리불고기·수제비) + add 닭모래집볶음 + 닭똥집볶음 값 갱신(100mL 행 → 100g 행). tools/tests/test_value_check_v1.py · v1.14 (2026-10-18) 외부 자문 1라운드 v1: 합의 19종 중 바뀜 15 — nutrient 13(굴비구이·대추차·채소튀김·달걀국·깻잎김치·두부조림·무말랭이무침·도라지생채·고등어튀김·잔치국수·애호박찜·새우튀김·돼지갈비구이) + add 2(가자미튀김·팟 타이 소스), 유지 4(누룽지·도미찜·우엉볶음·부추잡채). tools/tests/test_advisory_v1.py · v1.15 (2026-10-18) 자문 충돌 9 제이 결정: 옥수수밥 B(add 113, 식약처 3행) · 무나물 A(nutrient 21, 식약처 «무나물무침» D113) · 우동 B(nutrient 60, D303 100g) / 코다리조림·꼬리곰탕·뼈다귀해장국·감자튀김·오징어탕수·햄구이 유지"
   },
   "add": {
     "쌈장": {
@@ -476,6 +476,42 @@
       "serving": 100,
       "category": "korean",
       "src": "식약처 음식 D310-460000000-0001 «닭모래집볶음» (100g, 1회량 100.000g) 100g당 그대로 · 1인분 100g · 값 차이 89개 근거 대조 v1 제이 «진행» 2026-10-18 (gold «닭모래집볶음» 72kcal 은 100mL 행 D410 이라 100g 값 아님)"
+    },
+    "가자미튀김": {
+      "cal": 217,
+      "prot": 11.4,
+      "carbs": 11.7,
+      "fat": 13.6,
+      "fiber": 0.5,
+      "sodium": 405,
+      "sugar": 0.2,
+      "serving": 100,
+      "category": "korean",
+      "src": "USDA FDC 2706252 «Fish, flounder, fried» (SurveyFoods) 100g · Fish, flounder, fried · 선택 C · 1인분 100g(기존 엔진 값 그대로) · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 gold 94.0kcal·Na 215.0)"
+    },
+    "팟 타이 소스": {
+      "cal": 87.0,
+      "prot": 0.91,
+      "carbs": 20.03,
+      "fat": 0.39,
+      "fiber": 0.0,
+      "sodium": 1744.0,
+      "sugar": 16.27,
+      "serving": 100,
+      "category": "korean",
+      "src": "식약처 원재료성 R121-020140000-0000 «팟타이 소스» (100g, 1회량 None) · 원재료성 «팟타이 소스» · 선택 B · 1인분 100g(기존 엔진 값 그대로) · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 gold 370.0kcal·Na 1400.0)"
+    },
+    "옥수수밥": {
+      "cal": 113.0,
+      "prot": 2.1,
+      "carbs": 24.39,
+      "fat": 0.34,
+      "fiber": 0.6,
+      "sodium": 4.0,
+      "sugar": 0.25,
+      "serving": 400,
+      "category": "korean",
+      "src": "식약처 음식 D401·D501·D601 같은 이름 3행 영양소별 중앙값 (기준 100mL) · 3행 같은 값 113 · 선택 B · 1인분 400g(기존 엔진 값 그대로) · 외부 자문 1라운드 v1 — 충돌 항목 제이 결정(2026-10-18 10:49 «추천대로») (전 gold 170.0kcal·Na 1.0)"
     }
   },
   "serving": {
@@ -1135,6 +1171,156 @@
       "sodium": 142.0,
       "sugar": 0.0,
       "src": "식약처 음식 D103-160000000-0001 «수제비» (100g, 1회량 650.000g) 100g당 · 값 차이 89개 근거 대조 v1 제이 «진행» 2026-10-18 (전 85kcal·Na 350, 출처 CORE기본표(food_analyzer.py)+core_extension.json enhanced(미량만 AIHub)+overrides.serving)"
+    },
+    "굴비구이": {
+      "cal": 177.0,
+      "prot": 19.33,
+      "carbs": 0.44,
+      "fat": 10.86,
+      "fiber": 0.4,
+      "sodium": 1364.0,
+      "sugar": 0.0,
+      "src": "식약처 음식 D108-399000000-0001 «조기구이» (100g, 1회량 180.000g) · 같은 생선(조기) 구이 D1 대표 — 이름 다름 · 선택 B · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 194.0kcal·Na 918.13)"
+    },
+    "대추차": {
+      "cal": 75.0,
+      "prot": 0.12,
+      "carbs": 17.75,
+      "fat": 0.44,
+      "fiber": 0.2,
+      "sodium": 30.0,
+      "sugar": 12.4,
+      "src": "식약처 원재료성 R115-010000000-0000 «대추차» (100g, 1회량 None) · 원재료성 «대추차» · 선택 B · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 25kcal·Na 2)"
+    },
+    "채소튀김": {
+      "cal": 239,
+      "prot": 3.81,
+      "carbs": 20.4,
+      "fat": 15.8,
+      "fiber": 1.6,
+      "sodium": 12.0,
+      "sugar": 1.49,
+      "src": "USDA FDC 2710065 «Vegetable tempura» (SurveyFoods) 100g · Vegetable tempura · 선택 C · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 312.0kcal·Na 277.3)"
+    },
+    "달걀국": {
+      "cal": 13.0,
+      "prot": 0.93,
+      "carbs": 0.69,
+      "fat": 0.74,
+      "fiber": 0.2,
+      "sodium": 246.0,
+      "sugar": 0.0,
+      "src": "식약처 음식 D105-210000000-0001 «달걀국» (100g, 1회량 400.000g) · D1 대표 · 선택 A · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 42.9kcal·Na 280.9)"
+    },
+    "깻잎김치": {
+      "cal": 62.0,
+      "prot": 2.82,
+      "carbs": 8.92,
+      "fat": 1.72,
+      "fiber": 3.6,
+      "sodium": 924.0,
+      "sugar": 4.04,
+      "src": "식약처 음식 D115-666000000-0001 «깻잎김치» (100g, 1회량 50.00g) · D1 대표 · 선택 A · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 83.0kcal·Na 1271.8)"
+    },
+    "두부조림": {
+      "cal": 143.0,
+      "prot": 9.64,
+      "carbs": 4.4,
+      "fat": 9.66,
+      "fiber": 0.8,
+      "sodium": 161.0,
+      "sugar": 3.64,
+      "src": "식약처 음식 D111-517000000-0001 «두부조림» (100g, 1회량 50.00g) · D1 대표 전부 · 선택 A · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 85kcal·Na 400)"
+    },
+    "무말랭이무침": {
+      "cal": 121.0,
+      "prot": 4.2,
+      "carbs": 22.5,
+      "fat": 1.55,
+      "fiber": 9.1,
+      "sodium": 450.0,
+      "sugar": 4.1,
+      "src": "식약처 음식 D114-626000000-0001 «무말랭이무침» (100g, 1회량 20.00g) · D1 대표, 1회 20g · 선택 A · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 50kcal·Na 400)"
+    },
+    "도라지생채": {
+      "cal": 77.0,
+      "prot": 2.06,
+      "carbs": 16.15,
+      "fat": 0.51,
+      "fiber": 4.6,
+      "sodium": 283.0,
+      "sugar": 5.25,
+      "src": "식약처 음식 D114-619000000-0001 «도라지생채» (100g, 1회량 160.000g) · D1 대표 · 선택 A · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 110.2kcal·Na 526.1)"
+    },
+    "고등어튀김": {
+      "cal": 284,
+      "prot": 17.2,
+      "carbs": 11.7,
+      "fat": 18.2,
+      "fiber": 0.5,
+      "sodium": 409,
+      "sugar": 0.2,
+      "src": "USDA FDC 2706267 «Fish, mackerel, fried» (SurveyFoods) 100g · Fish, mackerel, fried · 선택 B · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 342.0kcal·Na 195.81)"
+    },
+    "잔치국수": {
+      "cal": 44.0,
+      "prot": 1.93,
+      "carbs": 8.05,
+      "fat": 0.49,
+      "fiber": 0.8,
+      "sodium": 216.0,
+      "sugar": 0.04,
+      "src": "식약처 음식 D103-142410000-0001 «국수_잔치국수» (100g, 1회량 700.000g) · D1 «국수_잔치국수» · 선택 A · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 120kcal·Na 500)"
+    },
+    "애호박찜": {
+      "cal": 36.0,
+      "prot": 1.7,
+      "carbs": 4.43,
+      "fat": 1.46,
+      "fiber": 1.7,
+      "sodium": 574.0,
+      "sugar": 1.98,
+      "src": "식약처 음식 D407·D507·D707 같은 이름 3행 영양소별 중앙값 (기준 100mL) · 3행 · 선택 B · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 181.0kcal·Na 161.25)"
+    },
+    "새우튀김": {
+      "cal": 242,
+      "prot": 21.4,
+      "carbs": 11.5,
+      "fat": 12.3,
+      "fiber": 0.4,
+      "sodium": 344,
+      "sugar": 0.8,
+      "src": "USDA FDC 171970 «Crustaceans, shrimp, mixed species, cooked, breaded and fried» (SRLegacyFoods) 100g · shrimp breaded and fried · 선택 B · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 311.3kcal·Na 553.9)"
+    },
+    "돼지갈비구이": {
+      "cal": 294.0,
+      "prot": 19.58,
+      "carbs": 5.78,
+      "fat": 21.39,
+      "fiber": 0.0,
+      "sodium": 389.0,
+      "sugar": 5.7,
+      "src": "식약처 음식 D308-354050000-0001 «갈비구이_돼지고기» (100g, 1회량 100.000g) · D3 «갈비구이_돼지고기» · 선택 B · 외부 자문 1라운드 v1 합의(Claude·자문 2곳 같은 선택) 2026-10-18 — IP/integration/value_advisory_v1*.md (전 293.67kcal·Na 737.22)"
+    },
+    "무나물": {
+      "cal": 21.0,
+      "prot": 0.62,
+      "carbs": 3.64,
+      "fat": 0.46,
+      "fiber": 1.6,
+      "sodium": 352.0,
+      "sugar": 3.3,
+      "src": "식약처 음식 D113-578000000-0001 «무나물무침» (100g, 1회량 50.00g) · D1 «무나물무침» · 선택 A · 외부 자문 1라운드 v1 — 충돌 항목 제이 결정(2026-10-18 10:49 «추천대로») (전 69.2kcal·Na 587.0)"
+    },
+    "우동": {
+      "cal": 60.0,
+      "prot": 1.91,
+      "carbs": 10.6,
+      "fat": 1.13,
+      "fiber": 2.9,
+      "sodium": 341.0,
+      "sugar": 0.35,
+      "src": "식약처 음식 D303-164400000-0001 «우동_일식» (100g, 1회량 700.000g) · D3 «우동_일식» 100g · 선택 B · 외부 자문 1라운드 v1 — 충돌 항목 제이 결정(2026-10-18 10:49 «추천대로») (전 105kcal·Na 500)"
     }
   },
   "set_meal": {
