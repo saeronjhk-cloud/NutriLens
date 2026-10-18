@@ -34,12 +34,12 @@ chk(f.get('portion_base_g') == 640, f'돼지국밥(밥 따로) base {f.get("port
 
 # ② 분량 선택 — 기준 g × 배율, C3c 생략
 r = res('갈비탕', 785, portion_choice='많게')      # 785×1.4 = 1099 (C3c 였다면 끌려감)
-chk(r and r['estimated_serving_g'] == 1099 and abs(r['calories_kcal'] - 879.2) < 1, f'갈비탕 많게 {r and (r["estimated_serving_g"], r["calories_kcal"])}')
+chk(r and r['estimated_serving_g'] == 1099 and abs(r['calories_kcal'] - 593.5) < 1, f'갈비탕 많게 {r and (r["estimated_serving_g"], r["calories_kcal"])}')
 chk(r and r.get('portion_base_g') == 785 and r.get('portion_choice') == '많게', f'갈비탕 base/choice {r and (r.get("portion_base_g"), r.get("portion_choice"))}')
 r = res('갈비탕', 785, portion_choice='적게')      # 471g → 376.8
-chk(r and r['estimated_serving_g'] == 471 and abs(r['calories_kcal'] - 376.8) < 1, f'갈비탕 적게 {r and r["calories_kcal"]}')
-r = res('갈비탕', 785, portion_choice='보통')
-chk(r and r['estimated_serving_g'] == 785 and abs(r['calories_kcal'] - 628.0) < 1, f'갈비탕 보통 {r and r["calories_kcal"]}')
+chk(r and r['estimated_serving_g'] == 471 and abs(r['calories_kcal'] - 254.3) < 1, f'갈비탕 적게 {r and r["calories_kcal"]}')
+r = res('갈비탕', 785, portion_choice='보통')  # 10-18 값 대조 v1: 식약처 음식 100g 대표 행으로 교체(갈비탕 80→54kcal/100g, 분량 동작은 같음)
+chk(r and r['estimated_serving_g'] == 785 and abs(r['calories_kcal'] - 423.9) < 1, f'갈비탕 보통 {r and r["calories_kcal"]}')
 r = res('사과', 150, portion_choice='많게')        # 210g → 119.7
 chk(r and abs(r['calories_kcal'] - 119.7) < 1, f'사과 많게 {r and r["calories_kcal"]}')
 # 포장: 1봉(600) 적게 → 0.5봉 · 많게 → 1.5봉
@@ -55,7 +55,7 @@ chk(res('갈비탕', 785, portion_choice='엄청많이') is None, '알 수 없�
 chk(res('갈비탕', None, portion_choice='많게') is None, '기준 g 없이 선택은 None')
 # 기존 호출(선택 없음)은 그대로
 r = res('갈비탕', 800)
-chk(r and r['estimated_serving_g'] == 800 and abs(r['calories_kcal'] - 628.0) < 1, f'기존 resolve 갈비탕 800 {r and (r["estimated_serving_g"], r["calories_kcal"])}')
+chk(r and r['estimated_serving_g'] == 800 and abs(r['calories_kcal'] - 423.9) < 1, f'기존 resolve 갈비탕 800 {r and (r["estimated_serving_g"], r["calories_kcal"])}')
 for x in fails: print('FAIL', x)
 N = 16
 print(f'{N - len(fails)}/{N}')

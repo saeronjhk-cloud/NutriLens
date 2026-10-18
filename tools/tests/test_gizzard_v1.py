@@ -16,7 +16,7 @@ def check(ok, msg):
     if not ok: fails.append(msg)
 C = fa.CORE_FOODS
 SALT = {'cal': 94, 'prot': 17.7, 'carbs': 0, 'fat': 2.6, 'fiber': 0, 'sodium': 380, 'sugar': 0, 'serving': 80}
-BOKKEUM = {'cal': 72.0, 'prot': 8.2, 'carbs': 3.8, 'fat': 2.3, 'fiber': 0.8, 'sodium': 159.0, 'sugar': 1.4, 'serving': 100}
+BOKKEUM = {'cal': 176.0, 'prot': 28.11, 'carbs': 2.82, 'fat': 5.8, 'fiber': 0.9, 'sodium': 364.0, 'sugar': 2.73, 'serving': 100}   # 10-18 값 대조 v1: 같은 출처 «닭모래집볶음»을 100mL 행(D410 72kcal) → 100g 행(D310)
 # G1 신규 값(열량·단백질은 CORE 닭똥집구이와 같고 나트륨만 소금 간)
 for name, exp in (('닭똥집소금구이', SALT), ('닭똥집볶음', BOKKEUM)):
     d = C.get(name, {})
@@ -28,7 +28,7 @@ for a, std in (('닭똥집', '닭똥집소금구이'), ('소금닭똥집', '닭�
     check(C.get(a) is not None and C.get(a) == C.get(std), f'G2 별칭 {a} ≠ {std}: {C.get(a)}')
 # G3 resolve(사진 없이 기록 경로) — 1인분 기본
 for nm, sv, na, kcal in (('닭똥집소금구이', 80, 304.0, 75.2), ('닭똥집', 80, 304.0, 75.2),
-                         ('소금닭똥집', 80, 304.0, 75.2), ('닭똥집볶음', 100, 159.0, 72.0)):
+                         ('소금닭똥집', 80, 304.0, 75.2), ('닭똥집볶음', 100, 364.0, 176.0)):
     with contextlib.redirect_stdout(io.StringIO()):
         r = fl.resolve_food(nm, None)
     check(r is not None, f'G3 {nm} 미매칭')

@@ -86,7 +86,7 @@ def resolve_food(name, serving_g=None, portion_choice=None, rice_separated=False
     if not serving:
         key, data = fa._search_gold(name)
         base = (data or {}).get('serving') or 100
-        serving = fa._estimate_realistic_serving(key or name, base)
+        serving = fa._estimate_realistic_serving(key or name, base, core_key=key)   # 1인분 구조 v1(10-18)
 
     out = {
         'name_ko': food.get('db_name') or name,

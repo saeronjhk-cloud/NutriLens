@@ -46,8 +46,8 @@ sc = {c['name_ko']: c for c in (r or {}).get('set_components') or []}
 check(abs(sc.get('고등어구이', {}).get('sodium_mg', 0) - 376) <= 1, f'F4 정식 안 고등어 {sc.get("고등어구이", {}).get("sodium_mg")}')
 _others = sum(C[c]['sodium'] * g / 100 for c, g in (('흰밥', 210), ('배추김치', 40), ('콩나물무침', 60)))
 check(r is not None and abs(r['sodium_mg'] - (_others + 376)) <= 2, f'F4 정식 합 {r and r.get("sodium_mg")} ≠ {_others + 376:.1f}')
-# F5 다른 생선 불변(식약처 구이 · 생물 고등어)
-for k, na in (('갈치구이', 297.24), ('조기구이', 1364.48), ('고등어석쇠구이', 126.26), ('고등어', None)):
+# F5 다른 생선 불변(식약처 구이 · 생물 고등어) — 조기구이는 10-18 값 대조 v1 로 D108 행(Na 1364, kcal 255.6→177) 교체
+for k, na in (('갈치구이', 297.24), ('조기구이', 1364.0), ('고등어석쇠구이', 126.26), ('고등어', None)):
     if na is not None:
         check(abs(C[k]['sodium'] - na) < 0.01, f'F5 {k} 바뀜 {C[k]["sodium"]}')
 check(C.get('고등어', {}).get('sodium') != 376, 'F5 생물 고등어까지 바뀜')

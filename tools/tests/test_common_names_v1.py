@@ -69,7 +69,7 @@ for nm, tgt in ALIAS.items():
     p, q = photo(nm, 100), photo(tgt, 100)   # 사진은 대상 이름과 같은 결과(C3c 가중 포함)
     check(p.get('db_matched') and near(p.get('calories_kcal'), q.get('calories_kcal'), .01) and near(p.get('sodium_mg'), q.get('sodium_mg'), .01), f"F 사진 {nm} {p.get('source')} {p.get('calories_kcal')} (기대 {tgt} {q.get('calories_kcal')})")
 # 약밥 보류(약식 1인분 100g → «밥» 이름 규칙 400g 덮어씀 = 928kcal). 그대로 미매칭
-check(res('약밥') is None, 'F0 약밥 보류 — 미매칭 그대로')
+_r = res('약밥'); check(_r is not None and _r.get('estimated_serving_g') == 100 and abs(_r.get('calories_kcal') - 232.2) <= 1, f"F0 약밥(10-18 1인분 구조 v1 로 보류 해제) {_r and (_r.get('estimated_serving_g'), _r.get('calories_kcal'))}")
 # ⑦ 신규 USDA — 100g당 kcal·Na · 1인분
 NEW = {'간장': (53.0, 5490.0, 16), '버터': (743.0, 524.0, 14), '참기름': (884.0, 0.0, 14), '딸기잼': (278.0, 32.0, 20), '크림치즈': (343.0, 368.0, 30)}
 for nm, (cal, na, g) in NEW.items():
