@@ -3014,6 +3014,70 @@ def _gold_searchkey_index(gold):
         _NOSP_IDX_CACHE[tag] = idx
     return _NOSP_IDX_CACHE[tag]
 
+# ── 복합 이름 요리명 우선 v1 (규칙 163 일반화, 2026-10-19) ──
+# «A B» 에서 A 가 «요리 운반형» 이름(…말이·김밥·찌개·국·탕·전·조림·구이 등)이고 엔진에 정확히 있는 키,
+# B 가 재료(엔진에 있는 음식 이름이면서 요리·양념·음료·맨밥이 아님)이면 A 로 매칭한다.
+# 설계: IP/integration/dish_head_design_v1.md · 평가: tools/tests/test_dish_head_v1.py
+_DISH_HEAD_SUFFIXES = ('말이', '김밥', '볶음밥', '비빔밥', '덮밥', '주먹밥', '국밥', '초밥', '찌개', '전골', '국수',
+                       '라면', '냉면', '우동', '볶음', '조림', '무침', '구이', '튀김', '국', '탕', '죽', '전', '찜')
+_DISH_TAIL_BLOCK = frozenset((
+    # 양념·소스 — «감자튀김 케첩»·«삼겹살구이 쌈장»은 요리의 재료가 아니라 곁들인 것
+    '소스', '케첩', '케찹', '드레싱', '마요네즈', '마요', '간장', '소금', '후추', '쌈장', '고추장', '된장', '초장',
+    '초고추장', '머스타드', '겨자', '와사비', '식초', '설탕', '시럽', '꿀', '기름', '참기름', '들기름', '올리브유',
+    '버터', '잼', '양념', '타르타르', '칠리', '스리라차', '굴소스', '쯔유', '폰즈', '참깨', '깨',
+    # 요리의 일부만 — «냉면 육수»·«라면 스프»는 그 요리 한 그릇이 아님
+    '육수', '국물', '스프', '수프', '건더기', '사리',
+    # 맨밥 — «김치찌개 공기밥»은 두 음식
+    '밥', '흰밥', '쌀밥', '공기밥', '현미밥', '잡곡밥', '보리밥', '흑미밥', '백미밥', '즉석밥', '햇반',
+))
+# 뒤쪽이 이 카테고리의 CORE 키면 «재료»가 아니라 음료·완성 메뉴(«닭튀김 치킨텐더»는 닭튀김 한 종류 = 치킨텐더 그대로).
+# 두 카테고리(285종) 중 재료는 연어·양고기뿐 — 예외로 둔다(«덮밥 연어» → 덮밥).
+_DISH_TAIL_BLOCK_CATS = ('snack_drink', 'franchise', 'foreign_popular')
+_DISH_TAIL_INGREDIENT_OK = frozenset(('연어', '양고기'))
+_DISH_STANDALONE = frozenset(('김밥', '볶음밥', '비빔밥', '덮밥', '주먹밥', '국밥', '초밥', '찌개', '전골', '국수', '라면', '냉면', '우동'))
+
+
+def _dish_head_key(clean, gold, cf):
+    """«A(요리) B(재료)» → A 의 키(CORE 또는 gold) · 해당 없으면 None. 긴 A 먼저."""
+    import re
+    ws = clean.split()
+    if len(ws) < 2 or _is_multi_food_name(clean):
+        return None
+    nosp_core = _core_nospace_index(cf)
+
+    def _key(x):
+        if x in cf:
+            return x
+        k = nosp_core.get(re.sub(r'\s+', '', x))
+        if k:
+            return k
+        return x if x in gold else None
+
+    def _is_dishy(w):
+        # 조리법 접미사만인 이름(«볶음»·«구이»·«찜» 등)은 요리명이 아님 — «구이 김»은 김(구운 김) 쪽
+        return any(w.endswith(sf) and (len(w) > len(sf) or sf in _DISH_STANDALONE) for sf in _DISH_HEAD_SUFFIXES)
+
+    for cut in range(len(ws) - 1, 0, -1):
+        head, tail = ' '.join(ws[:cut]), ws[cut:]
+        if len(head.replace(' ', '')) < 2 or not _is_dishy(head):
+            continue
+        hk = _key(head)
+        if not hk:
+            continue
+        ok = True
+        for w in tail:
+            # 재료는 엔진 키가 아니어도 됨(치즈·햄·계란은 SQLite 에만 있음) — 요리·양념·음료·맨밥만 막는다
+            tk = _key(w)
+            if (_is_dishy(w) or w in _DISH_TAIL_BLOCK or (tk and tk in _DISH_TAIL_BLOCK)
+                    or (tk in cf and cf[tk].get('category') in _DISH_TAIL_BLOCK_CATS and tk not in _DISH_TAIL_INGREDIENT_OK)
+                    or not re.search(r'[가-힣a-zA-Z]', w)):
+                ok = False
+                break
+        if ok:
+            return hk
+    return None
+
+
 def _search_gold(name, _core=None):
     """골드 테이블에서 음식 검색 — 정확→CORE→관련성 검증 매칭
 
@@ -3058,6 +3122,14 @@ def _search_gold(name, _core=None):
             return _combo, _core_as_gold(_cf0[_combo])
         if _combo in gold:
             return _combo, gold[_combo]
+    #    ★ 복합 이름 요리명 우선 v1 (규칙 163 일반화, 2026-10-19): «A(요리) B(재료)» 에 정확한 키가 없으면 A.
+    #    전엔 아래 CORE 뒤쪽 단어 매칭이 재료로 «확신» 매칭 — «김밥 스팸»→스팸 50g · «닭볶음탕 감자»→감자.
+    #    정확한 «A B» 키(gold «김밥 참치» 등)는 위에서 먼저 이김. tools/tests/test_dish_head_v1.py
+    _dh = _dish_head_key(clean, gold, _cf0)
+    if _dh:
+        if _dh in _cf0:
+            return _dh, _core_as_gold(_cf0[_dh])
+        return _dh, gold[_dh]
 
     # 1) CORE_FOODS 매칭 (최우선 — 수동 검증 + 보정 데이터)
     #    Gold DB에 같은 이름이 있어도 CORE_FOODS가 이김
@@ -3361,6 +3433,9 @@ def _match_confidence(clean, key):
             return 'low'
         if any(w in _OIL_COOKED_MODIFIERS for w in words[:-1]) and ' ' not in key:
             return 'low'      # «튀긴 마늘»→마늘(생것) 처럼 기름 조리 수식어를 버린 매칭은 값이 크게 틀린다
+        _dh = _dish_head_key(clean, _load_gold_db() or {}, CORE_FOODS)   # 요리명 우선 v1 (규칙 163)
+        if _dh:
+            return 'high' if key == _dh else 'low'      # «김밥 스팸»→스팸 같은 재료 매칭은 확신 아님
         if words[-1] == key:
             return 'high'
         for st in range(1, len(words)):
